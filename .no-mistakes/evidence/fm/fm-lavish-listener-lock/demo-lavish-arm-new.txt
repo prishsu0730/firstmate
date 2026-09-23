@@ -1,0 +1,17 @@
+##### NEW CODE (target 85f14f4)
+== before: leftover lock dirs (all owned by dead pid 99999999)
+<src>.lock
+<src>.lock.steal
+<src>.lock.steal.recovery
+<src>.lock.steal.steal
+== run: fm-procevent-lavish.sh arm board.html (20s cap)
+RESULT: arm exit=0 after 0s
+stdout:
+registered: <src> (lavish)
+armed: <src>
+artifact: /private/tmp/fm-demo.sTca/board.html
+stderr:
+== after: lock dirs
+<src>.lock.steal.steal
+== registration still present:
+yes
