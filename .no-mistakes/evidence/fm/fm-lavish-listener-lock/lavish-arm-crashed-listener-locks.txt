@@ -1,0 +1,25 @@
+===== OLD code (base e9a6675) =====
+--- before: lock files left by a crashed listener
+<id>.lock
+<id>.lock.steal
+--- run: fm-procevent-lavish.sh arm prototype.html (20s limit)
+exit=142 seconds=147
+--- after: lock paths
+<id>.lock
+<id>.lock.steal
+<id>.lock.steal.owner.ruHWMs
+--- listener registration exists:
+no
+
+===== NEW code (head 20e8637) =====
+--- before: lock files left by a crashed listener
+<id>.lock
+<id>.lock.steal
+--- run: fm-procevent-lavish.sh arm prototype.html (20s limit)
+registered: <id> (lavish)
+armed: <id>
+artifact: /private<tmp>/prototype.html
+exit=0 seconds=4
+--- after: lock paths
+--- listener registration exists:
+yes

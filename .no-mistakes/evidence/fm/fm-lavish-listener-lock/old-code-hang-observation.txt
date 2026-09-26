@@ -1,0 +1,5 @@
+[observer] 02:14:07 OLD arm hit its 20s limit; its register child pid 26498 is still waiting on the lock:
+  PID ELAPSED COMMAND
+26498   02:26 bash <old-bin>/bin/fm-procevent.sh register lavish lavish-e0644aec23707c0b -- <old-bin>/bin/fm-procevent-lavish.sh poll /priva
+claims/lavish-e0644aec23707c0b.lock
+claims/lavish-e0644aec23707c0b.lock.steal
