@@ -172,6 +172,97 @@ test_live_stale_watch_lock_is_actionable() {
   pass "live watcher lock with stale heartbeat is actionable"
 }
 
+test_refused_watch_lock_recovery_is_not_reported_running() {
+  local dir state fakebin out err status dead real_mktemp
+  dir=$(make_case refused-watch-recovery)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  err="$dir/watch.err"
+  dead=$(dead_pid)
+  real_mktemp=$(command -v mktemp)
+  cat > "$fakebin/mktemp" <<SH
+#!/usr/bin/env bash
+case "\$*" in
+  *.steal.recovery.reclaim.*) exit 1 ;;
+esac
+exec "$real_mktemp" "\$@"
+SH
+  chmod +x "$fakebin/mktemp"
+  mkdir "$state/.watch.lock" "$state/.watch.lock.steal" "$state/.watch.lock.steal.recovery"
+  printf '%s\n' "$dead" > "$state/.watch.lock/pid"
+  printf '%s\n' "$dead" > "$state/.watch.lock.steal/pid"
+  printf '%s\n' "$dead" > "$state/.watch.lock.steal.recovery/pid"
+  touch "$state/.last-watcher-beat"
+  status=0
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" || status=$?
+  [ "$status" -ne 0 ] || fail "watcher reported success after lock recovery was refused: $(cat "$out" "$err")"
+  if grep -F 'already running' "$out" "$err" >/dev/null; then
+    fail "refused lock recovery was reported as a running watcher: $(cat "$out" "$err")"
+  fi
+  grep -F 'not listening' "$err" >/dev/null || fail "watcher did not explain the refused recovery: $(cat "$err")"
+  [ "$(cat "$state/.watch.lock/pid")" = "$dead" ] || fail "refused recovery changed the primary lock evidence"
+  [ "$(cat "$state/.watch.lock.steal.recovery/pid")" = "$dead" ] || fail "refused recovery changed the recovery mutex"
+  pass "refused watch-lock recovery fails loudly instead of claiming a running watcher"
+}
+
+test_live_stalled_watch_lock_is_replaced_past_hard_bound() {
+  # A live holder whose beacon is stale past the ordinary grace is refused, but
+  # a beacon stale past the hard bound evicts that holder (identity-verified
+  # TERM) and the arm starts in its place - the deadlock where every re-arm
+  # died against a live-but-stalled watcher while nothing polled the home.
+  local dir state fakebin out err status holder identity pid i lock_pid
+  dir=$(make_case live-stalled-lock)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  err="$dir/watch.err"
+  sleep 300 &
+  holder=$!
+  identity=$(FM_STATE_OVERRIDE="$state" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$holder") || fail "could not identify the fake holder"
+  mkdir -p "$state/.watch.lock"
+  printf '%s\n' "$holder" > "$state/.watch.lock/pid"
+  printf '%s\n' "$dir" > "$state/.watch.lock/fm-home"
+  printf '%s\n' "$WATCH" > "$state/.watch.lock/watcher-path"
+  printf '%s\n' "$identity" > "$state/.watch.lock/pid-identity"
+  # Beacon decades old: past the grace, but a bound beyond it -> still refused.
+  touch -t 200001010000 "$state/.last-watcher-beat"
+  status=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_WATCHER_STALL_BOUND=9999999999 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" || status=$?
+  [ "$status" -ne 0 ] || fail "watcher replaced a holder whose beacon was under the hard bound"
+  grep -F 'heartbeat is stale' "$err" >/dev/null || fail "under-bound stale holder lost its refusal"
+  is_live_non_zombie "$holder" || fail "under-bound stale holder was signalled"
+  # Same holder and beacon, a bound it is past -> evicted and replaced.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=1 FM_WATCHER_STALL_BOUND=3 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" 2> "$err" &
+  pid=$!
+  i=0
+  lock_pid=
+  while [ "$i" -lt 100 ]; do
+    lock_pid=$(cat "$state/.watch.lock/pid" 2>/dev/null || true)
+    [ "$lock_pid" = "$pid" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  is_live_non_zombie "$pid" || fail "replacement watcher did not stay alive: $(cat "$err")"
+  [ "$lock_pid" = "$pid" ] || fail "replacement watcher did not take the lock (holder=$lock_pid)"
+  is_live_non_zombie "$holder" && fail "stalled holder survived the eviction"
+  # The lock pid is written inside fm_lock_try_acquire; the replacement message
+  # is echoed just after, so poll for the message rather than grep once and race
+  # the acquire/echo gap.
+  i=0
+  while [ "$i" -lt 100 ]; do
+    grep -E "^watcher: replaced stalled pid $holder \(beacon [0-9]+s past hard bound 3s\)\$" "$out" >/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -E "^watcher: replaced stalled pid $holder \(beacon [0-9]+s past hard bound 3s\)\$" "$out" >/dev/null \
+    || fail "watcher did not report the replacement: $(cat "$out" "$err")"
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  pass "live watcher lock with a beacon past the hard bound is replaced, under it is still refused"
+}
+
 test_guard_warnings() {
   # The guard's two operator-visible states, with resilient substrings instead of
   # four copy-coupled tests:
@@ -299,6 +390,194 @@ test_lock_steals_dead_pid_lock() {
   pass "dead-pid stale lock is reclaimed by a single acquirer"
 }
 
+# Start a process that claims each given link lock, then SIGKILL it so every
+# claim is left behind with a dead owner - an acquirer TERMed mid-steal.
+leave_dead_link_locks() {  # <state> <lock>...
+  local state=$1 holder i last
+  shift
+  last=${!#}
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    shift
+    for lock do fm_lock_try_create "$lock" || exit 7; done
+    exec sleep 30
+  ' _ "$LIB" "$@" >/dev/null 2>&1 &
+  holder=$!
+  i=0
+  while [ "$i" -lt 50 ] && [ ! -s "$last/pid" ]; do
+    sleep 0.02
+    i=$((i + 1))
+  done
+  [ -s "$last/pid" ] || fail "dead link-lock owner did not publish its pid"
+  kill -KILL "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+}
+
+test_lock_reclaims_dead_steal_owner_without_nested_markers() {
+  local dir state lockdir fakebin lnlog rc
+  dir=$(make_case lock-dead-steal-owner)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  fakebin="$dir/fakebin"
+  lnlog="$dir/ln.log"
+  mkdir "$lockdir"
+  printf '%s\n' "$(dead_pid)" > "$lockdir/pid"
+  leave_dead_link_locks "$state" "$lockdir.steal"
+  cat > "$fakebin/ln" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg do last=$arg; done
+printf '%s\n' "$last" >> "$FM_TEST_LN_LOG"
+exec /bin/ln "$@"
+SH
+  chmod +x "$fakebin/ln"
+  : > "$lnlog"
+
+  rc=0
+  PATH="$fakebin:$PATH" FM_TEST_LN_LOG="$lnlog" FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 8
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "acquirer could not reclaim dead steal owner (rc=$rc)"
+  ! grep -q '\.steal\.steal$' "$lnlog" \
+    || fail "reclaiming a dead steal owner created a nested steal marker: $(tr '\n' ' ' < "$lnlog")"
+  [ ! -e "$lockdir.steal" ] && [ ! -L "$lockdir.steal" ] \
+    || fail "dead steal mutex remained linked after successful reclaim"
+  pass "dead steal owner is reclaimed once without a nested steal marker"
+}
+
+test_lock_recovers_dead_nested_steal_chain() {
+  local dir state lockdir rc marker
+  dir=$(make_case lock-dead-nested-steal-chain)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$(dead_pid)" > "$lockdir/pid"
+  leave_dead_link_locks "$state" "$lockdir.steal" "$lockdir.steal.steal"
+
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 8
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "dead nested steal chain kept the lock unrecoverable (rc=$rc)"
+  for marker in "$lockdir.steal" "$lockdir.steal.steal"; do
+    [ ! -e "$marker" ] && [ ! -L "$marker" ] || fail "dead steal marker remained: $marker"
+  done
+  pass "dead nested steal chain from an interrupted reclaim is recovered"
+}
+
+test_lock_reclaims_self_held_steal_mutex() {
+  # A TERM that lands while this process holds the steal mutex runs the EXIT
+  # path, which re-acquires the same dead-owner lock. The abandoned steal hold
+  # is this process's own and must not wedge that exit path.
+  local dir state lockdir rc
+  dir=$(make_case lock-self-held-steal)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$(dead_pid)" > "$lockdir/pid"
+
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_create "$2.steal" || exit 7
+    fm_lock_try_acquire "$2" || exit 8
+    [ "$(cat "$2/pid" 2>/dev/null)" = "${BASHPID:-$$}" ] || exit 9
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "self-held steal mutex blocked reclaiming a dead-owner lock (rc=$rc)"
+  [ ! -e "$lockdir.steal" ] && [ ! -L "$lockdir.steal" ] \
+    || fail "self-held steal mutex remained linked after reclaim"
+  pass "a steal mutex abandoned by this process does not block its own reclaim"
+}
+
+test_lock_resumes_own_interrupted_steal_reap() {
+  # A TERM that lands after this process renamed a dead steal owner to its own
+  # tombstone, but before it unlinked the mutex, runs the EXIT path, which
+  # re-acquires the same dead-owner lock. Its own tombstone must not wedge it.
+  local dir state lockdir rc
+  dir=$(make_case lock-own-steal-tomb)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  mkdir "$lockdir"
+  printf '%s\n' "$(dead_pid)" > "$lockdir/pid"
+  leave_dead_link_locks "$state" "$lockdir.steal"
+
+  rc=0
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_current_pid me || exit 6
+    owner=$(fm_lock_link_owner "$2.steal") || exit 6
+    mv -- "$owner" "$owner.reaped.$me" || exit 7
+    fm_lock_try_acquire "$2" || exit 8
+    [ "$(cat "$2/pid" 2>/dev/null)" = "$me" ] || exit 9
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" || rc=$?
+  [ "$rc" -eq 0 ] || fail "own interrupted steal reap blocked reclaiming a dead-owner lock (rc=$rc)"
+  [ ! -e "$lockdir.steal" ] && [ ! -L "$lockdir.steal" ] \
+    || fail "own interrupted steal reap left the steal mutex linked"
+  pass "a steal reap interrupted in this process is resumed from its own tombstone"
+}
+
+test_lock_steal_reap_cannot_remove_successor() {
+  # Two reapers verify the same dead steal owner. The competitor runs to
+  # completion exactly when the first one is about to remove the link; at most
+  # one of them may end up believing it holds the mutex.
+  local dir state steal fakebin out rc
+  dir=$(make_case lock-steal-reap-race)
+  state="$dir/state"
+  steal="$state/.contend.lock.steal"
+  fakebin="$dir/fakebin"
+  out="$dir/competitor"
+  leave_dead_link_locks "$state" "$steal"
+  cat > "$fakebin/rm" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg do last=$arg; done
+if [ "$last" = "$FM_TEST_RACE_PATH" ] && mkdir "$FM_TEST_RACE_ONCE" 2>/dev/null; then
+  bash -c '
+    . "$1"
+    if fm_lock_try_acquire_steal_mutex "$2"; then
+      printf "won %s\n" "${BASHPID:-$$}" > "$3"
+      exec sleep 30
+    fi
+    printf "lost\n" > "$3"
+  ' _ "$FM_TEST_LIB" "$last" "$FM_TEST_RACE_OUT" >/dev/null 2>&1 &
+  i=0
+  while [ "$i" -lt 100 ] && [ ! -s "$FM_TEST_RACE_OUT" ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+fi
+exec /bin/rm "$@"
+SH
+  chmod +x "$fakebin/rm"
+
+  rc=0
+  PATH="$fakebin:$PATH" FM_TEST_LIB="$LIB" FM_TEST_RACE_PATH="$steal" \
+    FM_TEST_RACE_ONCE="$dir/race-once" FM_TEST_RACE_OUT="$out" \
+    FM_STATE_OVERRIDE="$state" bash -c '
+      . "$1"
+      fm_lock_try_acquire_steal_mutex "$2" || exit 1
+      [ "$(cat "$2/pid" 2>/dev/null)" = "${BASHPID:-$$}" ] || exit 2
+    ' _ "$LIB" "$steal" || rc=$?
+  [ -d "$dir/race-once" ] || fail "reap race hook never fired"
+  case "$(cat "$out" 2>/dev/null || true)" in
+    won\ *)
+      kill -KILL "$(sed 's/^won //' "$out")" 2>/dev/null || true
+      [ "$rc" -ne 0 ] || fail "competing reapers both hold the steal mutex"
+      ;;
+    lost)
+      [ "$rc" -eq 0 ] || fail "no reaper acquired the dead steal mutex (rc=$rc)"
+      ;;
+    *) fail "competing reaper did not report an outcome" ;;
+  esac
+  pass "a competing reaper cannot remove the successor's steal mutex"
+}
+
 test_lock_stale_steal_single_winner_under_concurrency() {
   local dir state lockdir dead marker i pids pid wins
   dir=$(make_case lock-stale-concurrency)
@@ -368,6 +647,264 @@ test_lock_live_steal_mutex_is_not_reclaimed() {
   [ "$lockpid" = "$dead" ] || fail "primary lock changed while live steal mutex was held: $out"
   [ "$stealpid" = "$(cat "$holder_file")" ] || fail "live steal mutex owner changed: $out"
   pass "live steal mutex is not reclaimed"
+}
+
+test_lock_wait_survives_errexit_contention() {
+  local dir state lockdir holder_pid waiter_pid attempts
+  dir=$(make_case lock-wait-errexit)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+
+  FM_STATE_OVERRIDE="$state" bash -eu -c '
+    . "$1"
+    fm_lock_try_acquire "$2"
+    : > "$3"
+    while [ ! -e "$4" ]; do sleep 0.01; done
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" "$dir/ready" "$dir/release" &
+  holder_pid=$!
+  attempts=0
+  while [ ! -e "$dir/ready" ] && [ "$attempts" -lt 100 ]; do
+    sleep 0.02
+    attempts=$((attempts + 1))
+  done
+  [ -e "$dir/ready" ] || fail "errexit lock holder did not start"
+
+  FM_STATE_OVERRIDE="$state" bash -eu -c '
+    . "$1"
+    fm_lock_acquire_wait "$2"
+    : > "$3"
+    fm_lock_release "$2"
+  ' _ "$LIB" "$lockdir" "$dir/acquired" &
+  waiter_pid=$!
+  sleep 0.2
+  kill -0 "$waiter_pid" 2>/dev/null \
+    || fail "set -e exited instead of waiting for ordinary lock contention"
+  [ ! -e "$dir/acquired" ] || fail "contended waiter acquired before the holder released"
+
+  : > "$dir/release"
+  wait "$holder_pid" || fail "errexit lock holder failed"
+  wait "$waiter_pid" || fail "set -e waiter failed after the lock released"
+  [ -e "$dir/acquired" ] || fail "set -e waiter did not acquire after contention"
+  pass "ordinary lock waiting preserves contention semantics under set -e"
+}
+
+# Leave a real symlink-form lock whose holder process has exited.
+abandon_lock() {  # <state> <lockdir>
+  FM_STATE_OVERRIDE="$1" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2" || exit 7
+  ' _ "$LIB" "$2" || fail "could not seed abandoned lock $2"
+}
+
+test_lock_dead_recovery_holder_is_reclaimed() {
+  local dir state lockdir out me
+  dir=$(make_case lock-dead-recovery)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  abandon_lock "$state" "$lockdir"
+  abandon_lock "$state" "$lockdir.steal"
+  abandon_lock "$state" "$lockdir.steal.recovery"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2"
+    rc=$?
+    printf "rc=%s me=%s lockpid=%s\n" "$rc" "${BASHPID:-$$}" "$(cat "$2/pid" 2>/dev/null || true)"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  case "$out" in
+    *"rc=0 "*) ;;
+    *) fail "dead recovery-mutex holder wedged the lock: $out" ;;
+  esac
+  me=${out#*me=}; me=${me%% *}
+  [ "$me" = "${out#*lockpid=}" ] || fail "reclaimed lock is not owned by the acquirer: $out"
+  [ ! -e "$lockdir.steal" ] && [ ! -L "$lockdir.steal" ] \
+    || fail "recovery left the steal mutex behind"
+  [ ! -e "$lockdir.steal.recovery" ] && [ ! -L "$lockdir.steal.recovery" ] \
+    || fail "dead recovery mutex was not reclaimed"
+  [ -z "$(find "$state" -maxdepth 1 -name '.contend.lock.steal.recovery.reclaim.*' -print -quit)" ] \
+    || fail "recovery-mutex reclaim left a quarantine directory behind"
+  pass "dead recovery-mutex holder is reclaimed without a nested mutex"
+}
+
+test_lock_stale_empty_recovery_holder_is_reclaimed() {
+  local dir state lockdir dead out me
+  dir=$(make_case lock-empty-recovery)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  mkdir "$lockdir" "$lockdir.steal" "$lockdir.steal.recovery"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  printf '%s\n' "$dead" > "$lockdir.steal/pid"
+  touch -t 202001010000 "$lockdir.steal.recovery"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    if fm_lock_try_acquire "$2"; then rc=0; else rc=$?; fi
+    printf "rc=%s me=%s lockpid=%s\n" "$rc" "${BASHPID:-$$}" "$(cat "$2/pid" 2>/dev/null || true)"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  case "$out" in
+    *"rc=0 "*) ;;
+    *) fail "stale empty recovery mutex wedged the lock: $out" ;;
+  esac
+  me=${out#*me=}; me=${me%% *}
+  [ "$me" = "${out#*lockpid=}" ] || fail "lock after empty recovery reclaim is not owned by the acquirer: $out"
+  [ ! -e "$lockdir.steal.recovery" ] && [ ! -L "$lockdir.steal.recovery" ] \
+    || fail "stale empty recovery mutex was not reclaimed"
+  pass "stale empty recovery mutex is reclaimed after the minimum grace"
+}
+
+test_lock_live_recovery_holder_is_not_reclaimed() {
+  local dir state lockdir dead holder out
+  dir=$(make_case lock-live-recovery)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  sleep 300 &
+  holder=$!
+  mkdir "$lockdir" "$lockdir.steal" "$lockdir.steal.recovery"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  printf '%s\n' "$dead" > "$lockdir.steal/pid"
+  printf '%s\n' "$holder" > "$lockdir.steal.recovery/pid"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2"
+    printf "rc=%s\n" "$?"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  [ "$out" = "rc=1" ] || fail "live recovery-mutex holder was not waited on: $out"
+  [ "$(cat "$lockdir/pid")" = "$dead" ] || fail "primary lock evidence changed under a live recovery holder"
+  [ "$(cat "$lockdir.steal/pid")" = "$dead" ] || fail "steal mutex evidence changed under a live recovery holder"
+  [ "$(cat "$lockdir.steal.recovery/pid")" = "$holder" ] || fail "live recovery holder was reclaimed"
+  pass "live recovery-mutex holder is not reclaimed"
+}
+
+test_lock_recovery_with_live_process_group_is_waited_out() {
+  local dir state lockdir dead leader out waiter i
+  dir=$(make_case lock-recovery-group)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  set -m
+  ( sleep 300 & exit 0 ) &
+  leader=$!
+  set +m
+  wait "$leader" 2>/dev/null || true
+  kill -0 -"$leader" 2>/dev/null || fail "could not seed a leaderless process group"
+  mkdir "$lockdir" "$lockdir.steal" "$lockdir.steal.recovery"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  printf '%s\n' "$dead" > "$lockdir.steal/pid"
+  printf '%s\n' "$leader" > "$lockdir.steal.recovery/pid"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2"
+    printf "try=%s\n" "$?"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  if [ "$out" != "try=1" ]; then
+    kill -KILL -"$leader" 2>/dev/null || true
+    fail "recovery mutex with a live process group was not treated as held: $out"
+  fi
+  [ "$(cat "$lockdir.steal.recovery/pid")" = "$leader" ] \
+    || fail "held recovery mutex evidence changed"
+  [ "$(cat "$lockdir/pid")" = "$dead" ] || fail "primary lock evidence changed while waiting"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_acquire_wait_refusable "$2" 2>/dev/null
+    printf "%s\n" "$?" > "$3"
+  ' _ "$LIB" "$lockdir" "$dir/waited" &
+  waiter=$!
+  sleep 0.5
+  if ! kill -0 "$waiter" 2>/dev/null; then
+    kill -KILL -"$leader" 2>/dev/null || true
+    fail "refusable lock wait returned while the recovery holder group was alive: $(cat "$dir/waited" 2>/dev/null)"
+  fi
+  kill -KILL -"$leader" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 50 ] && kill -0 "$waiter" 2>/dev/null; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if kill -0 "$waiter" 2>/dev/null; then
+    kill "$waiter" 2>/dev/null || true
+    wait "$waiter" 2>/dev/null || true
+    fail "refusable lock wait did not resume after the holder group exited"
+  fi
+  wait "$waiter" 2>/dev/null || true
+  [ "$(cat "$dir/waited" 2>/dev/null)" = 0 ] || fail "refusable lock wait did not acquire after recovery"
+  pass "recovery mutex with a live process group is waited out, then recovered once it exits"
+}
+
+test_lock_legacy_nested_steal_does_not_wedge() {
+  local dir state lockdir dead out
+  dir=$(make_case lock-legacy-nested)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  mkdir "$lockdir" "$lockdir.steal.steal"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  printf '%s\n' "$dead" > "$lockdir.steal.steal/pid"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2"
+    printf "rc=%s\n" "$?"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  [ "$out" = "rc=0" ] || fail "legacy .steal.steal leftover wedged the lock: $out"
+  [ "$(cat "$lockdir.steal.steal/pid")" = "$dead" ] || fail "legacy nested mutex evidence changed"
+  pass "legacy nested steal leftover does not wedge the lock"
+}
+
+test_lock_self_held_recovery_is_reclaimed() {
+  local dir state lockdir dead out
+  dir=$(make_case lock-self-held-recovery)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  mkdir "$lockdir"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_current_pid me
+    mkdir "$2.steal"
+    printf "%s\n" "$me" > "$2.steal/pid"
+    fm_lock_try_acquire "$2"
+    printf "steal=%s " "$?"
+    fm_lock_release "$2"
+    mkdir "$2" "$2.steal" "$2.steal.recovery"
+    printf "%s\n" "$3" > "$2/pid"
+    printf "%s\n" "$3" > "$2.steal/pid"
+    printf "%s\n" "$me" > "$2.steal.recovery/pid"
+    fm_lock_try_acquire "$2"
+    printf "recovery=%s\n" "$?"
+  ' _ "$LIB" "$lockdir" "$dead" 2>&1)
+  [ "$out" = "steal=0 recovery=0" ] || fail "self-held recovery state deadlocked the acquirer: $out"
+  pass "self-held steal and recovery mutexes are reclaimed by their own process"
+}
+
+test_lock_dangling_recovery_link_is_retried() {
+  local dir state lockdir dead out me
+  dir=$(make_case lock-dangling-recovery)
+  state="$dir/state"
+  lockdir="$state/.contend.lock"
+  dead=$(dead_pid)
+  mkdir "$lockdir" "$lockdir.steal"
+  printf '%s\n' "$dead" > "$lockdir/pid"
+  printf '%s\n' "$dead" > "$lockdir.steal/pid"
+  ln -s "$state/.contend.lock.steal.recovery.owner.gone" "$lockdir.steal.recovery"
+  out=$(FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_lock_try_acquire "$2"
+    printf "first=%s " "$?"
+    fm_lock_try_acquire "$2"
+    printf "second=%s me=%s lockpid=%s\n" "$?" "${BASHPID:-$$}" "$(cat "$2/pid" 2>/dev/null || true)"
+  ' _ "$LIB" "$lockdir" 2>&1)
+  case "$out" in
+    "first=1 second=0 "*) ;;
+    *) fail "dangling recovery link refused or wedged the lock: $out" ;;
+  esac
+  me=${out#*me=}; me=${me%% *}
+  [ "$me" = "${out#*lockpid=}" ] || fail "lock after dangling recovery link is not owned by the acquirer: $out"
+  [ ! -e "$lockdir.steal.recovery" ] && [ ! -L "$lockdir.steal.recovery" ] \
+    || fail "dangling recovery link was left behind"
+  pass "dangling recovery link is cleared and retried instead of refused"
 }
 
 test_lock_does_not_steal_live_lock() {
@@ -698,6 +1235,99 @@ test_attached_arm_signal_is_recorded_in_cycle_ledger() {
   is_live_non_zombie "$wpid" || fail "signaling an attached arm terminated the peer watcher"
   stop_seed_watcher "$wpid" "$out"
   pass "attached arm signals record a classified lifecycle entry"
+}
+
+test_arm_term_during_steal_waits_for_watcher_cleanup_trap() {
+  local dir state fakebin armout armpid i dead pidfile status
+  dir=$(make_case arm-term-mid-steal)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  pidfile="$dir/arm.pid"
+  mkdir "$state/.watch.lock"
+  dead=$(dead_pid)
+  printf '%s\n' "$dead" > "$state/.watch.lock/pid"
+  mkdir -p "$fakebin"
+  cat > "$fakebin/ln" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg do last=$arg; done
+case "$last" in
+  *.watch.lock.steal)
+    sleep 0.2
+    arm_pid=$(cat "$FM_TEST_ARM_PID_FILE" 2>/dev/null || true)
+    [ -n "$arm_pid" ] && kill -TERM "$arm_pid" 2>/dev/null || true
+    ;;
+esac
+exec /bin/ln "$@"
+SH
+  chmod +x "$fakebin/ln"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_TEST_ARM_PID_FILE="$pidfile" FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
+  armpid=$!
+  printf '%s\n' "$armpid" > "$pidfile"
+  i=0
+  while [ "$i" -lt 100 ] && is_live_non_zombie "$armpid"; do
+    [ -e "$state/.watch.lock.steal" ] && break
+    sleep 0.02
+    i=$((i + 1))
+  done
+  status=0
+  wait_for_exit "$armpid" 150 || status=$?
+  [ "$status" -eq 143 ] || fail "arm did not finish with TERM after stale-lock recovery (status $status)"
+  [ ! -e "$state/.watch.lock.steal" ] && [ ! -L "$state/.watch.lock.steal" ] \
+    || fail "TERM during startup left the steal marker behind"
+  pass "arm defers TERM until startup watcher can run its lock cleanup"
+}
+
+test_arm_term_bounds_wait_for_stalled_startup() {
+  local dir state fakebin armout pidfile release armpid i status
+  dir=$(make_case arm-term-stalled-startup)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  pidfile="$dir/arm.pid"
+  release="$dir/release"
+  cat > "$fakebin/ln" <<'SH'
+#!/usr/bin/env bash
+last=
+for arg do last=$arg; done
+case "$last" in
+  */.watch.lock)
+    i=0
+    while [ "$i" -lt 100 ] && [ ! -s "$FM_TEST_ARM_PID_FILE" ]; do
+      sleep 0.02
+      i=$((i + 1))
+    done
+    kill -TERM "$(cat "$FM_TEST_ARM_PID_FILE")" 2>/dev/null || true
+    while [ ! -e "$FM_TEST_RELEASE" ]; do sleep 0.05; done
+    ;;
+esac
+exec /bin/ln "$@"
+SH
+  chmod +x "$fakebin/ln"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_STATE_OVERRIDE="$state" \
+    FM_TEST_ARM_PID_FILE="$pidfile" FM_TEST_RELEASE="$release" \
+    FM_ARM_CONFIRM_TIMEOUT=2 FM_POLL=5 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" 2>&1 &
+  armpid=$!
+  printf '%s\n' "$armpid" > "$pidfile"
+  i=0
+  while [ "$i" -lt 100 ] && is_live_non_zombie "$armpid"; do
+    sleep 0.1
+    i=$((i + 1))
+  done
+  if is_live_non_zombie "$armpid"; then
+    : > "$release"
+    wait_for_exit "$armpid" 50 >/dev/null 2>&1 || true
+    fail "arm TERM waited past the confirmation deadline for a stalled startup"
+  fi
+  : > "$release"
+  status=0
+  wait "$armpid" 2>/dev/null || status=$?
+  [ "$status" -eq 143 ] || fail "arm did not finish with TERM after a stalled startup (status $status)"
+  pass "arm TERM stops a startup watcher that never becomes cleanup-ready"
 }
 
 test_arm_starts_and_self_heals() {
@@ -1061,6 +1691,35 @@ SH
   pass "fm_pid_identity is locale-invariant across LC_ALL/LC_TIME"
 }
 
+test_pid_identity_is_terminal_width_invariant() {
+  # The portable fallback records its identity from a wide shell (the arm or
+  # watcher process) but re-reads it inside a narrow-COLUMNS hook, where ps cuts
+  # the command column to the ambient width unless the fallback pins COLUMNS wide.
+  # A truncated command then never equals the recorded one and every fleet command
+  # is denied (issue #799). A long sleep argument makes the cut visible on GNU and
+  # BSD ps alike, so both readings must be byte-identical and carry the whole command.
+  local live no_proc narrow wide
+  local long_arg=300.0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+  no_proc="$TMP_ROOT/no-width-proc"
+  if ! LC_ALL=C ps -p "$$" -o lstart= -o command= >/dev/null 2>&1; then
+    pass "terminal-width check skipped where ps -o lstart= is unsupported"
+    return
+  fi
+  sleep "$long_arg" &
+  live=$!
+  narrow=$(COLUMNS=20 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+  wide=$(COLUMNS=1000 FM_PROC_ROOT_OVERRIDE="$no_proc" bash -c '. "$1"; fm_pid_identity "$2"' _ "$LIB" "$live" 2>/dev/null)
+  kill "$live" 2>/dev/null || true
+  wait "$live" 2>/dev/null || true
+  [ -n "$wide" ] || fail "fm_pid_identity produced no identity under a wide COLUMNS"
+  case "$wide" in
+    *"sleep $long_arg"*) ;;
+    *) fail "fm_pid_identity dropped the full command under a wide COLUMNS (got '$wide')" ;;
+  esac
+  [ "$narrow" = "$wide" ] || fail "fm_pid_identity varied with COLUMNS (narrow '$narrow', wide '$wide')"
+  pass "fm_pid_identity ps fallback is terminal-width-invariant"
+}
+
 write_fake_proc_identity() {
   local proc_root=$1 pid=$2 starttime=$3
   mkdir -p "$proc_root/$pid"
@@ -1165,16 +1824,32 @@ test_msys_pid_identity_uses_proc() {
 test_wait_deadline_reaps_a_stopped_child
 test_singleton_start
 test_pid_identity_is_locale_invariant
+test_pid_identity_is_terminal_width_invariant
 test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
 test_msys_pid_identity_uses_proc
 test_stale_watch_lock_reclaimed
 test_stale_watch_reclaim_publishes_before_clear
 test_live_stale_watch_lock_is_actionable
+test_refused_watch_lock_recovery_is_not_reported_running
+test_live_stalled_watch_lock_is_replaced_past_hard_bound
 test_guard_warnings
 test_lock_single_winner_under_concurrency
 test_lock_steals_dead_pid_lock
 test_lock_stale_steal_single_winner_under_concurrency
+test_lock_reclaims_dead_steal_owner_without_nested_markers
+test_lock_recovers_dead_nested_steal_chain
+test_lock_steal_reap_cannot_remove_successor
+test_lock_reclaims_self_held_steal_mutex
+test_lock_resumes_own_interrupted_steal_reap
 test_lock_live_steal_mutex_is_not_reclaimed
+test_lock_wait_survives_errexit_contention
+test_lock_dead_recovery_holder_is_reclaimed
+test_lock_stale_empty_recovery_holder_is_reclaimed
+test_lock_live_recovery_holder_is_not_reclaimed
+test_lock_recovery_with_live_process_group_is_waited_out
+test_lock_legacy_nested_steal_does_not_wedge
+test_lock_self_held_recovery_is_reclaimed
+test_lock_dangling_recovery_link_is_retried
 test_lock_does_not_steal_live_lock
 test_lock_empty_pid_uses_minimum_grace
 test_lock_late_claim_loses_after_recreate
@@ -1187,6 +1862,8 @@ test_arm_attaches_and_waits_for_live_fresh_watcher
 test_attached_arm_signal_is_recorded_in_cycle_ledger
 test_arm_starts_and_self_heals
 test_arm_hup_cleans_child_and_temp_output
+test_arm_term_during_steal_waits_for_watcher_cleanup_trap
+test_arm_term_bounds_wait_for_stalled_startup
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
