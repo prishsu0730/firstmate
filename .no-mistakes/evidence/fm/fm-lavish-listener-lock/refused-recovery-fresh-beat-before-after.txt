@@ -1,0 +1,13 @@
+=== BEFORE fix (4aa5cf2), fresh heartbeat ===
+$ fm-watch.sh   (lock pid 62252 is dead; recovery reclaim refused)
+lock recovery refused: recovery mutex is stale or unavailable; preserving it without nested recovery: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/tmp.ei6XKiwbFx/state/.watch.lock.steal.recovery
+watcher: already running pid 62252
+exit status: 0
+pid 62252 is NOT running (no watcher is listening)
+
+=== AFTER fix (3d3398c), fresh heartbeat ===
+$ fm-watch.sh   (lock pid 62420 is dead; recovery reclaim refused)
+lock recovery refused: recovery mutex is stale or unavailable; preserving it without nested recovery: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/tmp.W3m59tENfn/state/.watch.lock.steal.recovery
+watcher: lock recovery was refused and no live watcher holds the lock; not listening. Check that /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/tmp.W3m59tENfn/state is writable, then re-arm.
+exit status: 1
+pid 62420 is NOT running (no watcher is listening)
