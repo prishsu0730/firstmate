@@ -1,0 +1,10 @@
+ok - the recorder runs before announcement and a recorded capture acknowledges normally
+ok - a failed recording stays visible, blocks acknowledgement, and record retries it
+ok - a recorder killed mid-write leaves the capture unrecorded and unacknowledgeable
+ok - a hung recorder is stopped at its bound and the capture stays announced
+ok - an untrusted recorder is never run and its captures stay unacknowledged
+ok - a silent no-op capture is announced instead of acknowledged when its record failed
+ok - a worker re-arm refuses to acknowledge an unrecorded round
+ok - an extension capture is never fed to the recorder and never gated by it
+ok - a home with no recorder captures, announces, and acknowledges exactly as before
+# all fm-procevent-recorder tests passed
