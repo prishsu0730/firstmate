@@ -234,7 +234,7 @@ Text for a worker to read and commands that drive a worker's process are separat
 `bin/fm-busy-lib.sh` is the single owner of what "this worker is busy" means, and `bin/fm-busy-event.sh` is the only writer of the per-task records it reads.
 Every classification returns a verdict of busy, idle, unknown, or dead together with the source that produced it, so a consumer or a diagnostic can never confuse semantic state with a fallback.
 
-Each converted adapter reports its own turn lifecycle through a machine-readable contract the vendor already exposes, rather than through rendered footer text: Pi and pi-signed through the Firstmate-owned extension's `agent_start` and `agent_settled` confirmed by `ctx.isIdle()`, omp through its extension's `agent_start` and `agent_end` without `willContinue`, OpenCode through its plugin's semantic `session.status`, Claude through owned `UserPromptSubmit`, `Stop`, `StopFailure`, and `SessionEnd` hooks, Muse through its session log, and Cursor through its conversation transcript.
+Each converted adapter reports its own turn lifecycle through a machine-readable contract the vendor already exposes, rather than through rendered footer text: Pi and pi-signed through the Firstmate-owned extension's `agent_start` and `agent_settled` confirmed by `ctx.isIdle()`, omp through its extension's `agent_start` and `agent_end` without `willContinue`, OpenCode through its plugin's semantic `session.status`, Claude through owned `UserPromptSubmit`, `Stop`, `StopFailure`, and `SessionEnd` hooks plus a permission-dialog `Notification` that records `unknown` until `PostToolUse` or `PostToolUseFailure` restores busy, Muse through its session log, and Cursor through its conversation transcript.
 Kimi behind Pi inherits Pi's lifecycle.
 Codex and standalone Kimi classify unknown behind explicit probes until a semantic source is live-verified for them, and Grok, Rovo, and AGY each keep one clearly isolated rendered-tail busy fallback that can only ever classify their own task.
 The one case where the contract reads rendered text for a converted adapter is the launch-prompt backstop (`fm_busy_launch_prompt_parked` in `bin/fm-busy-lib.sh`): when a record is still the untouched `fm-spawn` seed and the caller supplied a captured pane matching that harness's own recognized interactive launch prompt - a workspace-trust dialog, sign-in screen, or first-run menu - `fm_busy_classify` reports `unknown launch-prompt` instead of `busy fm-spawn`.
@@ -244,7 +244,8 @@ The per-harness signature table lives in `bin/fm-busy-lib.sh`'s header, and [run
 
 Missing, malformed, stale, untrusted, or unverified semantic state is unknown, never idle, and unknown is never promoted to busy either.
 Ordinary task-state consumers act only on an exact busy verdict, so an unreadable worker surfaces for a closer look instead of being absorbed as still-working or written off as finished.
-Endpoint death is the only process-level override and yields dead; child processes, CPU, process sleep state, and marker modification times are not state signals.
+Endpoint death is the only process-level override and yields dead; the one other process fact is a refusal, never a grant: on tmux a stopped foreground process group turns a busy verdict into `unknown process-stopped`.
+Child processes, CPU, and marker modification times are not state signals.
 `state/<id>.turn-ended` files remain wake notifications, not current state.
 
 Each record is bound to an incarnation token minted when the task's wiring is armed, so an event from a superseded incarnation is rejected rather than applied, and a record left behind by one classifies unknown.

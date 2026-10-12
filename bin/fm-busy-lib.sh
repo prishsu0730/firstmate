@@ -1039,7 +1039,7 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
 
 fm_busy_classify_semantic() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
   local backend=$1 target=$2 harness=$3 id=$4 state=$5 tail40=${6-}
-  local out rc r_state r_source native log
+  local out rc r_state r_source r_event native log
   case "$harness" in
     kimi*)
       if ! fm_busy_kimi_verified; then

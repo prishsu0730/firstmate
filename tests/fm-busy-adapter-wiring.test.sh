@@ -274,10 +274,10 @@ test_claude_hooks_semantic_lifecycle() {
 
 # A worker parked at an approval dialog is mid-turn, so none of the turn-lifecycle
 # hooks fires and it kept reading busy. The Notification hook for a permission
-# prompt records unknown; PostToolUse puts busy back only while that exact unknown
-# is still the record. The hook commands run exactly as the generated settings
-# spell them; the Notification event and matcher themselves are docs-only
-# (SUSPECTED), so this proves the wiring and the writer, not the Claude event.
+# prompt records unknown; PostToolUse or PostToolUseFailure puts busy back only
+# while that exact unknown is still the record. The hook commands run exactly as
+# the generated settings spell them; this proves the wiring and the writer, while
+# the live Claude event order is recorded in docs/verification/runtime-backends.md.
 test_claude_permission_prompt_hooks_record_and_clear_unknown() {
   local rec id=busy-cl-3 out state settings
   rec=$(make_spawn_case claude-permission claude "$id")
@@ -290,6 +290,8 @@ test_claude_permission_prompt_hooks_record_and_clear_unknown() {
     || fail "the Notification hook is not scoped to permission_prompt"
   jq -e '.hooks.PostToolUse[0].hooks[0].command' "$settings" >/dev/null \
     || fail "claude hook settings lack PostToolUse"
+  jq -e '.hooks.PostToolUseFailure[0].hooks[0].command' "$settings" >/dev/null \
+    || fail "claude hook settings lack PostToolUseFailure"
 
   run_claude_hook "$settings" UserPromptSubmit || fail "UserPromptSubmit hook command failed"
   out=$(classify claude "$id" "$state")
@@ -303,6 +305,12 @@ test_claude_permission_prompt_hooks_record_and_clear_unknown() {
   run_claude_hook "$settings" PostToolUse || fail "PostToolUse hook command failed"
   out=$(classify claude "$id" "$state")
   [ "$out" = "busy claude-hook" ] || fail "an approved tool finishing must put busy back, got '$out'"
+
+  # An approved tool that fails fires PostToolUseFailure instead of PostToolUse.
+  run_claude_hook "$settings" Notification || fail "Notification hook command failed"
+  run_claude_hook "$settings" PostToolUseFailure || fail "PostToolUseFailure hook command failed"
+  out=$(classify claude "$id" "$state")
+  [ "$out" = "busy claude-hook" ] || fail "an approved tool that fails must put busy back, got '$out'"
 
   # PostToolUse is per tool call: while busy it must change nothing.
   run_claude_hook "$settings" PostToolUse || fail "PostToolUse hook command failed while busy"
@@ -324,7 +332,10 @@ test_claude_permission_prompt_hooks_record_and_clear_unknown() {
   run_claude_hook "$settings" PostToolUse || fail "PostToolUse hook command failed after another unknown"
   out=$(classify claude "$id" "$state")
   [ "$out" = "unknown fm-recovery" ] || fail "PostToolUse must only undo the permission-prompt unknown, got '$out'"
-  pass "claude permission-prompt hooks record unknown and PostToolUse clears exactly that unknown"
+  run_claude_hook "$settings" PostToolUseFailure || fail "PostToolUseFailure hook command failed after another unknown"
+  out=$(classify claude "$id" "$state")
+  [ "$out" = "unknown fm-recovery" ] || fail "PostToolUseFailure must only undo the permission-prompt unknown, got '$out'"
+  pass "claude permission-prompt hooks record unknown and PostToolUse or PostToolUseFailure clears exactly that unknown"
 }
 
 test_claude_hooks_stale_incarnation_harmless() {

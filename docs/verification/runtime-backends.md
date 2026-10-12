@@ -508,6 +508,20 @@ The lab home was deleted and the test entry was removed from the store and verif
 That automated spawn case runs against a fake claude, so it asserts the store entry and the launch command and nothing more; the live arms above are what establish that the entry actually suppresses the dialog.
 The composer-classification record below observes the same gate from the other side, where an untrusted worktree left Claude, Grok, and Muse unverified because the guard reads a first-launch trust dialog as an unreadable composer.
 
+## Claude permission-dialog hook events
+
+Verified 2026-10-12 on Claude Code 2.1.296 in default permission mode, with a settings file that logged every hook event's name.
+Command: `claude --settings <lab>/settings.json --permission-mode default` in a tmux pane, asked to run one Bash command that needs approval.
+
+| Dialog outcome | Hooks fired, in order |
+| --- | --- |
+| Denied with `4. No` | `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `Notification` (`permission_prompt`), then nothing for more than 80 seconds; the pane showed `Interrupted · What should Claude do instead?` |
+| Approved, tool failed (`mkdir` of a missing parent) | `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `Notification` (`permission_prompt`), `PostToolUseFailure`, `Stop` |
+
+A denial fires no `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, or `Stop`, so the busy record keeps the permission-prompt unknown until the next prompt.
+`bin/fm-spawn.sh` therefore wires `PostToolUseFailure` beside `PostToolUse`, and `bin/fm-crew-state.sh` words the verdict to cover an open or a denied dialog.
+`tests/fm-busy-adapter-wiring.test.sh` and `tests/fm-crew-state.test.sh` pin that wiring and wording.
+
 ## Pi seeded-secondmate project trust
 
 [`fm-spawn.sh --help`](../../bin/fm-spawn.sh) owns the seeded-secondmate project-trust approval contract and compatibility fallback.

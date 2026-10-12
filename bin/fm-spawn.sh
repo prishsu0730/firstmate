@@ -4673,16 +4673,19 @@ if [ "$KIND" != secondmate ]; then
     j_stopfail=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event stop-failure 2>/dev/null || true")
     j_sessionend=$(json_escape "$busy_cmd_prefix idle $busy_suffix --event session-end 2>/dev/null || true")
     # A permission dialog sits inside a turn, where no turn-lifecycle hook fires,
-    # so without these two a worker parked at an approval prompt keeps reading
+    # so without these a worker parked at an approval prompt keeps reading
     # busy. The Notification hook (matcher permission_prompt) records unknown;
-    # PostToolUse puts busy back only while that exact unknown is still the
-    # record, so it never reopens a turn that ended. The Notification event and
-    # its matcher come from the Claude Code docs and are not yet proven on a
-    # real session, so a live check must confirm them before this is relied on.
+    # PostToolUse, or PostToolUseFailure when the approved tool fails, puts busy
+    # back only while that exact unknown is still the record, so neither
+    # reopens a turn that ended. A denied dialog interrupts the turn and fires
+    # no hook, so the unknown stays until the next prompt; fm-crew-state words
+    # its verdict to cover both an open and a denied dialog. Live Claude Code
+    # 2.1.296 check: docs/verification/runtime-backends.md.
     j_permission=$(json_escape "$busy_cmd_prefix unknown $busy_suffix --event permission-prompt 2>/dev/null || true")
     j_posttool=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event post-tool-use --only-if-event permission-prompt 2>/dev/null || true")
+    j_posttoolfail=$(json_escape "$busy_cmd_prefix busy $busy_suffix --event post-tool-use-failure --only-if-event permission-prompt 2>/dev/null || true")
     cat >"$WT/.claude/settings.local.json" <<EOF
-{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}],"Notification":[{"matcher":"permission_prompt","hooks":[{"type":"command","command":"$j_permission"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"$j_posttool"}]}]}}
+{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"$j_submit"}]}],"Stop":[{"hooks":[{"type":"command","command":"$j_stop"}]}],"StopFailure":[{"hooks":[{"type":"command","command":"$j_stopfail"}]}],"SessionEnd":[{"hooks":[{"type":"command","command":"$j_sessionend"}]}],"Notification":[{"matcher":"permission_prompt","hooks":[{"type":"command","command":"$j_permission"}]}],"PostToolUse":[{"hooks":[{"type":"command","command":"$j_posttool"}]}],"PostToolUseFailure":[{"hooks":[{"type":"command","command":"$j_posttoolfail"}]}]}}
 EOF
     exclude_path '.claude/settings.local.json'
     ;;
