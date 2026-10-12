@@ -1,0 +1,62 @@
+# Live lab: Claude Code 2.1.296 (Claude Code) primary, FM_HOME=lab, ANTHROPIC_BASE_URL=http://fm-dns-test.invalid, code=plain clone at 5f261c7
+## hook event log (probe hooks from --settings)
+01:45:42 UserPromptSubmit
+02:00:46 StopFailure
+## lab pane
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm
+❯ hi
+  ⎿  UserPromptSubmit hook [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-host-mirror.sh hook claude] timed out after 10s — output discarded. Raise the
+     hook's "timeout" to allow more time.
+⏺ API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)
+✻ Crunched for 15m 4s · done 2:00 AM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 0% full
+  ⏸ manual mode on · ← 3 agents
+## state/.claude-autoarm-epoch
+epoch=1 owner_pid=21429 outcome=arming updated_at=1791741647
+Mon Oct 12 02:00:46 2026     bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-claude-stop-autoarm.sh
+## auto-arm captured arm output
+watcher: started pid=21606 (beacon fresh)
+## live processes
+21429 16542       25:07 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-claude-stop-autoarm.sh
+21575 21429       25:06 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-watch-arm.sh
+21606 21575       25:06 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-watch.sh
+## supervision status
+-rw-r--r--@ 1 priscillahsu  staff    0 Oct 12 02:00 /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.I6MRBk/state/.last-watcher-beat
+lrwxr-xr-x@ 1 priscillahsu  staff  101 Oct 12 02:00 /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.I6MRBk/state/.watch.lock -> /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.I6MRBk/state/.watch.lock.owner.A0pJgG
+
+# Step 2: 02:26:00 kill -TERM watcher pid 21606 (forced arm close)
+## hook event log
+01:45:42 UserPromptSubmit
+02:00:46 StopFailure
+02:27:50 UserPromptSubmit
+02:27:51 StopFailure
+## lab pane
+ ▐▛███▛█   Claude Code v2.1.296
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm
+❯ hi
+  ⎿  UserPromptSubmit hook [[ -z "${GROK_AGENT:-}${GROK_HOOK_EVENT:-}" ] || exit 0; exec "$CLAUDE_PROJECT_DIR"/bin/fm-host-mirror.sh hook claude] timed out after 10s — output discarded. Raise the
+     hook's "timeout" to allow more time.
+⏺ API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)
+✻ Crunched for 15m 4s · done 2:00 AM
+⏺ Stop hook feedback
+⏺ API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)
+✻ Churned for 0s · done 2:27 AM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 0% full
+  ⏸ manual mode on · ← 3 agents
+## state/.claude-autoarm-epoch
+epoch=2 owner_pid=24872 outcome=arming updated_at=1791743271
+Mon Oct 12 02:27:51 2026     bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-claude-stop-autoarm.sh
+## live processes
+24310     1       01:59 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-watch-arm.sh
+24334 24310       01:59 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-watch.sh
+24872 16542       00:11 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-claude-stop-autoarm.sh
+25013 24872       00:11 bash /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-labcode.SKyaBe/fm/bin/fm-watch-arm.sh
