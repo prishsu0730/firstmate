@@ -502,17 +502,32 @@ test_backend_validate_refuses_unknown() {
 }
 
 test_backend_source_shell_portable() {
-  local out status
+  local out status stub probe
   # zsh does not word-split unquoted expansions; sourcing fm-backend.sh from
   # an interactive zsh session must still recognize known backend names.
+  # The claim is name matching and the sibling precheck only: the adapters
+  # find their own siblings through BASH_SOURCE, so zsh is not a full load.
   if command -v zsh >/dev/null 2>&1; then
-    zsh -c "cd '$ROOT' && source bin/fm-backend.sh && fm_backend_source herdr && whence -w fm_backend_herdr_capture >/dev/null" 2>/dev/null \
-      || fail "zsh: fm_backend_source herdr should load the adapter when sourced"
+    zsh -c "cd '$ROOT' && source bin/fm-backend.sh && fm_backend_source herdr" >/dev/null 2>&1 \
+      || fail "zsh: fm_backend_source herdr should accept the known backend name and find its sibling libraries"
     out=$(zsh -c "cd '$ROOT' && source bin/fm-backend.sh && fm_backend_source bogus" 2>&1) \
       && fail "zsh: fm_backend_source bogus should fail"
     assert_contains "$out" "unknown backend 'bogus'" \
       "zsh: fm_backend_source did not reject bogus with the expected error"
     pass "zsh: fm_backend_source recognizes known backends and rejects unknown ones"
+
+    # zsh ties the lowercase `path` array to PATH; a backend loaded while
+    # fm_backend_source clobbers PATH cannot resolve external commands.
+    stub="$TMP_ROOT/zsh-source-path"
+    probe="$stub/probe"
+    mkdir -p "$stub/backends"
+    printf 'command -v dirname > "%s"\n' "$probe" > "$stub/backends/orca.sh"
+    : > "$stub/fm-composer-lib.sh"
+    zsh -c "cd '$ROOT' && source bin/fm-backend.sh && FM_BACKEND_LIB_DIR='$stub' && fm_backend_source orca" >/dev/null 2>&1 \
+      || fail "zsh: fm_backend_source orca should load a stub adapter"
+    [ -s "$probe" ] \
+      || fail "zsh: fm_backend_source clobbered PATH while loading a backend adapter"
+    pass "zsh: fm_backend_source keeps PATH intact while loading a backend adapter"
   else
     pass "zsh: shell-portable backend matching skipped (zsh not found)"
   fi
@@ -593,6 +608,30 @@ test_meta_get_and_backend_of_meta() {
     || fail "fm_meta_get did not preserve last-value or no-final-newline semantics"
 
   pass "fm_meta_get / fm_backend_of_meta: read last key=value and default backend to tmux"
+}
+
+test_tmux_target_exists_requires_pane_id() {
+  local fakebin=$TMP_ROOT/target-exists-fakebin
+  mkdir -p "$fakebin"
+  cat > "$fakebin/tmux" <<'SH'
+#!/usr/bin/env bash
+case "${FM_FAKE_TMUX_MODE:-}" in
+  present) printf '%%7\n'; exit 0 ;;
+  empty) exit 0 ;;
+  error) printf "can't find session\n" >&2; exit 1 ;;
+esac
+exit 2
+SH
+  chmod +x "$fakebin/tmux"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_MODE=present fm_backend_target_exists tmux pilot:0.0 \
+    || fail "fm_backend_target_exists should accept a tmux target that prints its pane id"
+  if PATH="$fakebin:$PATH" FM_FAKE_TMUX_MODE=empty fm_backend_target_exists tmux pilot:0.0; then
+    fail "fm_backend_target_exists should treat exit 0 with empty output as a missing tmux target"
+  fi
+  if PATH="$fakebin:$PATH" FM_FAKE_TMUX_MODE=error fm_backend_target_exists tmux pilot:0.0; then
+    fail "fm_backend_target_exists should treat a failed tmux query as a missing target"
+  fi
+  pass "fm_backend_target_exists: tmux needs a printed pane id (present, empty-output, and failed-query cases)"
 }
 
 test_resolve_selector_three_forms() {
@@ -1212,6 +1251,7 @@ test_backend_source_shell_portable
 test_backend_source_requires_adapter_file
 test_backend_validate_spawn_accepts_orca
 test_meta_get_and_backend_of_meta
+test_tmux_target_exists_requires_pane_id
 test_resolve_selector_three_forms
 test_backend_of_selector_matches_explicit_target_meta
 test_send_tmux_contract
