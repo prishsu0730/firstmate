@@ -2179,6 +2179,50 @@ EOF
   pass "main orphan in-flight stays out of Underway and is disclosed in omitted/gates"
 }
 
+# Work firstmate does itself has no worker metadata. Kind "program" names it:
+# it shows as Underway direct work, never claimed as running (no liveness
+# signal), with an unresolved blocker shown as blocked delivery, while a
+# worker-kind orphan beside it stays a disclosed inventory warning.
+test_main_program_in_flight_is_underway_direct_work() {
+  local home fakebin json canonical
+  home=$(make_home main-program)
+  : > "$home/data/secondmates.md"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] direct-work - Repair the supervision machinery (repo: firstmate) (kind: program) (since 2026-07-11)
+- [ ] gated-direct - Ship the repaired machinery (repo: firstmate) (kind: program) blocked-by: release-gate (since 2026-07-11)
+- [ ] only-orphan - Structured in flight without meta (repo: firstmate) (kind: ship) (since 2026-07-11)
+
+## Queued
+- [ ] release-gate - Release contracts approved (repo: firstmate) (since 2026-07-11)
+
+## Done
+EOF
+  fakebin=$(make_fakebin "$home")
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    (.main_inventory.orphan_in_flight == ["only-orphan"])
+      and (.tasks | length) == 0
+  ' >/dev/null || fail "program work must not count as a worker orphan: $canonical"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    (.in_flight | map({key:.id, value:.}) | from_entries) as $rows
+    | ([.in_flight[].id] | sort) == ["direct-work","gated-direct"]
+      and ($rows["direct-work"].kind == "direct")
+      and ($rows["direct-work"].state == "direct")
+      and ($rows["direct-work"].doing | contains("no liveness signal"))
+      and ($rows["direct-work"].repo == "firstmate")
+      and ($rows["direct-work"].name == "Repair the supervision machinery")
+      and ($rows["gated-direct"].state == "delivery_blocked")
+      and ($rows["gated-direct"].doing | contains("delivery waits on release-gate"))
+      and ([.in_flight[].state] | index("working") | not)
+      and ([.gates[].id] | index("direct-work") | not)
+      and (.gates | any(.id == "(main-inventory)"))
+  ' >/dev/null || fail "program in-flight work was not shown as direct Underway work: $json"
+  pass "main program in-flight shows as Underway direct work; worker orphans stay disclosed"
+}
+
 test_main_unstructured_current_is_disclosed_with_structured_sibling() {
   local home fakebin json canonical
   home=$(make_home main-unstructured)
@@ -3389,6 +3433,7 @@ test_landed_bounded_and_disclosed
 test_live_blocker_is_not_charted_queue_work
 test_captains_call_anti_leak
 test_main_orphan_in_flight_is_disclosed_not_invented
+test_main_program_in_flight_is_underway_direct_work
 test_main_unstructured_current_is_disclosed_with_structured_sibling
 test_main_orphan_counterfactual_meta_clears_inventory_warning
 test_working_captain_holds_keep_their_bucket_surfaces

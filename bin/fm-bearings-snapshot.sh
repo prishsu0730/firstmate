@@ -27,7 +27,11 @@
 # decisions from report or visual-review prose or reimplements snapshot semantics.
 # Underway (in_flight) projects every main live worker plus every active child
 # from every readable secondmate ledger, independently of that home's
-# bearings_state. Each row's name is the durable task title when nonblank and
+# bearings_state, plus each main In flight backlog row of kind program as
+# firstmate's own direct work (kind "direct"), which has no worker record.
+# A direct row never claims to be running, because nothing measures its
+# liveness: its state is "direct", or "delivery_blocked" while its backlog
+# blockers are unresolved, and its doing line names those blockers. Each row's name is the durable task title when nonblank and
 # its durable task id otherwise, so renderers always receive a task-identifying
 # label instead of having to substitute run status. A home classified
 # captain_decision because it has an open
@@ -53,7 +57,8 @@
 #
 # Main-home inventory validity comes from the canonical snapshot's main_inventory
 # object (orphan structured in-flight without meta, unstructured current rows).
-# Bearings never invents Underway rows from backlog-only ids; it discloses those
+# Apart from that declared direct work, Bearings never invents Underway rows
+# from backlog-only ids; it discloses those
 # gaps in omitted[] and, when invalid, a Charted Next gate line so the four-section
 # chat cannot claim an empty fleet while main current state is broken.
 #
@@ -521,7 +526,17 @@ MODEL=$(printf '%s' "$SNAP" | jq \
             name:((.name // "") as $name
                   | (if (($name | type) == "string" and ($name | test("[^[:space:]]")))
                      then $name else ($m.id + "/" + .id) end) | trunc(70)),
-            doing:((.doing // .state) | trunc(90))} ]) as $in_flight_all
+            doing:((.doing // .state) | trunc(90))} ]
+     + [ .backlog.records[]
+         | select(.structured and .current_role == "program")
+         | ((.unresolved_blocker_ids // []) | join(", ")) as $waits_on
+         | {id, kind:"direct",
+            state:(if $waits_on == "" then "direct" else "delivery_blocked" end),
+            repo:(.repo // null),
+            name:((.title // "") as $name
+                  | (if ($name | test("[^[:space:]]")) then $name else .id end) | trunc(70)),
+            doing:((if $waits_on == "" then "firstmate direct work, no worker; no liveness signal"
+                   else "firstmate direct work, no worker; delivery waits on " + $waits_on end) | trunc(90))} ]) as $in_flight_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and .hold_bucket != null)
