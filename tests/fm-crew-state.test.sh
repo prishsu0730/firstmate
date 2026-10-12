@@ -2463,7 +2463,7 @@ test_permission_prompt_reads_as_named_blocker() {
     --source claude-hook --event permission-prompt
   local out; out=$(run_crew_state "$d" feat-p)
   assert_contains "$out" "state: blocked" "an open permission dialog is a blocker, not unknown"
-  assert_contains "$out" "waiting at a permission prompt since" "the blocker names the dialog and when it opened"
+  assert_contains "$out" "stopped at a permission prompt since" "the blocker names the dialog and when it opened"
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" feat-p busy --gen "$gen" \
     --source claude-hook --event post-tool-use --only-if-event permission-prompt
   out=$(run_crew_state "$d" feat-p)

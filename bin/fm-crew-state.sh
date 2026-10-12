@@ -1296,11 +1296,13 @@ if [ "$KIND" != secondmate ]; then
     unknown)
       case "$BUSY_VERDICT" in
         *' permission-prompt')
-          # A worker frozen at a permission dialog needs firstmate, so report it
+          # A worker stopped at a permission dialog needs firstmate, so report it
           # as a named blocker with its start time rather than a bare unknown.
+          # Claude fires no hook when the dialog is denied, so the same record
+          # also covers a denied dialog whose worker now waits for instructions.
           since=$(sed -n 's/.* ts=\([0-9][0-9]*\).*/\1/p' "$STATE/$ID.busy-state" 2>/dev/null | tail -1)
           since=${since:+ since $(date -r "$since" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$since" '+%Y-%m-%d %H:%M' 2>/dev/null)}
-          emit blocked pane "waiting at a permission prompt$since (${BUSY_VERDICT#unknown }); inspect the pane and approve or deny"
+          emit blocked pane "stopped at a permission prompt$since (${BUSY_VERDICT#unknown }): still open, or denied and waiting for instructions; inspect the pane"
           ;;
       esac
       emit unknown pane "harness state unavailable ($BUSY_VERDICT)"
