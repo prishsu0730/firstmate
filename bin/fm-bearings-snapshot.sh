@@ -28,7 +28,10 @@
 # Underway (in_flight) projects every main live worker plus every active child
 # from every readable secondmate ledger, independently of that home's
 # bearings_state, plus each main In flight backlog row of kind program as
-# firstmate's own direct work (kind "direct"), which has no worker record. Each row's name is the durable task title when nonblank and
+# firstmate's own direct work (kind "direct"), which has no worker record.
+# A direct row never claims to be running, because nothing measures its
+# liveness: its state is "direct", or "delivery_blocked" while its backlog
+# blockers are unresolved, and its doing line names those blockers. Each row's name is the durable task title when nonblank and
 # its durable task id otherwise, so renderers always receive a task-identifying
 # label instead of having to substitute run status. A home classified
 # captain_decision because it has an open
@@ -526,12 +529,14 @@ MODEL=$(printf '%s' "$SNAP" | jq \
             doing:((.doing // .state) | trunc(90))} ]
      + [ .backlog.records[]
          | select(.structured and .current_role == "program")
+         | ((.unresolved_blocker_ids // []) | join(", ")) as $waits_on
          | {id, kind:"direct",
-            state:"working",
+            state:(if $waits_on == "" then "direct" else "delivery_blocked" end),
             repo:(.repo // null),
             name:((.title // "") as $name
                   | (if ($name | test("[^[:space:]]")) then $name else .id end) | trunc(70)),
-            doing:"firstmate is working this directly, with no separate worker"} ]) as $in_flight_all
+            doing:((if $waits_on == "" then "firstmate direct work, no worker; no liveness signal"
+                   else "firstmate direct work, no worker; delivery waits on " + $waits_on end) | trunc(90))} ]) as $in_flight_all
   | ([ .backlog.records[]
          | . as $record
          | select(.structured and .hold_bucket != null)
