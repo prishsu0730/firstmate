@@ -2179,6 +2179,42 @@ EOF
   pass "main orphan in-flight stays out of Underway and is disclosed in omitted/gates"
 }
 
+# Work firstmate does itself has no worker metadata. Kind "program" names it:
+# it shows as Underway direct work, while a worker-kind orphan beside it stays
+# a disclosed inventory warning rather than an invented row.
+test_main_program_in_flight_is_underway_direct_work() {
+  local home fakebin json canonical
+  home=$(make_home main-program)
+  : > "$home/data/secondmates.md"
+  cat > "$home/data/backlog.md" <<'EOF'
+## In flight
+- [ ] direct-work - Repair the supervision machinery (repo: firstmate) (kind: program) (since 2026-07-11)
+- [ ] only-orphan - Structured in flight without meta (repo: firstmate) (kind: ship) (since 2026-07-11)
+
+## Queued
+
+## Done
+EOF
+  fakebin=$(make_fakebin "$home")
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    (.main_inventory.orphan_in_flight == ["only-orphan"])
+      and (.tasks | length) == 0
+  ' >/dev/null || fail "program work must not count as a worker orphan: $canonical"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.in_flight[].id] == ["direct-work"])
+      and (.in_flight[0].kind == "direct")
+      and (.in_flight[0].state == "working")
+      and (.in_flight[0].repo == "firstmate")
+      and (.in_flight[0].name == "Repair the supervision machinery")
+      and ([.gates[].id] | index("direct-work") | not)
+      and (.gates | any(.id == "(main-inventory)"))
+  ' >/dev/null || fail "program in-flight work was not shown as direct Underway work: $json"
+  pass "main program in-flight shows as Underway direct work; worker orphans stay disclosed"
+}
+
 test_main_unstructured_current_is_disclosed_with_structured_sibling() {
   local home fakebin json canonical
   home=$(make_home main-unstructured)
@@ -3389,6 +3425,7 @@ test_landed_bounded_and_disclosed
 test_live_blocker_is_not_charted_queue_work
 test_captains_call_anti_leak
 test_main_orphan_in_flight_is_disclosed_not_invented
+test_main_program_in_flight_is_underway_direct_work
 test_main_unstructured_current_is_disclosed_with_structured_sibling
 test_main_orphan_counterfactual_meta_clears_inventory_warning
 test_working_captain_holds_keep_their_bucket_surfaces
