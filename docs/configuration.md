@@ -1947,6 +1947,17 @@ This start-to-start governor is a no-op after a normally blocking poll but caps 
 Real feedback, ended and missing sessions, any other `SERVER_ERROR`, and that same interruption still standing once the bound is spent are all captured and announced normally; `FM_LAVISH_POLL_RETRY_DELAY` is a bounded 1 to 60 second test override for the interval only, and the runner itself stays adapter-agnostic.
 An already-armed Lavish source keeps its registered listener command until it is retired and armed again, so retire the source, then arm it again to adopt this retry policy.
 
+**Record captures with a home recorder (config/procevent-recorder)**
+
+The optional local, gitignored `config/procevent-recorder` lets a home keep its own durable record of every captured result, such as a feedback ledger, without depending on an agent remembering to file it.
+After each built-in capture and before the result is announced, the runner runs it as `<recorder> <adapter> <source-id> <result-file>`, bounded by `FM_PROCEVENT_RECORDER_TIMEOUT` seconds (default 60).
+Exit 0 must mean the capture is in the record now, including a capture recorded earlier; the runner then writes `<result>.recorded` and prints `recorder-fed: <source-id>`.
+A nonzero exit, a hit time bound, or a recorder file that is not a private, single-link, mode-`0700` regular file is never treated as success: the runner writes `<result>.recorder-failed`, keeps the recorder's last 4 KB of output in `<result>.recorder-log`, prints `recorder-failed:` on stderr, and still announces the capture.
+While the recorder file exists, every acknowledgement path - `handled`, a worker's re-arm, and a silent no-op - refuses a capture without `<result>.recorded`, so failed recording can never hide feedback.
+To recover, fix the recorder, then run `bin/fm-procevent.sh record <source-id> <sequence>` to retry it.
+Extension captures, which carry their `<result>.extension` owner marker, are never fed to the recorder and never gated by it.
+`bin/fm-procevent.sh`'s header owns the seam.
+
 ### Crew-hosted Lavish review boards
 
 **Arm and confirm a listener**

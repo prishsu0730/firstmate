@@ -12,6 +12,7 @@
 #   fm-procevent.sh reconcile
 #   fm-procevent.sh classify <result-file>
 #   fm-procevent.sh handled <source-id> <sequence>
+#   fm-procevent.sh record <source-id> <sequence>
 #   fm-procevent.sh retire <source-id> [--if-absent|--if-matches <adapter> -- <argv>...|--if-owner <registration-token>]
 #   fm-procevent.sh sweep-home [--preflight]
 #   fm-procevent.sh binding-retirement-preflight <binding-digest>
@@ -105,6 +106,10 @@
 #            exception: acknowledging the terminal round of a task-owned source
 #            is that board's conclude step, so it also drops the registration
 #            that kept the board with its owner, and reports `retired:` too.
+#            With a home recorder configured it refuses an unrecorded capture
+#            (recorder note below).
+# record     Retry this home's recorder on one captured result; prints
+#            `recorded: id seq` once the capture has its record.
 # retire     Drop a registration, stop a runner this home owns, release the claim.
 #            Idempotent, and still the supported explicit path after a source has
 #            already retired itself on its adapter's terminal verdict. Existing
@@ -207,6 +212,23 @@
 # while ACTING on it is firstmate's judgement, so the capture stays unacknowledged
 # and its `check` wake reaches the handler exactly as it would have anyway.
 #
+# A home may also keep its own durable record of what a capture carried, such as
+# a feedback ledger that must never depend on an agent remembering to file it.
+# An optional captain-private `config/procevent-recorder` (a regular, single-link,
+# mode-0700 file) is run after each built-in capture as `<recorder> <adapter>
+# <source-id> <result-file>`, before the result is announced, bounded by
+# FM_PROCEVENT_RECORDER_TIMEOUT seconds (default 60). Exit 0 means the capture
+# is in the record now, including one recorded earlier; it writes the
+# `<result>.recorded` marker and prints `recorder-fed:`. Any other outcome - a
+# nonzero exit, the time bound, or a recorder file that is not private mode 0700
+# - writes `<result>.recorder-failed`, keeps the recorder's last output in
+# `<result>.recorder-log`, prints `recorder-failed:` on stderr, and leaves the
+# capture announced. While the recorder file exists, acknowledgement is gated:
+# `handled`, a worker's re-arm, and a silent no-op all refuse an unrecorded
+# capture, so feedback is never acknowledged out of sight. `record <source-id>
+# <sequence>` retries the recorder once it is fixed. Extension captures carry
+# their own `.extension` owner marker and are never fed to the recorder or gated.
+#
 # A runner is bound to the HOME that owns it, not to the one session that armed
 # it: a persistent source is meant to outlive that session, so reconcile stops a
 # runner whose source is retired in a live home, and this lease is the backstop
@@ -249,6 +271,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$SCRIPT_DIR/fm-timeout-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -481,6 +505,54 @@ feed_reconcile_requests() {  # <adapter> <source-id> <result-file>
         --source-id "$id" --source "the captured result $id sequence $seq" >/dev/null 2>&1
 }
 
+# Run this home's optional recorder on one captured result (see the recorder
+# note in the header). Returns 0 when the capture is recorded, 10 when no
+# recorder is configured, 1 on any failure, which it leaves on disk.
+record_capture() {  # <adapter> <source-id> <result-file>
+  local adapter=$1 id=$2 result=$3 recorder device seq base secs rc tmp log reason started
+  fm_procevent_recorder_configured "$STATE" || return 10
+  recorder=$(fm_procevent_recorder_file "$STATE")
+  seq=$(fm_procevent_result_sequence "$result") || return 1
+  fm_procevent_is_recorded "$STATE" "$id" "$seq" && return 0
+  base=${result%.result}
+  secs=${FM_PROCEVENT_RECORDER_TIMEOUT:-60}
+  case "$secs" in ''|*[!0-9]*|0) secs=60 ;; esac
+  rc=0
+  if [ -f "$recorder" ] && [ ! -L "$recorder" ] \
+    && device=$(fm_pr_file_device "$recorder") \
+    && fm_pr_private_file_valid "$recorder" 700 "$device"; then
+    started=$(date +%s)
+    log=$(umask 077; mktemp "$(dirname "$result")/.recorder-log.XXXXXX") || return 1
+    fm_run_timed "$secs" "$recorder" "$adapter" "$id" "$result" \
+      </dev/null >"$log" 2>&1 || rc=$?
+    tail -c 4096 "$log" >"$base.recorder-log" 2>/dev/null || true
+    rm -f -- "$log"
+    if [ "$rc" -eq 0 ]; then
+      reason=
+    elif fm_timed_out "$rc" && [ $(( $(date +%s) - started )) -ge "$secs" ]; then
+      reason="timed out after ${secs}s"
+    else
+      reason="exit $rc"
+    fi
+  else
+    reason="recorder is not a private mode-0700 regular file"
+  fi
+  if [ -z "$reason" ]; then
+    tmp=$(umask 077; mktemp "$(dirname "$result")/.recorded.XXXXXX") || return 1
+    printf 'recorded %s\n' "$(date +%s)" >"$tmp"
+    if ln "$tmp" "$(fm_procevent_recorded_marker "$STATE" "$id" "$seq")" 2>/dev/null \
+      || fm_procevent_is_recorded "$STATE" "$id" "$seq"; then
+      rm -f -- "$tmp" "$base.recorder-failed"
+      return 0
+    fi
+    rm -f -- "$tmp"
+    reason="cannot write the recorded marker"
+  fi
+  printf '%s %s\n' "$(date +%s)" "$reason" >"$base.recorder-failed" 2>/dev/null || true
+  printf 'recorder-failed: %s %s (%s)\n' "$id" "$seq" "$reason" >&2
+  return 1
+}
+
 read_adapter() {  # <source-id>
   local f; f=$(source_file "$1")
   [ -f "$f" ] && [ ! -L "$f" ] || return 1
@@ -553,7 +625,7 @@ cmd_register() {
 
 cmd_register_task() {
   local adapter=${1-} id=${2-} task=${3-} sep=${4-} result pending pending_adapter
-  local reply_source='' reply_dest='' stale arg i adopting=0 pending_owner prior_record=''
+  local reply_source='' reply_dest='' stale arg i adopting=0 pending_owner prior_record='' rearm_status=0
   local pending_rounds=0 delivered
   local -a argv=() kept=()
   shift 4 2>/dev/null || usage
@@ -681,12 +753,18 @@ cmd_register_task() {
   while IFS= read -r pending; do
     [ -n "$pending" ] || continue
     result=$pending
-    fm_procevent_mark_handled "$STATE" "$id" "$(fm_procevent_result_sequence "$result")" >/dev/null 2>&1 || {
+    rearm_status=0
+    fm_procevent_mark_handled "$STATE" "$id" "$(fm_procevent_result_sequence "$result")" >/dev/null 2>&1 \
+      || rearm_status=$?
+    case "$rearm_status" in 0|1) ;; *)
       [ -z "$prior_record" ] || mv -f -- "$prior_record" "$(source_file "$id")"
       [ -z "$reply_dest" ] || rm -f -- "$reply_dest"
       fm_procevent_source_lock_release "$id"
+      [ "$rearm_status" -eq 3 ] \
+        && die "captured round is not recorded by config/procevent-recorder; run bin/fm-procevent.sh record $id $(fm_procevent_result_sequence "$result") first: $result"
       die "cannot acknowledge captured round: $result"
-    }
+      ;;
+    esac
   done < <(source_pending "$id")
   [ -z "$prior_record" ] || rm -f -- "$prior_record"
   for stale in "$REG/.$id.reply."*; do
@@ -1375,6 +1453,11 @@ EOF
   if [ "$extension_owner" -eq 0 ] \
     && feed_keyed_answers "$adapter" "$id" "$durable"; then
     printf 'answers-fed: %s\n' "$id"
+  fi
+  if [ "$extension_owner" -eq 0 ]; then
+    if record_capture "$adapter" "$id" "$durable"; then
+      printf 'recorder-fed: %s\n' "$id"
+    fi
   fi
 
   # A self-announcing adapter's autohandle announces through its own durable
@@ -2078,6 +2161,22 @@ cmd_classify() {
   "$script" classify "$result"
 }
 
+cmd_record() {
+  local id=${1-} seq=${2-} inbox result adapter
+  fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
+  case "$seq" in ''|*[!0-9]*) die "sequence must be a nonnegative integer: $seq" ;; esac
+  [ "$#" -eq 2 ] || die "usage: record <source-id> <sequence>"
+  fm_procevent_recorder_configured "$STATE" || die "this home has no config/procevent-recorder"
+  inbox=$(fm_procevent_inbox_dir "$STATE")
+  result="$inbox/$id.$seq.result"
+  [ -f "$result" ] && [ ! -L "$result" ] || die "no captured result: $id $seq"
+  [ ! -e "$inbox/$id.$seq.extension" ] && [ ! -L "$inbox/$id.$seq.extension" ] \
+    || die "extension captures are never fed to config/procevent-recorder: $id $seq"
+  adapter=$(fm_procevent_result_adapter "$result" 2>/dev/null) || die "captured result has no adapter: $id $seq"
+  record_capture "$adapter" "$id" "$result" || exit 1
+  printf 'recorded: %s %s\n' "$id" "$seq"
+}
+
 cmd_handled() {
   local id=${1-} seq=${2-} status result='' result_adapter='' conclude=0 registration='' retained=''
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
@@ -2124,6 +2223,7 @@ cmd_handled() {
   case "$status" in
     0) printf 'handled: %s %s\n' "$id" "$seq" ;;
     1) printf 'already-handled: %s %s\n' "$id" "$seq" ;;
+    3) die "capture $id $seq is not recorded by config/procevent-recorder (see its .recorder-failed and .recorder-log); fix the recorder, then run bin/fm-procevent.sh record $id $seq" ;;
     *) die "cannot durably record handling: $id $seq" ;;
   esac
   if [ "$conclude" -eq 1 ]; then
@@ -2558,6 +2658,7 @@ case "${1-}" in
   reconcile)          shift; cmd_reconcile "$@" ;;
   classify)           shift; cmd_classify "$@" ;;
   handled)            shift; cmd_handled "$@" ;;
+  record)             shift; cmd_record "$@" ;;
   retire)             shift; cmd_retire "$@" ;;
   sweep-home)         shift; cmd_sweep_home "$@" ;;
   binding-retirement-preflight) shift; cmd_binding_retirement_preflight "$@" ;;
