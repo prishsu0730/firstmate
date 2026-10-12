@@ -1029,7 +1029,7 @@ test_turn_ended_churn_resets_prior_stale_classification() {
   printf 'idle prompt from an earlier turn' > "$capture_file"
   wait_for_exit "$pid" 100 \
     || { reap "$pid"; fail "a stopped pane matching an earlier stale render waited for the wedge timeout"; }
-  grep -Fx "stale: $window" "$out" >/dev/null \
+  grep -F "stale: $window" "$out" >/dev/null \
     || fail "the returned stale render did not surface through ordinary staleness"
   grep -F "possible wedge" "$out" >/dev/null \
     && fail "the returned stale render inherited the earlier quiet interval's wedge classification"
@@ -2437,6 +2437,72 @@ test_nonterminal_stale_not_working_surfaced() {
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "drain after the immediate stale failed"
   grep "$(printf '\tstale\t')" "$drain_out" | grep -F "$window" >/dev/null || fail "immediate stale wake was not queued"
   pass "a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)"
+}
+
+# A quiet pane whose harness state nothing can verify (Codex: unknown
+# codex-unverified) is surfaced once, and its line says why it needs a look.
+# Every other harness, and a Codex worker under a declared wait, keeps the plain
+# `stale: <window>` reason byte for byte.
+# run_quiet_stale_case <name> <harness> <status-line|-> <current-command> <verdict>
+# leaves the watcher output in <case>/watch.out and the drained queue in drain.out.
+run_quiet_stale_case() {
+  local name=$1 harness=$2 status_line=$3 cmd=$4 verdict=$5
+  local dir state fakebin out drain_out capture_file window key sig pid
+  dir=$(make_case "$name"); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"; capture_file="$dir/pane.txt"
+  window="test:fm-$name"
+  printf 'sitting on a screen that never changes' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=%s\n' "$window" "$harness" > "$state/$name.meta"
+  if [ "$status_line" != - ]; then
+    printf '%s\n' "$status_line" > "$state/$name.status"
+    sig=$(seen_sig "$state/$name.status"); printf '%s' "$sig" > "$state/.seen-${name}_status"
+  fi
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text 'sitting on a screen that never changes')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+  export FM_FAKE_CREW_STATE="$verdict"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND="$cmd" \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_STALE_ESCALATE_SECS=999 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "$name: watcher did not surface the quiet pane at once"; }
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null || fail "$name: drain after the stale failed"
+  unset FM_FAKE_CREW_STATE
+}
+
+test_unverified_codex_quiet_pane_says_it_needs_a_look() {
+  local dir window
+  run_quiet_stale_case codexquiet codex - codex \
+    'state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
+  dir="$TMP_ROOT/codexquiet"; window="test:fm-codexquiet"
+  grep -F "stale: $window (" "$dir/watch.out" >/dev/null \
+    || fail "the quiet unverified Codex worker's wake did not carry the needs-a-look detail: $(cat "$dir/watch.out")"
+  grep -F "no verified busy state" "$dir/watch.out" >/dev/null \
+    || fail "the wake did not say the Codex busy state is unverified"
+  grep -F "possible wedge" "$dir/watch.out" >/dev/null && fail "an immediate quiet-pane stale was mislabeled a wedge"
+  [ "$(grep -c "$(printf '\tstale\t')" "$dir/drain.out")" = 1 ] \
+    || fail "the quiet unverified Codex worker did not produce exactly one queued stale wake: $(cat "$dir/drain.out")"
+  grep "$(printf '\tstale\t')" "$dir/drain.out" | grep -F "$window" | grep -F "no verified busy state" >/dev/null \
+    || fail "the queued stale record did not carry the same detail"
+  pass "a quiet Codex worker with no verified busy state is surfaced once with a needs-a-look line"
+}
+
+test_quiet_pane_detail_stays_off_other_harnesses_and_declared_waits() {
+  local dir window
+  run_quiet_stale_case claudequiet claude - claude \
+    'state: unknown · source: pane · no current-state source available'
+  dir="$TMP_ROOT/claudequiet"; window="test:fm-claudequiet"
+  grep -Fx "stale: $window" "$dir/watch.out" >/dev/null \
+    || fail "a quiet non-Codex worker's stale reason changed: $(cat "$dir/watch.out")"
+  run_quiet_stale_case codexheld codex 'paused: holding for the upstream tool release' codex \
+    'state: unknown · source: pane · harness state unavailable (unknown codex-unverified)'
+  dir="$TMP_ROOT/codexheld"; window="test:fm-codexheld"
+  grep -F "stale: $window" "$dir/watch.out" >/dev/null \
+    || fail "the declared-wait Codex worker was not surfaced: $(cat "$dir/watch.out")"
+  grep -F "no verified busy state" "$dir/watch.out" >/dev/null \
+    && fail "a Codex worker under a declared wait was labeled as needing a look"
+  pass "the needs-a-look detail stays off other harnesses and off a Codex worker's declared wait"
 }
 
 # --- non-terminal stale, crew DECLARED a pause: absorbed, re-surfaced on a long
@@ -6829,6 +6895,8 @@ test_busy_declared_pause_is_rechecked_not_wedge_escalated
 test_afk_busy_declared_pause_hands_off_plain_stale
 test_afk_busy_declared_pause_ticking_pane_hands_off_once
 test_nonterminal_stale_not_working_surfaced
+test_unverified_codex_quiet_pane_says_it_needs_a_look
+test_quiet_pane_detail_stays_off_other_harnesses_and_declared_waits
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
 test_own_work_wait_keeps_first_alert_then_long_cadence

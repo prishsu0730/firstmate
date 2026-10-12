@@ -231,7 +231,7 @@ Each pass polled `state/<id>.busy-state` while a real turn ran.
 | omp | 18.1.11 | Extension `agent_start` / `agent_end` without `willContinue` | Live Herdr scout on `openai-codex/gpt-6-astra` (2026-09-05): the spawn seed `busy source=fm-spawn`, then `busy source=omp-ext event=agent-start`, then `idle source=omp-ext event=agent-end` at the natural end of the brief; a steer through `fm-send` reopened `busy … agent-start`, and a control-plane interrupt closed it with `idle … agent-end` (omp fires `agent_end` on an interrupted turn). `ctx.isIdle()` is deliberately not consulted because it reads false at a natural TUI `agent_end`. |
 | OpenCode | 1.17.18 | Plugin `session.status` | In a real TUI pane: seed, then `busy source=opencode-plugin event=session-busy`, then `idle source=opencode-plugin event=session-status-idle`. |
 | Claude | 2.1.220 (Claude Code) | Hooks `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd` | `UserPromptSubmit` fired for the argv launch prompt and each steer, and `Stop` closed every completed turn. A mid-stream Escape interrupt fired no closing hook, which is why the firstmate-controlled clear exists. `StopFailure` and `SessionEnd` are wired from the four hook names present in the installed binary; only the abnormal paths they cover were not reproduced live. |
-| Codex | codex-cli 0.145.0 | None usable | See below; classifies `unknown codex-unverified`. |
+| Codex | codex-cli 0.145.0, daemon start re-run on 0.162.1 | None usable | See below; classifies `unknown codex-unverified`. |
 | Kimi (standalone) | not installed | None usable | No binary on `PATH`, so the gate stays closed and it classifies `unknown kimi-unverified`. |
 | Grok | 0.2.112 | Isolated rendered-tail fallback | Retained unconverted; the approved audit could not credit a live structured-lifecycle run. |
 
@@ -246,6 +246,19 @@ The daemon refused with `managed standalone Codex install not found`, and an int
 In this 2026-07-28 Codex 0.145.0 semantic-busy probe, Firstmate-written lifecycle project hooks under `<worktree>/.codex/hooks.json` fired for neither an interactive pane whose directory trust was granted nor `codex exec`, in both cases with `--dangerously-bypass-hook-trust`, while an untracked global probe fired in the same runs; Firstmate does not ship, install, recommend, or depend on that global path.
 Codex also exposes no `StopFailure` hook, so an API-error turn end would need separate coverage even after hook discovery works.
 The app-server protocol schema does define the required lifecycle (`turn/started`, plus a `turn/completed` status of `completed`, `interrupted`, `failed`, or `inProgress`), so the gate is a reachability problem rather than a protocol gap.
+
+Re-run on codex-cli 0.162.1 (2026-10-12) in a lab `CODEX_HOME`, without a login:
+
+```sh
+CODEX_HOME=/tmp/fmp0b/ch codex app-server daemon start
+```
+
+The daemon now installs a managed copy under that `CODEX_HOME` and starts (`"status":"started"`, `"appServerVersion":"0.162.1"`, control socket under the same `CODEX_HOME`) where 0.145.0 refused with `managed standalone Codex install not found`.
+Whether an interactive TUI worker's turns are routed through that daemon, and whether lifecycle hooks fire for a Firstmate-style launch, still need an authenticated live turn, so the gate stays closed and both probes remain open.
+Crewmate and scout Codex launches pass `--disable hooks` on purpose (see the `codex` arm of `bin/fm-spawn.sh`), so a hooks-based source also needs a decision about the hook-trust dialog before it can be wired.
+
+A Codex worker whose pane stops changing therefore reaches the stale path with the verdict `unknown codex-unverified` and is surfaced at once, once, with a line that says its busy state is unverified; `tests/fm-watch-triage.test.sh` pins that wording and its absence for other harnesses and for a declared wait.
+A pane that keeps changing while the worker is stuck never reaches the stale path, because the busy-turn bound only applies to a pane that classifies as busy.
 
 Deterministic entry points:
 

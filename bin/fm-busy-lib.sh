@@ -163,6 +163,9 @@ fm_busy_kimi_verified() {
 # but an interactive TUI worker neither starts nor attaches to the
 # app-server daemon, and `codex app-server daemon start` refuses outside the
 # managed standalone install, so no client can observe a pane worker's turns.
+# codex-cli 0.162.1 (2026-10-12): the daemon now starts per CODEX_HOME, but
+# routing of an interactive worker's turns through it is unproven without an
+# authenticated live run, so the verdict is unchanged.
 fm_busy_codex_appserver_observable() {
   return 1
 }
@@ -186,6 +189,17 @@ fm_busy_codex_hooks_verified() {
 # classifier reports unknown codex-unverified until it opens.
 fm_busy_codex_semantic_source() {
   fm_busy_codex_appserver_observable || fm_busy_codex_hooks_verified
+}
+
+# fm_busy_codex_state_unverified: 0 when <harness> is a Codex worker whose busy
+# state fm_busy_classify can only report as unknown codex-unverified, so a quiet
+# pane cannot be told apart from a finished or stuck worker. Pure: it reads no
+# pane, record, or process, and shares the one gate above rather than restating it.
+fm_busy_codex_state_unverified() {  # <harness>
+  case "${1:-}" in
+    codex*) fm_busy_codex_semantic_source && return 1; return 0 ;;
+  esac
+  return 1
 }
 
 fm_busy_record_path() {  # <state-dir> <id>

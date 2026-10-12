@@ -81,6 +81,13 @@
 #   stale: <window> (steering-inbox busy bookkeeping unwritable: ...)
 #                          steering-inbox recovery; bin/fm-task-inbox-lib.sh owns
 #                          delivery-attempt, busy-deferral, and unavailable-endpoint policy
+#   stale: <window> (codex worker with no verified busy state, ...)
+#                          the first-sight reason for a quiet non-terminal pane
+#                          whose worker is Codex while no Codex busy source is
+#                          verified (fm_busy_codex_state_unverified), so the
+#                          pane may be finished, waiting, or stuck; never used
+#                          for a declared wait or a captain hold, which keep the
+#                          plain reason
 #   check: <script>: <out> authenticated check output, always actionable
 #   check: process-event result captured: <keys>
 #                          a durably captured process-to-event result is queued
@@ -1913,7 +1920,7 @@ captain_call_stale_bound() {  # <window-key> <task>
 # above): the status line the worker declared, and the backlog hold firstmate
 # recorded once the captain took the work in hand.
 surface_nonterminal_stale() {  # <window> <hash>
-  local win=$1 h=$2 key task last declared=1 bounded=1 throttled=1 until now
+  local win=$1 h=$2 key task last declared=1 bounded=1 throttled=1 until now reason
   key=$(window_key "$win")
   task=$(window_to_task "$win" "$STATE")
   last=$(status_declared_wait_line "$STATE/$task.status")
@@ -1948,8 +1955,17 @@ surface_nonterminal_stale() {  # <window> <hash>
   elif [ -n "$STALE_WAIT_DECLARATION" ]; then
     bounded=0
   fi
+  # A quiet Codex worker has no verified busy source, so this wake is the only
+  # place its finished, waiting, and stuck cases meet: say so on the line. Only a
+  # worker with no declared wait or captain hold gets the detail, and the window
+  # stays the first token so every consumer of the plain reason reads it as before.
+  reason="stale: $win"
+  if [ "$declared" -ne 0 ] && [ "$bounded" -ne 0 ] \
+    && fm_busy_codex_state_unverified "$(window_harness "$win")"; then
+    reason="stale: $win (codex worker with no verified busy state, so a quiet pane may be finished, waiting, or stuck; inspect it)"
+  fi
   if [ "$throttled" -ne 0 ]; then
-    fm_wake_append stale "$win" "stale: $win" || exit 1
+    fm_wake_append stale "$win" "$reason" || exit 1
     stale_wait_record "$key"
   fi
   printf '%s' "$h" > "$STATE/.stale-$key"
@@ -1973,7 +1989,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     triage_log "absorbed non-terminal stale (declared wait or open captain call already re-surfaced this window): $win"
     return 0
   fi
-  wake "stale: $win"
+  wake "$reason"
 }
 
 # Check and heartbeat cadence must survive actionable exits and restarts: the
