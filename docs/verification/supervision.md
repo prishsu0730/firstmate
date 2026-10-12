@@ -511,7 +511,7 @@ The timeout hook trapped `TERM`, backgrounded `sleep 300`, waited, and on `TERM`
 This supports registering `bin/fm-claude-stop-autoarm.sh` on `StopFailure` as well as `Stop` in `.claude/settings.json`.
 It was measured on Claude Code 2.1.296 on macOS arm64, in a scratch directory with no Firstmate hooks loaded, with `ANTHROPIC_BASE_URL=http://fm-dns-test.invalid` so every API call failed name resolution.
 
-A headless `claude -p "hi" --settings <probe>/settings.json` run with logging hooks on `UserPromptSubmit`, `Stop`, `StopFailure`, and `SessionEnd` printed `API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)` after about three minutes of retries.
+A headless `claude -p "hi" --settings <probe>/settings.json` run with logging hooks on `UserPromptSubmit`, `Stop`, `StopFailure`, and `SessionEnd` printed `API Error: Can't reach the API server` followed by a DNS hint ending in `(ENOTFOUND)` after about three minutes of retries.
 Its hook log recorded `UserPromptSubmit`, then `StopFailure` with `"error":"server_error"` and that message as `last_assistant_message`, then `SessionEnd`; `Stop` never fired.
 
 An interactive session on a tmux socket registered one `StopFailure` hook with `asyncRewake: true` that slept 5 seconds, printed a reply request to stderr, and exited 2, standing down after three firings.
