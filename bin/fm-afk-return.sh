@@ -885,10 +885,7 @@ EOF
     return 3
   fi
 
-  if ! {
-    print_evidence "$evidence"
-    printf 'fm-afk-return: catch-up clear; ordinary captain work may proceed\n'
-  } >> "$presentation"; then
+  if ! print_evidence "$evidence" >> "$presentation"; then
     append_evidence lifecycle 'return presentation could not be prepared; retry catch-up before ordinary work' "$evidence"
     write_gate "$evidence" "$blockers" || { rm -f "$evidence" "$blockers" "$drain_err" "$presentation"; return 1; }
     printf 'fm-afk-return: return presentation could not be prepared; catch-up remains pending\n' >&2
@@ -914,6 +911,7 @@ EOF
   rm -f "$GATE"
   clear_delivery_artifacts
   rm -f "$evidence" "$blockers" "$drain_err" "$presentation"
+  printf 'fm-afk-return: catch-up clear; ordinary captain work may proceed\n'
   return 0
 }
 
