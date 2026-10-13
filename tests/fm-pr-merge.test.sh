@@ -4025,33 +4025,6 @@ test_file_boundary_absent_list_changes_nothing
 test_file_boundary_unreadable_file_list_refuses
 test_file_boundary_on_gitlab_refuses
 
-test_file_boundary_unbound_task_refuses() {
-  local case_dir
-  case_dir=$(make_case boundary-unbound)
-  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
-  add_pr_files_mock "$case_dir" bin/fm-brief.sh
-  write_boundary_list "$case_dir" bin/fm-brief.sh
-  run_required_case "$case_dir" 45
-  expect_code 1 "$RC" "boundary-unbound: a bounded task with no bound pull request must not merge"
-  assert_grep 'no pull request was bound to it before this merge' "$case_dir/stderr" \
-    "boundary-unbound: the refusal did not say why"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-unbound: the merge reached the forge"
-  pass "fm-pr-merge refuses a bounded task whose pull request was not already bound to it"
-}
-
-test_file_boundary_different_bound_pr_refuses() {
-  local case_dir
-  case_dir=$(make_case boundary-other-pr)
-  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
-  add_pr_files_mock "$case_dir" bin/fm-brief.sh
-  write_boundary_list "$case_dir" bin/fm-brief.sh
-  bind_boundary_pr "$case_dir" 1
-  run_required_case "$case_dir" 46
-  expect_code 1 "$RC" "boundary-other-pr: a pull request the task does not own must not merge"
-  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-other-pr: the merge reached the forge"
-  pass "fm-pr-merge refuses a pull request that is not the one bound to the bounded task"
-}
-
 test_file_boundary_wrong_task_id_refuses() {
   local case_dir
   case_dir=$(make_case boundary-wrong-id)
@@ -4096,7 +4069,5 @@ test_file_boundary_lost_list_refuses() {
   pass "fm-pr-merge refuses a lost boundary record, and leaves a never-bounded task alone"
 }
 
-test_file_boundary_unbound_task_refuses
-test_file_boundary_different_bound_pr_refuses
 test_file_boundary_wrong_task_id_refuses
 test_file_boundary_lost_list_refuses

@@ -484,6 +484,23 @@ test_a_task_never_briefed_with_a_list_is_untouched() {
   pass "fm-file-boundary leaves a task that was never briefed with a list exactly as before"
 }
 
+test_a_marker_quoted_outside_the_allowed_files_section_is_no_boundary() {
+  local case_dir
+  case_dir=$(make_case quoted-marker)
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+    "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes >/dev/null \
+    || fail "quoted-marker: the plain brief did not scaffold"
+  printf '%s\n' 'The earlier brief said:' 'File boundary: required' '# Allowed files' '' 'File boundary: required' \
+    >> "$case_dir/home/data/$TASK/brief.md"
+  commit_files "$case_dir" anything/at/all.txt
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "quoted-marker: a task with no list must pass (stderr: $ERR)"
+  assert_contains "$OUT" 'no boundary recorded' "quoted-marker: the note was not printed"
+  run_checker "$case_dir" recorded "$TASK"
+  expect_code 1 "$RC" "quoted-marker: recorded must exit 1"
+  pass "fm-file-boundary ignores the boundary marker anywhere but right after the Allowed files heading"
+}
+
 # The command a brief scaffolded with --allowed-files hands its worker must run
 # as printed, from the worker's own worktree, and give the verdict.
 test_brief_command_runs_as_printed() {
@@ -563,3 +580,4 @@ test_newline_in_a_pr_path_never_splits_into_allowed_names
 test_a_lost_list_fails_closed
 test_an_unreadable_task_directory_fails_closed
 test_a_task_never_briefed_with_a_list_is_untouched
+test_a_marker_quoted_outside_the_allowed_files_section_is_no_boundary

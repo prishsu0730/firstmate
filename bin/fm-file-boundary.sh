@@ -29,9 +29,10 @@
 # <data>/<task-id>/allowed-files, one path or glob per line, already validated
 # and stripped of blank and comment lines, and this script is the only reader
 # of that path. The same scaffold writes a `File boundary: required` line into
-# <data>/<task-id>/brief.md, so a list that is later deleted or made unreadable
+# <data>/<task-id>/brief.md right after its `# Allowed files` heading, and only
+# that pair counts, so a list that is later deleted or made unreadable
 # is found missing rather than taken for a task that never had one; a task
-# whose brief carries no such line, or that has no brief, has no boundary. The
+# whose brief carries no such pair, or that has no brief, has no boundary. The
 # record lives beside the brief rather than in state/<id>.meta because
 # bin/fm-spawn.sh publishes that file fresh at every spawn and owns its field
 # set, while the data directory is the task's private record that no CI job or
@@ -113,6 +114,7 @@ fi
 
 LIST="$DATA/$ID/allowed-files"
 BRIEF_FILE="$DATA/$ID/brief.md"
+BOUNDARY_HEADING='# Allowed files'
 BOUNDARY_MARKER='File boundary: required'
 
 # Whether the task has a boundary, and if it does whether it can be read:
@@ -121,7 +123,7 @@ BOUNDARY_MARKER='File boundary: required'
 BOUNDARY=none
 BOUNDARY_WHY=
 resolve_boundary() {
-  local line
+  local line prev=
   if [ -e "$LIST" ] || [ -L "$LIST" ]; then
     if [ -f "$LIST" ] && [ -r "$LIST" ]; then
       BOUNDARY=list
@@ -143,11 +145,12 @@ resolve_boundary() {
     return 0
   fi
   while IFS= read -r line || [ -n "$line" ]; do
-    if [ "$line" = "$BOUNDARY_MARKER" ]; then
+    if [ "$prev" = "$BOUNDARY_HEADING" ] && [ "$line" = "$BOUNDARY_MARKER" ]; then
       BOUNDARY=lost
       BOUNDARY_WHY="task $ID was briefed with an allowed-file list but $LIST is missing"
       return 0
     fi
+    prev=$line
   done < "$BRIEF_FILE"
   return 0
 }

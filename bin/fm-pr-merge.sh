@@ -128,10 +128,13 @@
 # merge. bin/fm-file-boundary.sh owns the list and the comparison; a task with
 # no list never reaches it, so its merge is exactly what it was. A list that
 # cannot be checked on this forge or read at this time refuses rather than
-# passing, as does a recorded list that has gone missing. The boundary is only
-# trusted for the pull request the task was already bound to before this run: an
-# unbound or different one refuses, and so does merging a pull request that
-# another task with a boundary owns under a task id that has none.
+# passing, as does a recorded list that has gone missing. The refusal fires only
+# when the task being merged, or the task recorded for this pull request, has a
+# list: merging a pull request that another task with a boundary owns under a
+# task id that has none refuses, so naming the wrong id cannot skip the
+# boundary, while an unbounded pull request that no bounded task claims is
+# untouched. Which pull request the task may merge stays the job of the
+# recorded pull request identity check below.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -452,11 +455,6 @@ if [ "$PROVIDER" = github ]; then
     exit 1
   fi
 fi
-
-# The pull request this task was bound to before this run, read before
-# record_pr_metadata writes the one being merged: a file boundary is only
-# trusted for the pull request the task was already known to own.
-RECORDED_PR_BEFORE=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
@@ -1143,15 +1141,6 @@ require_file_boundary() {
       return 1
       ;;
   esac
-  # The boundary is only trusted for the pull request this task already owned.
-  if [ -z "$RECORDED_PR_BEFORE" ]; then
-    echo "error: refusing to merge $URL: task $ID has a file boundary but no pull request was bound to it before this merge" >&2
-    return 1
-  fi
-  if [ "$RECORDED_PR_BEFORE" != "$URL" ]; then
-    echo "error: refusing to merge $URL: task $ID has a file boundary and is bound to $RECORDED_PR_BEFORE, not this pull request" >&2
-    return 1
-  fi
   output=$(file_boundary check "$ID" --pr "$URL" --head "$FM_PR_MERGE_HEAD" 2>&1) \
     || check_status=$?
   if [ "$check_status" -ne 0 ]; then
