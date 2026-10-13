@@ -143,7 +143,7 @@ changed_from_branch() {
   [ -n "$ref" ] || die "cannot find the base branch to compare against in $wt${base:+ (base_branch=$base)}"
   merge_base=$(git -C "$wt" merge-base "$ref" HEAD 2>/dev/null) \
     || die "cannot find a merge base between $ref and HEAD in $wt"
-  CHANGED=$(git -c core.quotePath=false -C "$wt" diff --no-renames --name-only "$merge_base...HEAD") \
+  CHANGED=$(set -o pipefail; git -C "$wt" diff -z --no-renames --name-only "$merge_base...HEAD" | tr '\0' '\n') \
     || die "cannot list the changes since $merge_base in $wt"
 }
 

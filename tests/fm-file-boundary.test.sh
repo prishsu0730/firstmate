@@ -235,15 +235,15 @@ test_globstar_matches_zero_directories() {
 test_non_ascii_path_matches_its_entry() {
   local case_dir
   case_dir=$(make_case non-ascii)
-  write_list "$case_dir" 'docs/café.md'
-  commit_files "$case_dir" 'docs/café.md'
+  write_list "$case_dir" 'docs/café.md' 'docs/a"b.md'
+  commit_files "$case_dir" 'docs/café.md' 'docs/a"b.md'
   run_checker "$case_dir" check "$TASK"
-  expect_code 0 "$RC" "non-ascii: a non-ASCII file in the list must pass (got: $ERR)"
+  expect_code 0 "$RC" "non-ascii: non-ASCII and double-quote files in the list must pass (got: $ERR)"
   commit_files "$case_dir" 'docs/naïve.md'
   run_checker "$case_dir" check "$TASK"
   expect_code 1 "$RC" "non-ascii: a non-ASCII file outside the list must fail"
   assert_contains "$ERR" 'docs/naïve.md' "non-ascii: the extra file was not named as written"
-  pass "fm-file-boundary check compares non-ASCII paths as written, not git-quoted"
+  pass "fm-file-boundary check compares non-ASCII and quote-holding paths as written, not git-quoted"
 }
 
 test_rename_and_delete_count_both_paths() {
