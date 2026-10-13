@@ -51,8 +51,12 @@
 #   A fresh ship spawn also refuses a second task for a change another open task
 #   already carries: bin/fm-duplicate-intake.sh (its header owns what counts as a
 #   match and as open) reads the commit SHAs the brief's Task names and refuses,
-#   naming the earlier task, when one is already in that task's recorded branch or
-#   recorded pr_head=, before any launch brief, worktree, or endpoint exists.
+#   naming the earlier task, when another open task already names one in its
+#   recorded commits= or holds it in its recorded branch or recorded pr_head=,
+#   before any launch brief, worktree, or endpoint exists. The spawn records the
+#   full SHAs its own brief names as commits= in state/<id>.meta, under the same
+#   task-set lock that serializes the check, so two spawns cannot both pass. A
+#   commit already on --base-branch is the task's starting point and never counts.
 #   --supersedes <task> excuses that one task and records supersedes=<task> in
 #   state/<id>.meta; --allow-duplicate proceeds past every match with a notice.
 #   Both are refused on scouts, secondmates, relaunches, and batches. Matches on
@@ -173,8 +177,9 @@
 #   Every single-task invocation holds one task-id-scoped lock across backend
 #   creation through metadata publication, so concurrent same-id spawns serialize
 #   even when they select different backends. A fresh spawn first takes the
-#   per-home task-set lock and refuses rather than waits when forced teardown owns
-#   it; relaunch is exempt because the existing task's control lock covers it.
+#   per-home task-set lock and refuses rather than waits when forced teardown, a
+#   promotion, or another fresh spawn holds it; relaunch is exempt because the
+#   existing task's control lock covers it.
 #   A fresh Treehouse-backed spawn also takes the project-identity lock in the local
 #   root Firstmate home's state directory before slot allocation and holds it through
 #   task metadata publication. Teardown holds that same lock while proving and
@@ -720,6 +725,9 @@ BASE_BRANCH_SET=0
 SUPERSEDES=
 SUPERSEDES_SET=0
 ALLOW_DUPLICATE=0
+# The full SHAs this fresh ship spawn's brief names (bin/fm-duplicate-intake.sh),
+# recorded as commits= in the task record so a later task finds the claim.
+DUPLICATE_COMMITS=
 TRACEPARENT_SET=0
 RELAUNCH=0
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
@@ -3252,9 +3260,11 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   # endpoint exists (bin/fm-duplicate-intake.sh owns the match and open rules).
   if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
     DUPLICATE_INTAKE_ARGS=("$ID" "$PROJ_ABS" "$BRIEF" --state "$STATE" --data "$DATA")
+    [ "$BASE_BRANCH_SET" -eq 0 ] || DUPLICATE_INTAKE_ARGS+=(--base-branch "$BASE_BRANCH")
     [ -z "$SUPERSEDES" ] || DUPLICATE_INTAKE_ARGS+=(--supersedes "$SUPERSEDES")
     [ "$ALLOW_DUPLICATE" -eq 0 ] || DUPLICATE_INTAKE_ARGS+=(--allow-duplicate)
-    "$FM_ROOT/bin/fm-duplicate-intake.sh" "${DUPLICATE_INTAKE_ARGS[@]}" || exit 1
+    DUPLICATE_COMMITS=$("$FM_ROOT/bin/fm-duplicate-intake.sh" "${DUPLICATE_INTAKE_ARGS[@]}") || exit 1
+    DUPLICATE_COMMITS=$(printf '%s\n' "$DUPLICATE_COMMITS" | sed -n 's/^commits=//p' | tail -n 1)
   fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
@@ -5156,6 +5166,7 @@ preserve_relaunch_meta() {
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
   [ -z "$SUPERSEDES" ] || echo "supersedes=$SUPERSEDES"
+  [ -z "$DUPLICATE_COMMITS" ] || echo "commits=$DUPLICATE_COMMITS"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   # The worker account pin, only when this home declares one, so an unpinned

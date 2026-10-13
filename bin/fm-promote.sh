@@ -38,7 +38,19 @@
 # its value against the registry; bin/fm-project-mode.sh's header owns the
 # binding and bin/fm-dod-lib.sh owns what it changes for the worker, including
 # the refusal of a forge on local-only.
+# Promotion is the second way a task becomes a ship, so it runs the same
+# one-logical-change check a fresh ship spawn does (bin/fm-duplicate-intake.sh
+# owns the match rules) against the scout brief's `# Task`, refuses before it
+# changes anything when another open task already names or carries one of its
+# commits, and on success records the full SHAs it names as commits= in the meta.
+# The scout's recorded base_branch= is that check's starting point, as --base-branch
+# is for a spawn: a commit already on it never counts.
+# --supersedes <task> and --allow-duplicate pass through to that check exactly as
+# they do for bin/fm-spawn.sh, and --supersedes also records supersedes=<task>.
+# The check and the meta publication run under the home's task-set lock, so a
+# concurrent spawn or promotion naming the same commit cannot also pass.
 # Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>]
+#                      [--supersedes <task>] [--allow-duplicate]
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,6 +82,8 @@ BRANCH_PREFIX=fm/
 MODE_SET=0
 YOLO_SET=0
 FORGE=none
+SUPERSEDES=
+ALLOW_DUPLICATE=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -81,6 +95,7 @@ for a in "$@"; do
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       branch-prefix) BRANCH_PREFIX=$a ;;
+      supersedes) SUPERSEDES=$a ;;
     esac
     want_value=
     continue
@@ -92,11 +107,14 @@ for a in "$@"; do
     --yolo=*) YOLO=${a#--yolo=}; YOLO_SET=1 ;;
     --branch-prefix) want_value="branch-prefix" ;;
     --branch-prefix=*) BRANCH_PREFIX=${a#--branch-prefix=} ;;
+    --supersedes) want_value=supersedes ;;
+    --supersedes=*) SUPERSEDES=${a#--supersedes=} ;;
+    --allow-duplicate) ALLOW_DUPLICATE=1 ;;
     *) POS+=("$a") ;;
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
-[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>" >&2; exit 1; }
+[ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--supersedes <task>] [--allow-duplicate]" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
   exit 1
@@ -143,6 +161,8 @@ fi
 printf -v BRANCH_Q '%q' "$BRANCH"
 CONTROL_LOCK="$STATE/.control-$ID.lock"
 CONTROL_LOCK_HELD=0
+TASK_SET_LOCK=
+TASK_SET_LOCK_HELD=0
 META_LOCK=
 META_LOCK_HELD=0
 TMP=
@@ -165,9 +185,25 @@ promote_cleanup() {
     CONTROL_LOCK_HELD=0
     fm_lock_release "$CONTROL_LOCK" || true
   fi
+  if [ "$TASK_SET_LOCK_HELD" = 1 ]; then
+    TASK_SET_LOCK_HELD=0
+    fm_lock_release "$TASK_SET_LOCK" || true
+  fi
   return "$status"
 }
 trap promote_cleanup EXIT
+# The duplicate check below and the meta publication it protects must be one
+# step against every concurrent spawn and promotion, so the home's task-set lock
+# (bin/fm-wake-lib.sh's fm_task_set_lock_path owns what it guards and the order
+# it is taken in) is held from before this task's own locks through publication.
+# Promotion waits for it rather than refusing: it holds no other lock yet, so a
+# spawn or teardown in flight only delays it.
+TASK_SET_LOCK=$(fm_task_set_lock_path "$STATE") || {
+  echo "error: could not resolve the task-set lock for $STATE; nothing was changed" >&2
+  exit 1
+}
+fm_lock_acquire_wait "$TASK_SET_LOCK"
+TASK_SET_LOCK_HELD=1
 fm_lock_try_acquire "$CONTROL_LOCK" || {
   echo "error: another lifecycle action is already running for task $ID; nothing was changed" >&2
   exit 1
@@ -228,6 +264,26 @@ fi
 if [ -z "$(printf '%s' "$INTENT_BODY" | tr -d '[:space:]')" ]; then
   echo "error: $SCOUT_BRIEF has no provenance-marked Captain's intent; add the captain's actual words before promotion" >&2
   exit 1
+fi
+
+# One logical change, one task: the same check a fresh ship spawn runs
+# (bin/fm-duplicate-intake.sh), before any instruction or record is changed. The
+# scout itself is the new task's own id and never collides with itself.
+PROMOTE_COMMITS=
+if [ -n "$PROMOTE_PROJECT" ]; then
+  PROMOTE_DUPLICATE_ARGS=("$ID" "$PROMOTE_PROJECT" "$SCOUT_BRIEF" --state "$STATE" --data "$DATA")
+  [ -z "$BASE_BRANCH" ] || PROMOTE_DUPLICATE_ARGS+=(--base-branch "$BASE_BRANCH")
+  [ -z "$SUPERSEDES" ] || PROMOTE_DUPLICATE_ARGS+=(--supersedes "$SUPERSEDES")
+  [ "$ALLOW_DUPLICATE" -eq 0 ] || PROMOTE_DUPLICATE_ARGS+=(--allow-duplicate)
+  PROMOTE_DUPLICATE_RC=0
+  PROMOTE_DUPLICATE_OUT=$("$FM_ROOT/bin/fm-duplicate-intake.sh" "${PROMOTE_DUPLICATE_ARGS[@]}") || PROMOTE_DUPLICATE_RC=$?
+  if [ "$PROMOTE_DUPLICATE_RC" -ne 0 ]; then
+    # Exit 1 is a refusal; anything else is a usage error that already said why.
+    [ "$PROMOTE_DUPLICATE_RC" -ne 1 ] ||
+      echo "error: $ID was not promoted: its instructions overlap work another task already holds; nothing was changed" >&2
+    exit "$PROMOTE_DUPLICATE_RC"
+  fi
+  PROMOTE_COMMITS=$(printf '%s\n' "$PROMOTE_DUPLICATE_OUT" | sed -n 's/^commits=//p' | tail -n 1)
 fi
 
 # The promoted worker must receive the same delivery contract an ordinary ship
@@ -324,12 +380,16 @@ fi
 BRIEF_REPLACEMENT=
 
 TMP="$STATE/.$ID.meta.promote.${BASHPID:-$$}"
-grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^branch=' "$META" > "$TMP"
+META_DROP=(-e '^kind=' -e '^mode=' -e '^yolo=' -e '^branch=' -e '^commits=')
+[ -z "$SUPERSEDES" ] || META_DROP+=(-e '^supersedes=')
+grep -v "${META_DROP[@]}" "$META" > "$TMP"
 {
   echo "kind=ship"
   echo "mode=$MODE"
   echo "yolo=$YOLO"
   echo "branch=$BRANCH"
+  [ -z "$SUPERSEDES" ] || echo "supersedes=$SUPERSEDES"
+  [ -z "$PROMOTE_COMMITS" ] || echo "commits=$PROMOTE_COMMITS"
 } >> "$TMP"
 if ! fm_backlog_atomic_transition publish "$TMP" "$META" "task record" "$STATE"; then
   rm -f -- "$TMP"
@@ -342,6 +402,8 @@ rm -f -- "$BRIEF_ORIGINAL" 2>/dev/null || true
 BRIEF_ORIGINAL=
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
+fm_lock_release "$TASK_SET_LOCK"
+TASK_SET_LOCK_HELD=0
 
 HOME_Q=$(printf '%q' "$FM_HOME")
 INSTRUCTIONS_Q=$(printf '%q' "$INSTRUCTIONS")

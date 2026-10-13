@@ -6,19 +6,32 @@
 # home's task records and local git only; it never fetches and never calls a forge.
 #
 # Usage: fm-duplicate-intake.sh <task-id> <project-dir> <brief> --state <state-dir>
-#                               [--data <data-dir>] [--supersedes <task>] [--allow-duplicate]
+#                               [--data <data-dir>] [--base-branch <branch>]
+#                               [--supersedes <task>] [--allow-duplicate]
 #   Exit 0 lets the spawn continue, possibly after printing warnings or a notice
 #   on stderr. Exit 1 refuses the spawn and names the colliding task on stderr.
 #   Exit 2 is a usage error.
+#   On exit 0 stdout carries one line, commits=<full-sha>[,<full-sha>...], when
+#   the instructions name commits that still count (below); bin/fm-spawn.sh and
+#   bin/fm-promote.sh record it as commits= in the task's state/<id>.meta, which
+#   is how a later task finds this one's claim before any branch holds it.
 #
 # What counts as a collision: a commit SHA named in the new task's instructions
-# (the brief's "# Task" body; 7 to 40 lowercase hex characters, bounded by
-# non-word characters) that
+# (the brief's "# Task" body; 7 to 40 hex characters of either case, bounded by
+# non-word characters, compared as lowercase full SHAs) that
 #   - resolves to a commit in the repository,
-#   - is not already on the other task's base branch (landed work is never a
-#     duplicate; a base is origin/<base_branch>, else origin's default branch,
-#     and a task whose base cannot be resolved is skipped), and
-#   - is contained in another open task's recorded branch or recorded pr_head=.
+#   - is not already landed: an ancestor of the project's default branch tip
+#     (origin's default branch, else the project's checked-out branch) never
+#     counts, neither does an ancestor of the new task's own --base-branch
+#     (origin/<branch>, else the project's local branch of that name: a stacked
+#     task starts from the earlier task's commits, so naming one is its start
+#     point, not a second claim on it), and neither does an ancestor of the other
+#     task's own base branch (origin/<base_branch>, else the default), and
+#   - is listed in another open task's recorded commits=, or is contained in that
+#     task's recorded branch or recorded pr_head=. When the other task's base
+#     cannot be resolved, recorded commits= are still compared; only the branch
+#     and pr_head containment, which needs a base to rule out base commits, is
+#     skipped.
 # Hex that resolves to no commit, such as an epoch, a date, or a gate id, is
 # ignored without a message.
 #
@@ -26,9 +39,16 @@
 # other than the new task, whose recorded PR has not been recorded merged
 # (state/<id>.pr-poll-merge-notified). Teardown removes the record, so a torn
 # down task is closed. A held task keeps its record and so still collides: close
-# or hold it, then pass --supersedes.
+# or hold it, then pass --supersedes. The new task's own id never collides with
+# itself, so a retry, a relaunch, and promotion of the same id are never refused
+# by their own earlier claim.
 #
 # Flags:
+#   --base-branch <branch> is the branch the new task starts from and targets, when
+#   it is not the default. Commits already on it are the task's starting point, so
+#   they are neither a collision nor recorded as its claim. A task that starts from
+#   another task's unmerged commit without naming that task's branch here cannot be
+#   told apart from a second claim on it: pass --supersedes or --allow-duplicate.
 #   --supersedes <task> names the task this one replaces. It excuses collisions
 #   with that task only; a collision with any other task still refuses.
 #   bin/fm-spawn.sh records the link as supersedes= in the new task's meta.
@@ -117,6 +137,7 @@ BRIEF=
 STATE=
 DATA=
 SUPERSEDES=
+BASE_BRANCH=
 ALLOW=0
 POS=()
 while [ "$#" -gt 0 ]; do
@@ -129,6 +150,11 @@ while [ "$#" -gt 0 ]; do
     --data)
       [ "$#" -ge 2 ] || die "--data requires a value"
       DATA=$2
+      shift 2
+      ;;
+    --base-branch)
+      [ "$#" -ge 2 ] || die "--base-branch requires a value"
+      BASE_BRANCH=$2
       shift 2
       ;;
     --supersedes)
@@ -147,7 +173,7 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
-[ "${#POS[@]}" -eq 3 ] || die "usage: fm-duplicate-intake.sh <task-id> <project-dir> <brief> --state <state-dir> [--data <data-dir>] [--supersedes <task>] [--allow-duplicate]"
+[ "${#POS[@]}" -eq 3 ] || die "usage: fm-duplicate-intake.sh <task-id> <project-dir> <brief> --state <state-dir> [--data <data-dir>] [--base-branch <branch>] [--supersedes <task>] [--allow-duplicate]"
 NEW_ID=${POS[0]}
 PROJECT=${POS[1]}
 BRIEF=${POS[2]}
@@ -162,11 +188,39 @@ fi
 PROJECT_REAL=$(physical_dir "$PROJECT") || PROJECT_REAL=$PROJECT
 
 # The SHAs the new task's instructions name, split on any non-word character so
-# the extraction does not depend on a grep that understands \b.
+# the extraction does not depend on a grep that understands \b. Either case is
+# accepted and compared as lowercase.
 task_text=$(fm_brief_heading_body "$BRIEF" "# Task")
 [ -n "$task_text" ] || task_text=$(cat "$BRIEF")
-shas=$(printf '%s\n' "$task_text" | tr -c '0-9A-Za-z_' '\n' | grep -xE '[0-9a-f]{7,40}' | sort -u || true)
+shas=$(printf '%s\n' "$task_text" | tr -c '0-9A-Za-z_' '\n' | grep -xE '[0-9a-fA-F]{7,40}' | tr 'A-F' 'a-f' | sort -u || true)
 new_title=$(intent_title "$BRIEF")
+
+# The commits that still count: each named SHA that resolves to a commit and is
+# not yet on the project's default branch tip or on the new task's own base
+# branch. One "<sha>|<full-sha>" line each; <sha> is the text the instructions
+# used, for messages.
+claims=
+default_base=$(task_base "$PROJECT" "$PROJECT" /dev/null "")
+own_base=
+if [ -n "$BASE_BRANCH" ]; then
+  for ref in "refs/remotes/origin/$BASE_BRANCH" "refs/heads/$BASE_BRANCH"; do
+    if git -C "$PROJECT" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1; then
+      own_base=$ref
+      break
+    fi
+  done
+fi
+for sha in $shas; do
+  full=$(git -C "$PROJECT" rev-parse --verify --quiet "$sha^{commit}" 2>/dev/null) || continue
+  if [ -n "$default_base" ] &&
+    git -C "${default_base%|*}" merge-base --is-ancestor "$full" "${default_base#*|}" 2>/dev/null; then
+    continue
+  fi
+  if [ -n "$own_base" ] && git -C "$PROJECT" merge-base --is-ancestor "$full" "$own_base" 2>/dev/null; then
+    continue
+  fi
+  claims="$claims$sha|$full"$'\n'
+done
 
 matches=
 similar=
@@ -184,37 +238,45 @@ for meta in "$STATE"/*.meta; do
   fi
 
   hit=
-  if [ -n "$shas" ]; then
+  if [ -n "$claims" ]; then
+    held=",$(meta_get "$meta" commits),"
     repo=$(meta_get "$meta" worktree)
     if [ -z "$repo" ] || ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
       repo=$project
     fi
-    if git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
-      branch=$(meta_get "$meta" branch)
-      pr_head=$(meta_get "$meta" pr_head)
-      base=$(task_base "$repo" "$project" "$meta" "$branch")
-      if [ -n "$base" ]; then
-        base_repo=${base%|*}
-        base_ref=${base#*|}
-        for sha in $shas; do
-          full=$(git -C "$repo" rev-parse --verify --quiet "$sha^{commit}" 2>/dev/null) || continue
-          git -C "$base_repo" merge-base --is-ancestor "$full" "$base_ref" 2>/dev/null && continue
-          if [ -n "$branch" ]; then
-            for ref in "refs/heads/$branch" "refs/remotes/origin/$branch"; do
-              git -C "$repo" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 || continue
-              if git -C "$repo" merge-base --is-ancestor "$full" "$ref" 2>/dev/null; then
-                hit="$hit$id|$sha|branch $branch"$'\n'
-                continue 2
-              fi
-            done
-          fi
-          if fm_pr_head_valid "$pr_head" && git -C "$repo" rev-parse --verify --quiet "$pr_head^{commit}" >/dev/null 2>&1 &&
-            git -C "$repo" merge-base --is-ancestor "$full" "$pr_head" 2>/dev/null; then
-            hit="$hit$id|$sha|open pull request head ${pr_head:0:12} (${pr:-no url recorded})"$'\n'
+    branch=$(meta_get "$meta" branch)
+    pr_head=$(meta_get "$meta" pr_head)
+    base=$(task_base "$repo" "$project" "$meta" "$branch")
+    while IFS='|' read -r sha full; do
+      [ -n "$sha" ] || continue
+      if [ -n "$base" ] && git -C "${base%|*}" merge-base --is-ancestor "$full" "${base#*|}" 2>/dev/null; then
+        continue
+      fi
+      case "$held" in
+        *",$full,"*)
+          hit="$hit$id|$sha|its instructions name this commit"$'\n'
+          continue
+          ;;
+      esac
+      # Without a base there is no way to tell a base commit from the task's own
+      # work, so containment is only judged when one resolves.
+      [ -n "$base" ] || continue
+      if [ -n "$branch" ]; then
+        for ref in "refs/heads/$branch" "refs/remotes/origin/$branch"; do
+          git -C "$repo" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 || continue
+          if git -C "$repo" merge-base --is-ancestor "$full" "$ref" 2>/dev/null; then
+            hit="$hit$id|$sha|branch $branch"$'\n'
+            continue 2
           fi
         done
       fi
-    fi
+      if fm_pr_head_valid "$pr_head" && git -C "$repo" rev-parse --verify --quiet "$pr_head^{commit}" >/dev/null 2>&1 &&
+        git -C "$repo" merge-base --is-ancestor "$full" "$pr_head" 2>/dev/null; then
+        hit="$hit$id|$sha|open pull request head ${pr_head:0:12} (${pr:-no url recorded})"$'\n'
+      fi
+    done <<EOF
+$claims
+EOF
   fi
   if [ -n "$hit" ]; then
     matches="$matches$hit"
@@ -271,5 +333,8 @@ if [ -n "$similar" ]; then
   done <<EOF
 $similar
 EOF
+fi
+if [ -n "$claims" ]; then
+  printf 'commits=%s\n' "$(printf '%s' "$claims" | cut -d'|' -f2 | sort -u | paste -sd, -)"
 fi
 exit 0
