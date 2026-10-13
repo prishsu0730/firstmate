@@ -428,7 +428,7 @@ test_newline_in_a_pr_path_never_splits_into_allowed_names() {
 scaffold_boundary_brief() {
   local case_dir=$1
   printf '%s\n' bin/a.sh > "$case_dir/list.txt"
-  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
     "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes --allowed-files "$case_dir/list.txt" >/dev/null \
     || fail "the brief with a list did not scaffold"
 }
@@ -444,9 +444,16 @@ test_a_lost_list_fails_closed() {
   rm -f "$case_dir/home/data/$TASK/allowed-files"
   run_checker "$case_dir" check "$TASK"
   expect_code 2 "$RC" "lost-list: a deleted list must not read as no boundary"
-  assert_contains "$ERR" 'briefed with an allowed-file list' "lost-list: the refusal did not say what was lost"
+  assert_contains "$ERR" 'has a file boundary recorded in' "lost-list: the refusal did not say what was lost"
   run_checker "$case_dir" recorded "$TASK"
   expect_code 2 "$RC" "lost-list: recorded must say the boundary cannot be read"
+
+  # With the state marker gone as well, the brief's own marker still says the
+  # task was briefed with a list.
+  rm -f "$case_dir/state/$TASK.file-boundary"
+  run_checker "$case_dir" check "$TASK"
+  expect_code 2 "$RC" "lost-list: the brief marker alone must still refuse"
+  assert_contains "$ERR" 'briefed with an allowed-file list' "lost-list: the brief marker's refusal did not say what was lost"
 
   mkdir "$case_dir/home/data/$TASK/allowed-files"
   run_checker "$case_dir" check "$TASK"
@@ -469,10 +476,47 @@ test_an_unreadable_task_directory_fails_closed() {
   pass "fm-file-boundary fails closed when the task directory cannot be read"
 }
 
+# Losing the whole task directory takes the list and the brief marker together;
+# the state-side marker is what still says the task had a boundary.
+test_a_deleted_task_directory_fails_closed() {
+  local case_dir
+  case_dir=$(make_case deleted-dir)
+  scaffold_boundary_brief "$case_dir"
+  assert_present "$case_dir/state/$TASK.file-boundary" "deleted-dir: the brief did not leave the state marker"
+  commit_files "$case_dir" bin/a.sh
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "deleted-dir: the intact boundary must pass an in-list change (stderr: $ERR)"
+
+  rm -rf "$case_dir/home/data/$TASK"
+  run_checker "$case_dir" check "$TASK"
+  expect_code 2 "$RC" "deleted-dir: a deleted task directory must not read as no boundary"
+  assert_contains "$ERR" "$TASK.file-boundary" "deleted-dir: the refusal did not name the state marker"
+  assert_not_contains "$OUT" 'no boundary recorded' "deleted-dir: a lost boundary was reported as none"
+  run_checker "$case_dir" recorded "$TASK"
+  expect_code 2 "$RC" "deleted-dir: recorded must say the boundary cannot be read"
+  pass "fm-file-boundary fails closed when the whole task directory has been deleted"
+}
+
+test_an_unsearchable_state_directory_fails_closed() {
+  local case_dir
+  case_dir=$(make_case unsearchable-state)
+  scaffold_boundary_brief "$case_dir"
+  rm -rf "$case_dir/home/data/$TASK"
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "fm-file-boundary unsearchable state directory (skipped: running as root)"
+    return 0
+  fi
+  chmod 000 "$case_dir/state"
+  run_checker "$case_dir" check "$TASK"
+  chmod 755 "$case_dir/state"
+  expect_code 2 "$RC" "unsearchable-state: a state directory that cannot be searched must not read as no boundary"
+  pass "fm-file-boundary fails closed when the state directory cannot be searched"
+}
+
 test_a_task_never_briefed_with_a_list_is_untouched() {
   local case_dir
   case_dir=$(make_case never-briefed)
-  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
     "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes >/dev/null \
     || fail "the plain brief did not scaffold"
   commit_files "$case_dir" anything/at/all.txt
@@ -487,7 +531,7 @@ test_a_task_never_briefed_with_a_list_is_untouched() {
 test_a_marker_quoted_outside_the_allowed_files_section_is_no_boundary() {
   local case_dir
   case_dir=$(make_case quoted-marker)
-  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
     "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes >/dev/null \
     || fail "quoted-marker: the plain brief did not scaffold"
   printf '%s\n' 'The earlier brief said:' 'File boundary: required' '# Allowed files' '' 'File boundary: required' \
@@ -508,7 +552,7 @@ test_brief_command_runs_as_printed() {
   case_dir=$(make_case brief-command)
   list="$case_dir/list.txt"
   printf '%s\n' '# the boundary' '' 'bin/a.sh' > "$list"
-  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
     "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes --allowed-files "$list" >/dev/null \
     || fail "brief-command: the brief did not scaffold"
   brief="$case_dir/home/data/$TASK/brief.md"
@@ -535,7 +579,7 @@ test_brief_command_unmade_check_exits_2() {
   case_dir=$(make_case brief-unmade)
   list="$case_dir/list.txt"
   printf '%s\n' 'bin/a.sh' > "$list"
-  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" \
     "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes --allowed-files "$list" >/dev/null \
     || fail "brief-unmade: the brief did not scaffold"
   brief="$case_dir/home/data/$TASK/brief.md"
@@ -579,5 +623,7 @@ test_newline_in_a_local_path_never_splits_into_allowed_names
 test_newline_in_a_pr_path_never_splits_into_allowed_names
 test_a_lost_list_fails_closed
 test_an_unreadable_task_directory_fails_closed
+test_a_deleted_task_directory_fails_closed
+test_an_unsearchable_state_directory_fails_closed
 test_a_task_never_briefed_with_a_list_is_untouched
 test_a_marker_quoted_outside_the_allowed_files_section_is_no_boundary

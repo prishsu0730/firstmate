@@ -133,7 +133,10 @@
 # list: merging a pull request that another task with a boundary owns under a
 # task id that has none refuses, so naming the wrong id cannot skip the
 # boundary, while an unbounded pull request that no bounded task claims is
-# untouched. Which pull request the task may merge stays the job of the
+# untouched. A task record in state/ that cannot be read refuses that same scan
+# instead of being skipped, because it might be the owner. A boundary whose
+# list, brief marker, and data directory are all gone is still found through the
+# state/<id>.file-boundary marker bin/fm-brief.sh writes, and refuses. Which pull request the task may merge stays the job of the
 # recorded pull request identity check below.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
@@ -1112,19 +1115,34 @@ require_released_captain_hold() {
 # task with a boundary owns: bin/fm-file-boundary.sh recorded says which, and
 # exit 1 there means no boundary. A task with neither is not touched.
 require_file_boundary() {
-  local recorded_status=0 check_status=0 output probe other other_id other_status
+  local recorded_status=0 check_status=0 output probe other other_id other_status owner_status
   # The checker resolves the same home and state directory this merge uses.
   file_boundary() {
     FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-file-boundary.sh" "$@"
   }
   # A pull request owned by another task that has a boundary is not merged under
   # a task id that has none; that would skip the boundary by naming the wrong id.
+  # A task record that cannot be read refuses: it might be that owner, so it is
+  # not skipped. Only a record that was read and does not name this PR is.
   for other in "$STATE"/*.meta; do
-    [ -f "$other" ] || continue
+    [ -e "$other" ] || [ -L "$other" ] || continue
     other_id=${other##*/}
     other_id=${other_id%.meta}
     [ "$other_id" != "$ID" ] || continue
-    grep -qxF "pr=$URL" "$other" 2>/dev/null || continue
+    owner_status=0
+    if [ -f "$other" ] && [ -r "$other" ]; then
+      grep -qxF "pr=$URL" "$other" 2>/dev/null || owner_status=$?
+    else
+      owner_status=2
+    fi
+    case "$owner_status" in
+      0) ;;
+      1) continue ;;
+      *)
+        echo "error: refusing to merge $URL: the task record of $other_id cannot be read, so whether it owns this pull request and has a file boundary cannot be told: $other" >&2
+        return 1
+        ;;
+    esac
     other_status=0
     file_boundary recorded "$other_id" >/dev/null 2>&1 || other_status=$?
     [ "$other_status" -eq 1 ] && continue

@@ -76,9 +76,14 @@
 # reports done or pushes, and to stop with a blocked status naming any file
 # outside the list. The section opens with a `File boundary: required` line, so
 # a list that is later lost is found missing instead of read as no boundary
-# (bin/fm-file-boundary.sh owns that rule). The record is written beside the
-# brief rather than into state/<task-id>.meta because bin/fm-spawn.sh publishes
-# that file at spawn and owns its field set. Without the flag the brief is
+# (bin/fm-file-boundary.sh owns that rule). A second marker,
+# state/<task-id>.file-boundary, is written beside the task's other state, so a
+# data directory lost whole still reads as a lost boundary. The records are not
+# written into state/<task-id>.meta because bin/fm-spawn.sh publishes that file
+# at spawn and owns its field set. A marker already present for the task id is
+# refused with or without the flag, because a boundary recorded for an earlier
+# task of that id must not be silently kept or dropped: trash it by hand once
+# that task is finished. Without the flag, and with no such marker, the brief is
 # byte-for-byte what it was.
 # Refused on --scout and --secondmate: neither makes a branch to bound.
 # --forge names the project's forge, defaults to none, and is orthogonal to --mode
@@ -402,6 +407,11 @@ append_brief_include() {
 
 BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
+FILE_BOUNDARY_MARKER="$STATE/$ID.file-boundary"
+if [ -e "$FILE_BOUNDARY_MARKER" ] || [ -L "$FILE_BOUNDARY_MARKER" ]; then
+  echo "error: $FILE_BOUNDARY_MARKER already exists: a file boundary was recorded for an earlier task with id $ID; trash that marker once the task is finished, then run this again" >&2
+  exit 1
+fi
 mkdir -p "$DATA/$ID"
 
 ASK_USER_BLOCK=
@@ -738,6 +748,10 @@ if [ -n "$ALLOWED_FILES_BODY" ]; then
     echo "error: $ALLOWED_RECORD already exists" >&2
     exit 1
   }
+  # The state marker goes first: a failure between the two writes leaves a
+  # boundary with no list, which the checker refuses, never a list with no mark.
+  mkdir -p "$STATE"
+  printf 'File boundary: required\n' > "$FILE_BOUNDARY_MARKER"
   printf '%s' "$ALLOWED_FILES_BODY" > "$ALLOWED_RECORD"
   ALLOWED_ENV="FM_HOME=$(shell_quote "$FM_HOME")"
   [ -z "${FM_DATA_OVERRIDE:-}" ] || ALLOWED_ENV="$ALLOWED_ENV FM_DATA_OVERRIDE=$(shell_quote "$DATA")"

@@ -4071,3 +4071,112 @@ test_file_boundary_lost_list_refuses() {
 
 test_file_boundary_wrong_task_id_refuses
 test_file_boundary_lost_list_refuses
+
+# write_boundary_marker <case_dir>: the state-side marker bin/fm-brief.sh leaves
+# for a task briefed with a list, which outlives the task's data directory.
+write_boundary_marker() {
+  printf 'File boundary: required\n' > "$1/state/task-x1.file-boundary"
+}
+
+test_file_boundary_deleted_task_directory_refuses() {
+  local case_dir
+  case_dir=$(make_case boundary-dir-present)
+  bind_boundary_pr "$case_dir" 49
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  write_boundary_marker "$case_dir"
+  run_required_case "$case_dir" 49
+  expect_code 0 "$RC" "boundary-dir-present: a bounded in-list change must still merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_logged_gh_merge "$case_dir" 49 example/repo --squash
+
+  case_dir=$(make_case boundary-dir-deleted)
+  bind_boundary_pr "$case_dir" 50
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  write_boundary_marker "$case_dir"
+  rm -rf "$case_dir/home/data/task-x1"
+  run_required_case "$case_dir" 50
+  expect_code 1 "$RC" "boundary-dir-deleted: losing the task's data directory must not read as no boundary"
+  assert_grep 'cannot be read' "$case_dir/stderr" "boundary-dir-deleted: the refusal did not say why"
+  assert_grep 'task-x1.file-boundary' "$case_dir/stderr" "boundary-dir-deleted: the state marker was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-dir-deleted: the merge reached the forge"
+  pass "fm-pr-merge refuses a bounded task whose data directory was deleted, and merges it while intact"
+}
+
+test_file_boundary_deleted_directory_of_the_owner_refuses_a_wrong_id() {
+  local case_dir
+  case_dir=$(make_case boundary-owner-dir-deleted)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh bin/fm-spawn.sh
+  bind_boundary_pr "$case_dir" 51
+  write_boundary_marker "$case_dir"
+  fm_write_meta "$case_dir/state/task-y1.meta" \
+    "window=fm-task-y1" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  set +e
+  run_pr_merge "$case_dir" task-y1 https://github.com/example/repo/pull/51 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  RC=$?
+  set -e
+  expect_code 1 "$RC" "boundary-owner-dir-deleted: an owner whose directory is gone must still stop a wrong id"
+  assert_grep 'bound to task task-x1, which has a file boundary' "$case_dir/stderr" \
+    "boundary-owner-dir-deleted: the owning task was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-owner-dir-deleted: the merge reached the forge"
+  pass "fm-pr-merge refuses a wrong task id even when the owning task's data directory is gone"
+}
+
+test_file_boundary_unreadable_task_record_refuses() {
+  local case_dir
+  # A pull request no other task claims, with an unrelated readable record
+  # beside it: the merge is the ordinary one.
+  case_dir=$(make_case boundary-other-record-readable)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  fm_write_meta "$case_dir/state/task-z1.meta" \
+    "window=fm-task-z1" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "pr=https://github.com/example/repo/pull/999"
+  run_required_case "$case_dir" 52
+  expect_code 0 "$RC" "boundary-other-record-readable: an unrelated readable record must not stop a merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_logged_gh_merge "$case_dir" 52 example/repo --squash
+
+  # A record that cannot be followed might be the bounded owner of this pull
+  # request; it is refused, not skipped.
+  case_dir=$(make_case boundary-other-record-dangling)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  ln -s "$case_dir/nowhere" "$case_dir/state/task-z1.meta"
+  run_required_case "$case_dir" 53
+  expect_code 1 "$RC" "boundary-other-record-dangling: a task record that cannot be read must not be skipped"
+  assert_grep 'task record of task-z1 cannot be read' "$case_dir/stderr" \
+    "boundary-other-record-dangling: the unreadable record was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-other-record-dangling: the merge reached the forge"
+
+  if [ "$(id -u)" -ne 0 ]; then
+    case_dir=$(make_case boundary-other-record-mode-000)
+    add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+    fm_write_meta "$case_dir/state/task-z1.meta" \
+      "window=fm-task-z1" \
+      "project=$case_dir/project" \
+      "kind=ship" \
+      "mode=no-mistakes" \
+      "pr=https://github.com/example/repo/pull/54"
+    chmod 000 "$case_dir/state/task-z1.meta"
+    run_required_case "$case_dir" 54
+    chmod 644 "$case_dir/state/task-z1.meta"
+    expect_code 1 "$RC" "boundary-other-record-mode-000: an unreadable task record must not be skipped"
+    assert_grep 'task record of task-z1 cannot be read' "$case_dir/stderr" \
+      "boundary-other-record-mode-000: the unreadable record was not named"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-other-record-mode-000: the merge reached the forge"
+  fi
+  pass "fm-pr-merge refuses when another task's record cannot be read, and ignores a readable unrelated one"
+}
+
+test_file_boundary_deleted_task_directory_refuses
+test_file_boundary_deleted_directory_of_the_owner_refuses_a_wrong_id
+test_file_boundary_unreadable_task_record_refuses

@@ -1482,6 +1482,7 @@ test_allowed_files_flag_adds_only_a_section() {
     plain="$TMP_ROOT/allowed-plain-$mode.md"
     cp "$home/data/$id/brief.md" "$plain"
     assert_absent "$home/data/$id/allowed-files" "$mode: no flag must record no list"
+    assert_absent "$home/state/$id.file-boundary" "$mode: no flag must leave no state marker"
     assert_no_grep 'Allowed files' "$plain" "$mode: no flag must add no section"
     assert_no_grep 'File boundary' "$plain" "$mode: no flag must add no marker"
     assert_no_grep 'fm-file-boundary' "$plain" "$mode: no flag must name no checker"
@@ -1492,6 +1493,8 @@ test_allowed_files_flag_adds_only_a_section() {
     flagged="$home/data/$id/brief.md"
     assert_grep '# Allowed files' "$flagged" "$mode: the section is missing"
     assert_grep 'File boundary: required' "$flagged" "$mode: the lost-record marker is missing"
+    assert_grep 'File boundary: required' "$home/state/$id.file-boundary" \
+      "$mode: the state marker that outlives the data directory is missing"
     assert_grep "- \`bin/fm-brief.sh\`" "$flagged" "$mode: the dotted entry was not normalized"
     assert_grep "- \`tests/fm-brief*.test.sh\`" "$flagged" "$mode: the padded entry was not trimmed"
     assert_grep 'fm-file-boundary.sh' "$flagged" "$mode: the checker command is missing"
@@ -1545,6 +1548,32 @@ ROWS
   pass "fm-brief.sh: --allowed-files is refused where it does not apply and for an unusable list"
 }
 
+# A boundary marker left for an earlier task of the same id is not silently
+# kept or dropped: the brief is refused, with or without a list, and nothing is
+# written. A marker is also what a data directory lost whole leaves behind.
+test_a_leftover_state_marker_refuses_the_brief() {
+  local home state id out status args
+  home="$TMP_ROOT/allowed-files-marker-home"
+  state="$TMP_ROOT/allowed-files-marker-state"
+  mkdir -p "$home/data" "$state"
+  printf '%s\n' 'bin/a.sh' > "$home/ok.txt"
+  id='brief-allowed-leftover'
+  printf 'File boundary: required\n' > "$state/$id.file-boundary"
+  for args in "" "--allowed-files $home/ok.txt"; do
+    status=0
+    # shellcheck disable=SC2086  # args is an intentional word-split arg list
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes $args 2>&1) \
+      || status=$?
+    [ "$status" -ne 0 ] || fail "leftover marker${args:+ with a list}: expected a non-zero exit"
+    assert_contains "$out" "$id.file-boundary already exists" "leftover marker: refusal did not name the marker"
+    assert_absent "$home/data/$id/brief.md" "leftover marker: the refused scaffold still wrote a brief"
+    assert_absent "$home/data/$id/allowed-files" "leftover marker: the refused scaffold still recorded a list"
+  done
+  assert_equals 'File boundary: required' "$(cat "$state/$id.file-boundary")" \
+    "leftover marker: the refused scaffold altered the marker"
+  pass "fm-brief.sh: a leftover boundary marker for the task id refuses the scaffold and is kept"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -1584,3 +1613,4 @@ test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_allowed_files_flag_adds_only_a_section
 test_allowed_files_flag_is_validated
+test_a_leftover_state_marker_refuses_the_brief

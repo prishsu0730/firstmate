@@ -32,11 +32,16 @@
 # <data>/<task-id>/brief.md right after its `# Allowed files` heading, and only
 # that pair counts, so a list that is later deleted or made unreadable
 # is found missing rather than taken for a task that never had one; a task
-# whose brief carries no such pair, or that has no brief, has no boundary. The
-# record lives beside the brief rather than in state/<id>.meta because
-# bin/fm-spawn.sh publishes that file fresh at every spawn and owns its field
-# set, while the data directory is the task's private record that no CI job or
-# no-mistakes step can read, which is why the merge-time check runs in
+# whose brief carries no such pair, or that has no brief, has no boundary. It
+# also writes <state>/<task-id>.file-boundary, a second marker in a different
+# directory, so that losing the whole data directory (list and brief together)
+# still reads as a lost boundary and not as none: a task with that marker and
+# no readable list is refused, and so is a state directory that cannot be
+# searched, because the marker could not then be ruled out. The records live
+# beside the brief and in their own state file rather than in state/<id>.meta
+# because bin/fm-spawn.sh publishes that file fresh at every spawn and owns its
+# field set, while the data directory is the task's private record that no CI
+# job or no-mistakes step can read, which is why the merge-time check runs in
 # fm-pr-merge.sh. A glob's `*` and `?` stay inside one directory; `**` crosses
 # directories, and `**/` also matches no directory at all, so `docs/**/*.md`
 # allows docs/a.md. Every other character, `[` included, is literal. Exact
@@ -114,6 +119,7 @@ fi
 
 LIST="$DATA/$ID/allowed-files"
 BRIEF_FILE="$DATA/$ID/brief.md"
+STATE_MARKER="$STATE/$ID.file-boundary"
 BOUNDARY_HEADING='# Allowed files'
 BOUNDARY_MARKER='File boundary: required'
 
@@ -131,6 +137,18 @@ resolve_boundary() {
       BOUNDARY=lost
       BOUNDARY_WHY="the allowed-file list for task $ID is not a readable file: $LIST"
     fi
+    return 0
+  fi
+  # The list is not there. The state marker says whether it ever was, and it
+  # survives the loss of the whole data directory.
+  if [ -d "$STATE" ] && [ ! -x "$STATE" ]; then
+    BOUNDARY=lost
+    BOUNDARY_WHY="the state directory cannot be searched, so whether task $ID has a file boundary cannot be told: $STATE"
+    return 0
+  fi
+  if [ -e "$STATE_MARKER" ] || [ -L "$STATE_MARKER" ]; then
+    BOUNDARY=lost
+    BOUNDARY_WHY="task $ID has a file boundary recorded in $STATE_MARKER but its allowed-file list $LIST is missing"
     return 0
   fi
   if [ -d "$DATA/$ID" ] && [ ! -x "$DATA/$ID" ]; then
