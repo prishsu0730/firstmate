@@ -3886,3 +3886,131 @@ test_allow_missing_follows_the_allow_red_rules
 test_required_producer_identity
 test_app_bound_required_status_context_matches_by_name
 test_required_partial_reads_report_all_failures
+
+# A task with a recorded allowed-file list is refused when its live pull request
+# changes a file outside it, and a task with no list is untouched. The shared
+# gh mock is wrapped so the pull request's file list can be served and failed;
+# every other call falls through to it unchanged.
+FILE_BOUNDARY_HEAD=f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1
+
+# add_pr_files_mock <case_dir> <path>...: serve these paths as the pull
+# request's changed files; a pr-files-fail marker in the case dir fails the read.
+add_pr_files_mock() {
+  local case_dir=$1 path out='' sep=''
+  shift
+  for path in "$@"; do
+    out="$out$sep{\"filename\":\"$path\"}"
+    sep=,
+  done
+  printf '[%s]\n' "$out" > "$case_dir/pr-files.json"
+  mv "$case_dir/fakebin/gh" "$case_dir/fakebin/gh-base"
+  cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case_dir=$(cd "$(dirname "$0")/.." && pwd)
+if [ "${1:-} ${2:-}" = "api --paginate" ]; then
+  case " $* " in
+    *"/pulls/"*"/files "*)
+      printf '%s\n' "$*" >> "$case_dir/gh.log"
+      [ ! -e "$case_dir/pr-files-fail" ] || exit 1
+      expr=
+      prev=
+      for arg in "$@"; do
+        [ "$prev" = --jq ] && expr=$arg
+        prev=$arg
+      done
+      exec jq -r "${expr:-.}" "$case_dir/pr-files.json"
+      ;;
+  esac
+fi
+exec "$(dirname "$0")/gh-base" "$@"
+SH
+  chmod +x "$case_dir/fakebin/gh"
+}
+
+# write_boundary_list <case_dir> <entry>...: record the task's allowed-file list.
+write_boundary_list() {
+  local case_dir=$1
+  shift
+  mkdir -p "$case_dir/home/data/task-x1"
+  printf '%s\n' "$@" > "$case_dir/home/data/task-x1/allowed-files"
+}
+
+test_file_boundary_in_list_merges() {
+  local case_dir
+  case_dir=$(make_case boundary-in-list)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh tests/fm-brief.test.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh 'tests/fm-brief*.test.sh'
+  run_required_case "$case_dir" 41
+  expect_code 0 "$RC" "boundary-in-list: an in-list change must merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_grep '/pulls/41/files' "$case_dir/gh.log" "boundary-in-list: the live file list was not read"
+  assert_grep 'file boundary ok for task task-x1' "$case_dir/stderr" \
+    "boundary-in-list: the verdict was not reported"
+  assert_logged_gh_merge "$case_dir" 41 example/repo --squash
+  pass "fm-pr-merge merges a task whose live files are all in its allowed list"
+}
+
+test_file_boundary_extra_file_refuses_and_is_named() {
+  local case_dir
+  case_dir=$(make_case boundary-extra)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh bin/fm-spawn.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  run_required_case "$case_dir" 42
+  expect_code 1 "$RC" "boundary-extra: a file outside the list must refuse the merge"
+  assert_grep 'the file boundary recorded for task task-x1 is not met' "$case_dir/stderr" \
+    "boundary-extra: the refusal was not stated"
+  assert_grep 'bin/fm-spawn.sh' "$case_dir/stderr" "boundary-extra: the extra file was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-extra: the merge reached the forge"
+  pass "fm-pr-merge refuses a live pull request with a file outside the allowed list, naming it"
+}
+
+test_file_boundary_absent_list_changes_nothing() {
+  local case_dir
+  case_dir=$(make_case boundary-absent)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/anything.sh docs/at-all.md
+  run_required_case "$case_dir" 43
+  expect_code 0 "$RC" "boundary-absent: a task with no list must merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_no_grep '/pulls/' "$case_dir/gh.log" "boundary-absent: the file list was read for a task with no list"
+  assert_no_grep 'boundary' "$case_dir/stderr" "boundary-absent: the merge said something about a boundary"
+  assert_logged_gh_merge "$case_dir" 43 example/repo --squash
+  pass "fm-pr-merge reads no file list and says nothing for a task with no allowed list"
+}
+
+test_file_boundary_unreadable_file_list_refuses() {
+  local case_dir
+  case_dir=$(make_case boundary-unreadable)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  : > "$case_dir/pr-files-fail"
+  run_required_case "$case_dir" 44
+  expect_code 1 "$RC" "boundary-unreadable: an unreadable file list must not merge"
+  assert_grep 'could not read the changed files' "$case_dir/stderr" \
+    "boundary-unreadable: the refusal did not say why"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-unreadable: the merge reached the forge"
+  pass "fm-pr-merge refuses when a recorded boundary's live file list cannot be read"
+}
+
+test_file_boundary_on_gitlab_refuses() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case boundary-gitlab)
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "boundary-gitlab: a boundary this forge cannot be checked against must not merge"
+  assert_grep 'the file boundary recorded for task task-x1 is not met' "$case_dir/stderr" \
+    "boundary-gitlab: the refusal was not stated"
+  [ -z "$(glab_merge_line "$case_dir/glab.log")" ] || fail "boundary-gitlab: glab was asked to merge"
+  pass "fm-pr-merge refuses a bounded task on a forge whose file list it cannot read"
+}
+
+test_file_boundary_in_list_merges
+test_file_boundary_extra_file_refuses_and_is_named
+test_file_boundary_absent_list_changes_nothing
+test_file_boundary_unreadable_file_list_refuses
+test_file_boundary_on_gitlab_refuses

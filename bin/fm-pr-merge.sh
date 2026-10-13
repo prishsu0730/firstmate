@@ -120,6 +120,16 @@
 # retains the lock until the accepted merge authority is persisted against the
 # still-matching task metadata.
 #
+# A task that carries an allowed-file list (bin/fm-brief.sh --allowed-files)
+# has one more refusal: the live pull request's changed files, read at the head
+# this run just verified, must all be inside that list, and each file outside it
+# is named. The list is a private task record that no CI job or no-mistakes step
+# can read, so this guarded merge path is the one place the boundary can bind a
+# merge. bin/fm-file-boundary.sh owns the list and the comparison; a task with
+# no list never reaches it, so its merge is exactly what it was. A list that
+# cannot be checked on this forge or read at this time refuses rather than
+# passing.
+#
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
 # URL, nor --sha or --match-head-commit because the head comes only from the
@@ -1089,6 +1099,32 @@ require_released_captain_hold() {
   esac
 }
 
+# The one file-boundary refusal, run after the live verification so the file
+# list is read at the head the merge is then bound to (FM_PR_MERGE_HEAD), and
+# before the away record is held so no forge read happens under that lock. It
+# applies only to a task with a recorded list; bin/fm-file-boundary.sh recorded
+# says so, and exit 1 there means no list and no output from this function.
+require_file_boundary() {
+  local recorded_status=0 check_status=0 output
+  "$SCRIPT_DIR/fm-file-boundary.sh" recorded "$ID" >/dev/null 2>&1 || recorded_status=$?
+  case "$recorded_status" in
+    0) ;;
+    1) return 0 ;;
+    *)
+      echo "error: refusing to merge $URL: could not tell whether task $ID has a file boundary" >&2
+      return 1
+      ;;
+  esac
+  output=$("$SCRIPT_DIR/fm-file-boundary.sh" check "$ID" --pr "$URL" --head "$FM_PR_MERGE_HEAD" 2>&1) \
+    || check_status=$?
+  if [ "$check_status" -ne 0 ]; then
+    printf 'error: refusing to merge %s: the file boundary recorded for task %s is not met\n' "$URL" "$ID" >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf 'verified: %s\n' "$output" >&2
+}
+
 FM_PR_MERGE_AUTHORITY=
 # The authority read. bin/fm-merge-authority-lib.sh owns what the away-posture
 # record's presence means; this function owns what a merge run may do about it,
@@ -1377,6 +1413,7 @@ case "$PROVIDER" in
       fi
       exit 1
     fi
+    require_file_boundary || exit 1
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
@@ -1428,6 +1465,7 @@ case "$PROVIDER" in
     ;;
   gitlab)
     gitlab_verify_mergeable || exit 1
+    require_file_boundary || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;

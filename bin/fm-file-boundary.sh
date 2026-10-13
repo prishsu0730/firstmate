@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# Compare the files a task changes with the task's allowed-file list.
+# Usage: fm-file-boundary.sh check <task-id> [--pr <url> [--head <sha>]]
+#        fm-file-boundary.sh recorded <task-id>
+#   check compares the changed files with the list recorded for the task.
+#   Without --pr the changed files are the committed branch changes in the
+#   task's worktree (the `worktree=` in state/<id>.meta, else the current
+#   directory): `git diff --name-only --no-renames <merge-base>...HEAD`, where
+#   the base is origin/<base_branch=> from the same metadata, else origin/HEAD,
+#   origin/main, or origin/master. A rename or deletion counts both paths.
+#   With --pr the changed files are the live pull request's file list, read
+#   from GitHub with every page and including a rename's previous path.
+#   --head <sha> binds that read to a head the caller already verified: a live
+#   head that differs is refused, because the list would then describe a
+#   commit nobody verified. It is only valid with --pr.
+#   Exit 0: every changed file is in the list, or no list is recorded for the
+#   task (a note says so and nothing is read, so a task without a boundary is
+#   never touched). Exit 1: one or more changed files fall outside the list,
+#   each named on stderr. Exit 2: the check could not be made - a usage error,
+#   an unreadable base, file list, or head, or a forge this script cannot
+#   read - because an unreadable boundary must not read as a pass.
+#   recorded prints the list's path and exits 0 when the task has a list, and
+#   exits 1 silently when it has none; bin/fm-pr-merge.sh uses it to decide
+#   whether the merge-time refusal applies.
+# The list is a task record: bin/fm-brief.sh --allowed-files copies it to
+# <data>/<task-id>/allowed-files, one path or glob per line, already validated
+# and stripped of blank and comment lines, and this script is the only reader
+# of that path. It lives beside the brief rather than in state/<id>.meta
+# because bin/fm-spawn.sh publishes that file fresh at every spawn and owns its
+# field set, while the data directory is the task's private record that no CI
+# job or no-mistakes step can read, which is why the merge-time check runs in
+# fm-pr-merge.sh. A glob's `*` and `?` stay inside one directory; `**` crosses
+# directories. Exact paths and globs are matched against repo-relative paths.
+# Environment: FM_HOME, FM_DATA_OVERRIDE, and FM_STATE_OVERRIDE select the data
+# and state directories exactly as for bin/fm-brief.sh.
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  awk '
+    NR == 1 { next }
+    /^#/ { sub(/^# ?/, ""); print; next }
+    { exit }
+  ' "$0"
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 2
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
+
+FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+
+SUBCOMMAND=${1:-}
+case "$SUBCOMMAND" in
+  check|recorded) shift ;;
+  *) die "usage: fm-file-boundary.sh check <task-id> [--pr <url> [--head <sha>]] | recorded <task-id>" ;;
+esac
+[ "$#" -ge 1 ] || die "$SUBCOMMAND needs a task id"
+ID=$1
+shift
+fm_pr_task_id_valid "$ID" || die "invalid task id: $ID"
+
+PR_URL=
+HEAD=
+if [ "$SUBCOMMAND" = recorded ]; then
+  [ "$#" -eq 0 ] || die "recorded takes no arguments after the task id"
+else
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pr)
+        [ -n "${2:-}" ] || die "--pr requires a pull request URL"
+        PR_URL=$2
+        shift 2
+        ;;
+      --head)
+        [ -n "${2:-}" ] || die "--head requires a commit"
+        HEAD=$2
+        shift 2
+        ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+  [ -z "$HEAD" ] || [ -n "$PR_URL" ] || die "--head applies only with --pr"
+  # Validated before the list is looked up, so a malformed URL is an error even
+  # for a task that has no boundary.
+  [ -z "$PR_URL" ] || fm_pr_url_parse "$PR_URL" || die "invalid pull request URL: $PR_URL"
+fi
+
+LIST="$DATA/$ID/allowed-files"
+if [ ! -f "$LIST" ]; then
+  [ "$SUBCOMMAND" = recorded ] && exit 1
+  printf 'no boundary recorded for task %s; every file is allowed\n' "$ID"
+  exit 0
+fi
+if [ "$SUBCOMMAND" = recorded ]; then
+  printf '%s\n' "$LIST"
+  exit 0
+fi
+[ -r "$LIST" ] || die "the allowed-file list for task $ID is unreadable: $LIST"
+
+# Resolve the changed files into $CHANGED, one path per line.
+CHANGED=
+meta_get() {  # <key>
+  sed -n "s/^$1=//p" "$STATE/$ID.meta" 2>/dev/null | tail -n 1
+}
+
+changed_from_branch() {
+  local wt base candidate ref merge_base
+  wt=$(meta_get worktree)
+  [ -n "$wt" ] || wt=$PWD
+  git -C "$wt" rev-parse --git-dir >/dev/null 2>&1 \
+    || die "cannot read the branch changes: $wt is not a git worktree"
+  base=$(meta_get base_branch)
+  ref=
+  if [ -n "$base" ]; then
+    candidate=refs/remotes/origin/$base
+    git -C "$wt" rev-parse --verify --quiet "$candidate^{commit}" >/dev/null 2>&1 && ref=$candidate
+  else
+    candidate=$(git -C "$wt" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)
+    for candidate in "$candidate" refs/remotes/origin/main refs/remotes/origin/master; do
+      [ -n "$candidate" ] || continue
+      if git -C "$wt" rev-parse --verify --quiet "$candidate^{commit}" >/dev/null 2>&1; then
+        ref=$candidate
+        break
+      fi
+    done
+  fi
+  [ -n "$ref" ] || die "cannot find the base branch to compare against in $wt${base:+ (base_branch=$base)}"
+  merge_base=$(git -C "$wt" merge-base "$ref" HEAD 2>/dev/null) \
+    || die "cannot find a merge base between $ref and HEAD in $wt"
+  CHANGED=$(git -C "$wt" diff --no-renames --name-only "$merge_base...HEAD") \
+    || die "cannot list the changes since $merge_base in $wt"
+}
+
+changed_from_pr() {
+  local live_head
+  [ "$FM_PR_PROVIDER" = github ] \
+    || die "the file boundary cannot read a $FM_PR_PROVIDER change's file list; only GitHub pull requests are supported"
+  command -v gh >/dev/null 2>&1 || die "reading a pull request's files requires gh on PATH"
+  if [ -n "$HEAD" ]; then
+    live_head=$(gh pr view "$FM_PR_URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+      || die "could not read the head of $FM_PR_URL"
+    if [ "$live_head" != "$HEAD" ]; then
+      printf 'error: the head of %s is %s, not the verified %s; its file list was not checked\n' \
+        "$FM_PR_URL" "$live_head" "$HEAD" >&2
+      exit 1
+    fi
+  fi
+  # Every page, and both paths of a rename: the old path is a file this change
+  # touched even though it no longer exists.
+  CHANGED=$(gh api --paginate "repos/$FM_PR_OWNER/$FM_PR_REPO/pulls/$FM_PR_NUMBER/files" \
+    --jq '.[] | .filename, (.previous_filename // empty)' 2>/dev/null) \
+    || die "could not read the changed files of $FM_PR_URL"
+}
+
+if [ -n "$PR_URL" ]; then
+  changed_from_pr
+else
+  changed_from_branch
+fi
+
+# Whether <path> is allowed. Without `**` a glob must also have as many
+# directory separators as the path, so `*` and `?` never cross a directory.
+slashes() {  # <string>
+  local rest=${1//[!\/]/}
+  printf '%s' "${#rest}"
+}
+
+path_allowed() {  # <path>
+  local path=$1 pattern path_depth
+  path_depth=$(slashes "$path")
+  while IFS= read -r pattern || [ -n "$pattern" ]; do
+    [ -n "$pattern" ] || continue
+    # shellcheck disable=SC2254  # the list entry is a glob on purpose.
+    case "$path" in
+      $pattern)
+        case "$pattern" in
+          *'**'*) return 0 ;;
+        esac
+        [ "$(slashes "$pattern")" = "$path_depth" ] && return 0
+        ;;
+    esac
+  done < "$LIST"
+  return 1
+}
+
+total=0
+outside=
+while IFS= read -r file || [ -n "$file" ]; do
+  [ -n "$file" ] || continue
+  total=$((total + 1))
+  if ! path_allowed "$file"; then
+    outside="${outside}  - $file
+"
+  fi
+done <<EOF
+$CHANGED
+EOF
+
+if [ -n "$outside" ]; then
+  printf 'error: file boundary for task %s: these changed files are outside the allowed list %s:\n%s' \
+    "$ID" "$LIST" "$outside" >&2
+  exit 1
+fi
+printf 'file boundary ok for task %s: %s changed file(s), all within the allowed list\n' "$ID" "$total"
