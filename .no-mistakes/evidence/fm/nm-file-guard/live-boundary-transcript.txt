@@ -1,0 +1,128 @@
+================ S1 bounded brief writes Allowed files section and record ================
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh t1 demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/list.txt
+scaffolded: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/t1/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+-> exit=0
+
+  list.txt| bin/a.sh
+  list.txt| # comment
+  list.txt| 
+  list.txt| ./docs/**/*.md
+--- data/t1/allowed-files:
+bin/a.sh
+docs/**/*.md
+--- Allowed files section of data/t1/brief.md:
+# Allowed files
+File boundary: required
+This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (`*` and `?` stay inside one directory, `**` crosses directories, and `**/` also matches none).
+- `bin/a.sh`
+- `docs/**/*.md`
+
+Before you append `done:` - which hands the branch to the pipeline that pushes it - and before any push you make yourself, run:
+   `FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4TQBHB9RENEYA9DVETQEADH/bin/fm-file-boundary.sh' check 't1'`
+If it exits non-zero, do not push and do not report done. Exit 1 means files are outside the list: append `blocked [at=<epoch>]: files outside the allowed list: {the file names it printed}` and stop; firstmate decides whether the boundary or the change moves. Any other non-zero exit means the check could not run: append `blocked [at=<epoch>]: file boundary check failed: {its error text}` and stop.
+A file you believe the task needs beyond the list is the same case: name it in that blocked line instead of changing it.
+
+================ S2 brief without a list is byte-identical to the base commit's scaffold ================
+  old data/t2: brief.md
+  new data/t2: brief.md
+IDENTICAL (     133 lines)
+================ S3 bad lists are refused before any scaffold is written ================
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh bad-abs demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/abs.txt; echo brief-exit=$?; ls /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-abs 2>&1 | head -1
+error: --allowed-files entries must be repo-relative paths with no '..' segment (got '/etc/passwd')
+brief-exit=1
+ls: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-abs: No such file or directory
+-> exit=0
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh bad-dots demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/dots.txt; echo brief-exit=$?; ls /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-dots 2>&1 | head -1
+error: --allowed-files entries must be repo-relative paths with no '..' segment (got 'src/../secret')
+brief-exit=1
+ls: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-dots: No such file or directory
+-> exit=0
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh bad-empty demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/empty.txt; echo brief-exit=$?; ls /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-empty 2>&1 | head -1
+error: --allowed-files list has no entries: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/empty.txt
+brief-exit=1
+ls: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-empty: No such file or directory
+-> exit=0
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh bad-dotslash demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/dotslash.txt; echo brief-exit=$?; ls /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-dotslash 2>&1 | head -1
+error: --allowed-files list has no entries: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/dotslash.txt
+brief-exit=1
+ls: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/bad-dotslash: No such file or directory
+-> exit=0
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh sc1 demo --scout --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/list.txt
+error: --allowed-files applies only to ship briefs; a scout makes no branch and a secondmate charter is not a delivery contract
+-> exit=1
+
+================ S4 local check: build a real repo + origin, run the exact command the brief prints ================
+command from brief: FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4TQBHB9RENEYA9DVETQEADH/bin/fm-file-boundary.sh' check 't1'
+branch changes: bin/a.sh docs/top.md docs/x/deep.md 
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4TQBHB9RENEYA9DVETQEADH/bin/fm-file-boundary.sh' check 't1'
+file boundary ok for task t1: 3 changed file(s), all within the allowed list
+-> exit=0
+
+branch changes: bin/a.sh bin/b.sh docs/top.md docs/x/deep.md notes.txt 
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4TQBHB9RENEYA9DVETQEADH/bin/fm-file-boundary.sh' check 't1'
+error: file boundary for task t1: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/t1/allowed-files:
+  - bin/b.sh
+  - notes.txt
+-> exit=1
+
+uncommitted out-of-list file only (not committed) after reset:
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check t1
+file boundary ok for task t1: 3 changed file(s), all within the allowed list
+-> exit=0
+
+================ S5 task with no list: exit 0 with a note ================
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-brief.sh t3 demo --mode no-mistakes >/dev/null; env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check t3
+no boundary recorded for task t3; every file is allowed
+-> exit=0
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh recorded t3
+-> exit=1
+
+task with no list that QUOTES the marker in its task text:
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check t3
+no boundary recorded for task t3; every file is allowed
+-> exit=0
+
+================ S6 a recorded list that is lost refuses (exit 2) ================
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check t1
+error: task t1 was briefed with an allowed-file list but /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/t1/allowed-files is missing
+-> exit=2
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh recorded t1
+error: task t1 was briefed with an allowed-file list but /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/t1/allowed-files is missing
+-> exit=2
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh recorded t1
+/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/t1/allowed-files
+-> exit=0
+
+================ S7 live GitHub PR file list (read-only) - prishsu0730/firstmate#11 ================
+live head: e56ab2674b7d969a3cc4313ba9beb32c5ec6dc14
+p1 list: bin/fm-*.sh docs/scripts.md tests/**/*.test.sh 
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check p1 --pr https://github.com/prishsu0730/firstmate/pull/11
+file boundary ok for task p1: 7 changed file(s), all within the allowed list
+-> exit=0
+
+p2 list: bin/fm-brief.sh bin/fm-file-boundary.sh tests/*.sh 
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check p2 --pr https://github.com/prishsu0730/firstmate/pull/11
+error: file boundary for task p2: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm/data/p2/allowed-files:
+  - bin/fm-pr-merge.sh
+  - docs/scripts.md
+-> exit=1
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check p1 --pr https://github.com/prishsu0730/firstmate/pull/11 --head e56ab2674b7d969a3cc4313ba9beb32c5ec6dc14
+file boundary ok for task p1: 7 changed file(s), all within the allowed list
+-> exit=0
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check p1 --pr https://github.com/prishsu0730/firstmate/pull/11 --head 0000000000000000000000000000000000000000
+error: the head of https://github.com/prishsu0730/firstmate/pull/11 is e56ab2674b7d969a3cc4313ba9beb32c5ec6dc14, not the verified 0000000000000000000000000000000000000000; its file list was not checked
+-> exit=2
+
+$ env -u NO_MISTAKES_GATE -u FM_DATA_OVERRIDE -u FM_STATE_OVERRIDE -u FM_ROOT_OVERRIDE FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.FbZPMm bin/fm-file-boundary.sh check t3 --pr https://github.com/prishsu0730/firstmate/pull/11
+no boundary recorded for task t3; every file is allowed
+-> exit=0
+

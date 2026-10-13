@@ -1,0 +1,6 @@
+ok - fm-pr-merge merges a task whose live files are all in its allowed list
+ok - fm-pr-merge refuses a live pull request with a file outside the allowed list, naming it
+ok - fm-pr-merge reads no file list and says nothing for a task with no allowed list
+ok - fm-pr-merge refuses when a recorded boundary's live file list cannot be read
+ok - fm-pr-merge refuses a bounded task's pull request under a task id that has no boundary
+ok - fm-pr-merge refuses a lost boundary record, and leaves a never-bounded task alone
