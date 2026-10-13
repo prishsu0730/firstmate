@@ -1669,6 +1669,11 @@ fm_meta_lock_path() {
 # serialize: either the spawn publishes first and the teardown's preflight
 # covers it, or the teardown owns the set and the spawn refuses. Both directions
 # fail closed.
+#
+# A fresh spawn and a scout-to-ship promotion also hold it across the
+# one-logical-change check (bin/fm-duplicate-intake.sh) and the publication of
+# the commits= claim that check returns, so two tasks naming the same commit
+# cannot both pass. Promotion waits for it; spawn refuses when it is busy.
 fm_task_set_lock_path() {  # <state-dir>
   local state=$1
   [ -n "$state" ] || return 1
