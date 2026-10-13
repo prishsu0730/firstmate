@@ -1,0 +1,19 @@
+# Live: real codex-cli 0.162.1 idle in lab tmux pane lab:fm-codexlive (meta harness=codex, no status)
+## pane
+  >_ OpenAI Codex (v0.162.1)
+     /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.CANkYx/proj
+  To get started, describe a task or try one of these commands:
+  /init - create an AGENTS.md file with instructions for Codex
+  /status - show current session configuration
+  /permissions - choose what Codex is allowed to do
+  /model - choose what model and reasoning effort to use
+  /review - review any changes and find issues
+## fm-crew-state.sh codexlive
+state: unknown · source: none · worktree gone (torn down?)
+## bin/fm-watch.sh stdout
+stale: lab:fm-codexlive (codex worker with no verified busy state, so a quiet pane may be finished, waiting, or stuck; inspect it)
+exit=0
+## bin/fm-wake-drain.sh
+1791869176	1	stale	lab:fm-codexlive	stale: lab:fm-codexlive (codex worker with no verified busy state, so a quiet pane may be finished, waiting, or stuck; inspect it)
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 98140.1791869176.opN6rs
+WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.

@@ -1,0 +1,9 @@
+# Live control: real codex idle in lab:fm-codexlive, meta harness=codex, status 'paused: holding for the upstream tool release'
+## first watcher run (fresh status surfaces as signal)
+signal: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.ddKo5J/state/codexheld.status
+exit=0
+## second watcher run after ack (stale path)
+stale: lab:fm-codexlive
+exit=0
+## queue
+1791869350	3	stale	lab:fm-codexlive	stale: lab:fm-codexlive

@@ -1,0 +1,6 @@
+# Live control: real claude idle in lab:fm-claudelive (meta harness=claude)
+## bin/fm-watch.sh stdout
+stale: lab:fm-claudelive
+exit=0
+## queue
+1791869333	1	stale	lab:fm-claudelive	stale: lab:fm-claudelive

@@ -1,0 +1,8 @@
+== test_unverified_codex_quiet_pane_says_it_needs_a_look
+ok - a quiet Codex worker with no verified busy state is surfaced once with a needs-a-look line
+== test_quiet_pane_detail_stays_off_other_harnesses_and_declared_waits
+ok - the needs-a-look detail stays off other harnesses and off a Codex worker's declared wait
+== test_turn_ended_churn_resets_prior_stale_classification
+ok - pane churn starts a fresh stale-classification interval before a stopped render returns
+== test_nonterminal_stale_not_working_surfaced
+ok - a not-provably-working non-terminal stale is surfaced immediately (never left to wait out the timer)
