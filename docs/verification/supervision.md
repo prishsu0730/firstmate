@@ -257,7 +257,7 @@ The daemon now installs a managed copy under that `CODEX_HOME` and starts (`"sta
 Whether an interactive TUI worker's turns are routed through that daemon, and whether lifecycle hooks fire for a Firstmate-style launch, still need an authenticated live turn, so the gate stays closed and both probes remain open.
 Crewmate and scout Codex launches pass `--disable hooks` on purpose (see the `codex` arm of `bin/fm-spawn.sh`), so a hooks-based source also needs a decision about the hook-trust dialog before it can be wired.
 
-A Codex worker whose pane stops changing therefore reaches the stale path with the verdict `unknown codex-unverified` and is surfaced at once, once, with a line that says its busy state is unverified; `tests/fm-watch-triage.test.sh` pins that wording and its absence for other harnesses and for a declared wait.
+A Codex worker whose pane stops changing therefore reaches the stale path with the verdict `unknown codex-unverified` and is surfaced at once, once, with a line that says its busy state is unverified, when the watcher is attended and the worker has no declared wait or captain hold; the away-mode daemon path and the terminal-status path keep the plain `stale: <window>` line; `tests/fm-watch-triage.test.sh` pins that wording and its absence for other harnesses and for a declared wait.
 A pane that keeps changing while the worker is stuck never reaches the stale path, because the busy-turn bound only applies to a pane that classifies as busy.
 
 Deterministic entry points:
