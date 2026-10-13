@@ -128,7 +128,10 @@
 # merge. bin/fm-file-boundary.sh owns the list and the comparison; a task with
 # no list never reaches it, so its merge is exactly what it was. A list that
 # cannot be checked on this forge or read at this time refuses rather than
-# passing.
+# passing, as does a recorded list that has gone missing. The boundary is only
+# trusted for the pull request the task was already bound to before this run: an
+# unbound or different one refuses, and so does merging a pull request that
+# another task with a boundary owns under a task id that has none.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -449,6 +452,11 @@ if [ "$PROVIDER" = github ]; then
     exit 1
   fi
 fi
+
+# The pull request this task was bound to before this run, read before
+# record_pr_metadata writes the one being merged: a file boundary is only
+# trusted for the pull request the task was already known to own.
+RECORDED_PR_BEFORE=$(grep '^pr=' "$META" | tail -1 | cut -d= -f2- || true)
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
@@ -1102,20 +1110,49 @@ require_released_captain_hold() {
 # The one file-boundary refusal, run after the live verification so the file
 # list is read at the head the merge is then bound to (FM_PR_MERGE_HEAD), and
 # before the away record is held so no forge read happens under that lock. It
-# applies only to a task with a recorded list; bin/fm-file-boundary.sh recorded
-# says so, and exit 1 there means no list and no output from this function.
+# applies to a task with a recorded boundary, and to a pull request that another
+# task with a boundary owns: bin/fm-file-boundary.sh recorded says which, and
+# exit 1 there means no boundary. A task with neither is not touched.
 require_file_boundary() {
-  local recorded_status=0 check_status=0 output
-  "$SCRIPT_DIR/fm-file-boundary.sh" recorded "$ID" >/dev/null 2>&1 || recorded_status=$?
+  local recorded_status=0 check_status=0 output probe other other_id other_status
+  # The checker resolves the same home and state directory this merge uses.
+  file_boundary() {
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-file-boundary.sh" "$@"
+  }
+  # A pull request owned by another task that has a boundary is not merged under
+  # a task id that has none; that would skip the boundary by naming the wrong id.
+  for other in "$STATE"/*.meta; do
+    [ -f "$other" ] || continue
+    other_id=${other##*/}
+    other_id=${other_id%.meta}
+    [ "$other_id" != "$ID" ] || continue
+    grep -qxF "pr=$URL" "$other" 2>/dev/null || continue
+    other_status=0
+    file_boundary recorded "$other_id" >/dev/null 2>&1 || other_status=$?
+    [ "$other_status" -eq 1 ] && continue
+    echo "error: refusing to merge $URL: it is bound to task $other_id, which has a file boundary; merge it as task $other_id" >&2
+    return 1
+  done
+  probe=$(file_boundary recorded "$ID" 2>&1) || recorded_status=$?
   case "$recorded_status" in
     0) ;;
     1) return 0 ;;
     *)
-      echo "error: refusing to merge $URL: could not tell whether task $ID has a file boundary" >&2
+      echo "error: refusing to merge $URL: the file boundary recorded for task $ID cannot be read" >&2
+      [ -z "$probe" ] || printf '%s\n' "$probe" >&2
       return 1
       ;;
   esac
-  output=$("$SCRIPT_DIR/fm-file-boundary.sh" check "$ID" --pr "$URL" --head "$FM_PR_MERGE_HEAD" 2>&1) \
+  # The boundary is only trusted for the pull request this task already owned.
+  if [ -z "$RECORDED_PR_BEFORE" ]; then
+    echo "error: refusing to merge $URL: task $ID has a file boundary but no pull request was bound to it before this merge" >&2
+    return 1
+  fi
+  if [ "$RECORDED_PR_BEFORE" != "$URL" ]; then
+    echo "error: refusing to merge $URL: task $ID has a file boundary and is bound to $RECORDED_PR_BEFORE, not this pull request" >&2
+    return 1
+  fi
+  output=$(file_boundary check "$ID" --pr "$URL" --head "$FM_PR_MERGE_HEAD" 2>&1) \
     || check_status=$?
   if [ "$check_status" -ne 0 ]; then
     printf 'error: refusing to merge %s: the file boundary recorded for task %s is not met\n' "$URL" "$ID" >&2

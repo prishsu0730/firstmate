@@ -395,6 +395,95 @@ test_pr_on_another_forge_fails_closed() {
   pass "fm-file-boundary check --pr fails closed on a forge it cannot read"
 }
 
+test_newline_in_a_local_path_never_splits_into_allowed_names() {
+  local case_dir
+  case_dir=$(make_case newline-local)
+  write_list "$case_dir" a b 'my file.txt'
+  commit_files "$case_dir" 'my file.txt'
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "newline-local: a name with a space must still pass (stderr: $ERR)"
+  printf 'x\n' > "$case_dir/wt/$(printf 'a\nb')"
+  git -C "$case_dir/wt" add -A
+  git -C "$case_dir/wt" -c user.name=t -c user.email=t@example.invalid commit -qm "newline name"
+  run_checker "$case_dir" check "$TASK"
+  expect_code 1 "$RC" "newline-local: one file named a<newline>b must not read as the allowed names a and b"
+  assert_contains "$ERR" 'newline' "newline-local: the refusal did not say why"
+  pass "fm-file-boundary check does not split a local path containing a newline into allowed names"
+}
+
+test_newline_in_a_pr_path_never_splits_into_allowed_names() {
+  local case_dir
+  case_dir=$(make_case newline-pr)
+  add_gh_mock "$case_dir"
+  write_list "$case_dir" docs/a b.md
+  printf '%s\n' '[{"filename":"docs/a\nb.md"}]' > "$case_dir/pr-files.json"
+  run_checker "$case_dir" check "$TASK" --pr "$PR_URL"
+  expect_code 1 "$RC" "newline-pr: one file named docs/a<newline>b.md must not read as the allowed names docs/a and b.md"
+  assert_contains "$ERR" 'newline' "newline-pr: the refusal did not say why"
+  pass "fm-file-boundary check --pr does not split a PR path containing a newline into allowed names"
+}
+
+# scaffold_boundary_brief <case_dir>: a real ship brief with a list, so the
+# record is the one the scaffold writes.
+scaffold_boundary_brief() {
+  local case_dir=$1
+  printf '%s\n' bin/a.sh > "$case_dir/list.txt"
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+    "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes --allowed-files "$case_dir/list.txt" >/dev/null \
+    || fail "the brief with a list did not scaffold"
+}
+
+test_a_lost_list_fails_closed() {
+  local case_dir
+  case_dir=$(make_case lost-list)
+  scaffold_boundary_brief "$case_dir"
+  commit_files "$case_dir" bin/a.sh
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "lost-list: the recorded list must pass an in-list change (stderr: $ERR)"
+
+  rm -f "$case_dir/home/data/$TASK/allowed-files"
+  run_checker "$case_dir" check "$TASK"
+  expect_code 2 "$RC" "lost-list: a deleted list must not read as no boundary"
+  assert_contains "$ERR" 'briefed with an allowed-file list' "lost-list: the refusal did not say what was lost"
+  run_checker "$case_dir" recorded "$TASK"
+  expect_code 2 "$RC" "lost-list: recorded must say the boundary cannot be read"
+
+  mkdir "$case_dir/home/data/$TASK/allowed-files"
+  run_checker "$case_dir" check "$TASK"
+  expect_code 2 "$RC" "lost-list: a list replaced by a directory must not read as no boundary"
+  pass "fm-file-boundary fails closed when a recorded list has been deleted or replaced"
+}
+
+test_an_unreadable_task_directory_fails_closed() {
+  local case_dir
+  case_dir=$(make_case unreadable-dir)
+  scaffold_boundary_brief "$case_dir"
+  if [ "$(id -u)" -eq 0 ]; then
+    pass "fm-file-boundary unreadable task directory (skipped: running as root)"
+    return 0
+  fi
+  chmod 000 "$case_dir/home/data/$TASK"
+  run_checker "$case_dir" check "$TASK"
+  chmod 755 "$case_dir/home/data/$TASK"
+  expect_code 2 "$RC" "unreadable-dir: a task directory that cannot be read must not read as no boundary"
+  pass "fm-file-boundary fails closed when the task directory cannot be read"
+}
+
+test_a_task_never_briefed_with_a_list_is_untouched() {
+  local case_dir
+  case_dir=$(make_case never-briefed)
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+    "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes >/dev/null \
+    || fail "the plain brief did not scaffold"
+  commit_files "$case_dir" anything/at/all.txt
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "never-briefed: a task with no list must pass (stderr: $ERR)"
+  assert_contains "$OUT" 'no boundary recorded' "never-briefed: the note was not printed"
+  run_checker "$case_dir" recorded "$TASK"
+  expect_code 1 "$RC" "never-briefed: recorded must exit 1"
+  pass "fm-file-boundary leaves a task that was never briefed with a list exactly as before"
+}
+
 # The command a brief scaffolded with --allowed-files hands its worker must run
 # as printed, from the worker's own worktree, and give the verdict.
 test_brief_command_runs_as_printed() {
@@ -469,3 +558,8 @@ test_pr_without_list_never_calls_the_forge
 test_pr_on_another_forge_fails_closed
 test_brief_command_runs_as_printed
 test_brief_command_unmade_check_exits_2
+test_newline_in_a_local_path_never_splits_into_allowed_names
+test_newline_in_a_pr_path_never_splits_into_allowed_names
+test_a_lost_list_fails_closed
+test_an_unreadable_task_directory_fails_closed
+test_a_task_never_briefed_with_a_list_is_untouched

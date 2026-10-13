@@ -3935,9 +3935,16 @@ write_boundary_list() {
   printf '%s\n' "$@" > "$case_dir/home/data/task-x1/allowed-files"
 }
 
+# bind_boundary_pr <case_dir> <number>: the task already owns this pull request,
+# as it does by the time a ship's PR is ready.
+bind_boundary_pr() {
+  printf 'pr=https://github.com/example/repo/pull/%s\n' "$2" >> "$1/state/task-x1.meta"
+}
+
 test_file_boundary_in_list_merges() {
   local case_dir
   case_dir=$(make_case boundary-in-list)
+  bind_boundary_pr "$case_dir" 41
   add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
   add_pr_files_mock "$case_dir" bin/fm-brief.sh tests/fm-brief.test.sh
   write_boundary_list "$case_dir" bin/fm-brief.sh 'tests/fm-brief*.test.sh'
@@ -3953,6 +3960,7 @@ test_file_boundary_in_list_merges() {
 test_file_boundary_extra_file_refuses_and_is_named() {
   local case_dir
   case_dir=$(make_case boundary-extra)
+  bind_boundary_pr "$case_dir" 42
   add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
   add_pr_files_mock "$case_dir" bin/fm-brief.sh bin/fm-spawn.sh
   write_boundary_list "$case_dir" bin/fm-brief.sh
@@ -3981,6 +3989,7 @@ test_file_boundary_absent_list_changes_nothing() {
 test_file_boundary_unreadable_file_list_refuses() {
   local case_dir
   case_dir=$(make_case boundary-unreadable)
+  bind_boundary_pr "$case_dir" 44
   add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
   add_pr_files_mock "$case_dir" bin/fm-brief.sh
   write_boundary_list "$case_dir" bin/fm-brief.sh
@@ -3996,6 +4005,7 @@ test_file_boundary_unreadable_file_list_refuses() {
 test_file_boundary_on_gitlab_refuses() {
   local case_dir rc
   case_dir=$(make_gitlab_case boundary-gitlab)
+  printf 'pr=%s\n' "$MR_URL" >> "$case_dir/state/task-x1.meta"
   write_boundary_list "$case_dir" bin/fm-brief.sh
   set +e
   run_pr_merge "$case_dir" task-x1 "$MR_URL" \
@@ -4014,3 +4024,79 @@ test_file_boundary_extra_file_refuses_and_is_named
 test_file_boundary_absent_list_changes_nothing
 test_file_boundary_unreadable_file_list_refuses
 test_file_boundary_on_gitlab_refuses
+
+test_file_boundary_unbound_task_refuses() {
+  local case_dir
+  case_dir=$(make_case boundary-unbound)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  run_required_case "$case_dir" 45
+  expect_code 1 "$RC" "boundary-unbound: a bounded task with no bound pull request must not merge"
+  assert_grep 'no pull request was bound to it before this merge' "$case_dir/stderr" \
+    "boundary-unbound: the refusal did not say why"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-unbound: the merge reached the forge"
+  pass "fm-pr-merge refuses a bounded task whose pull request was not already bound to it"
+}
+
+test_file_boundary_different_bound_pr_refuses() {
+  local case_dir
+  case_dir=$(make_case boundary-other-pr)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  bind_boundary_pr "$case_dir" 1
+  run_required_case "$case_dir" 46
+  expect_code 1 "$RC" "boundary-other-pr: a pull request the task does not own must not merge"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-other-pr: the merge reached the forge"
+  pass "fm-pr-merge refuses a pull request that is not the one bound to the bounded task"
+}
+
+test_file_boundary_wrong_task_id_refuses() {
+  local case_dir
+  case_dir=$(make_case boundary-wrong-id)
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh bin/fm-spawn.sh
+  write_boundary_list "$case_dir" bin/fm-brief.sh
+  bind_boundary_pr "$case_dir" 47
+  fm_write_meta "$case_dir/state/task-y1.meta" \
+    "window=fm-task-y1" \
+    "worktree=$case_dir/wt" \
+    "project=$case_dir/project" \
+    "kind=ship" \
+    "mode=no-mistakes"
+  set +e
+  run_pr_merge "$case_dir" task-y1 https://github.com/example/repo/pull/47 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  RC=$?
+  set -e
+  expect_code 1 "$RC" "boundary-wrong-id: a bounded task's pull request must not merge under another task id"
+  assert_grep 'bound to task task-x1, which has a file boundary' "$case_dir/stderr" \
+    "boundary-wrong-id: the owning task was not named"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-wrong-id: the merge reached the forge"
+  pass "fm-pr-merge refuses a bounded task's pull request under a task id that has no boundary"
+}
+
+test_file_boundary_lost_list_refuses() {
+  local case_dir
+  case_dir=$(make_case boundary-lost)
+  bind_boundary_pr "$case_dir" 48
+  add_gh_mocks "$case_dir" "$FILE_BOUNDARY_HEAD"
+  add_pr_files_mock "$case_dir" bin/fm-brief.sh
+  mkdir -p "$case_dir/home/data/task-x1"
+  printf '%s\n' '# Allowed files' 'File boundary: required' > "$case_dir/home/data/task-x1/brief.md"
+  run_required_case "$case_dir" 48
+  expect_code 1 "$RC" "boundary-lost: a briefed-with-a-list task whose list is gone must not merge"
+  assert_grep 'cannot be read' "$case_dir/stderr" "boundary-lost: the refusal did not say why"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-lost: the merge reached the forge"
+
+  printf '%s\n' '# Task' 'no boundary here' > "$case_dir/home/data/task-x1/brief.md"
+  run_required_case "$case_dir" 48
+  expect_code 0 "$RC" "boundary-lost: a brief with no boundary line is a task with no boundary (stderr: $(cat "$case_dir/stderr"))"
+  pass "fm-pr-merge refuses a lost boundary record, and leaves a never-bounded task alone"
+}
+
+test_file_boundary_unbound_task_refuses
+test_file_boundary_different_bound_pr_refuses
+test_file_boundary_wrong_task_id_refuses
+test_file_boundary_lost_list_refuses

@@ -74,9 +74,12 @@
 # bin/fm-file-boundary.sh owns reading and whose header owns the glob syntax,
 # and a "# Allowed files" section tells the worker to run that checker before it
 # reports done or pushes, and to stop with a blocked status naming any file
-# outside the list. The record is written beside the brief rather than into
-# state/<task-id>.meta because bin/fm-spawn.sh publishes that file at spawn and
-# owns its field set. Without the flag the brief is byte-for-byte what it was.
+# outside the list. The section opens with a `File boundary: required` line, so
+# a list that is later lost is found missing instead of read as no boundary
+# (bin/fm-file-boundary.sh owns that rule). The record is written beside the
+# brief rather than into state/<task-id>.meta because bin/fm-spawn.sh publishes
+# that file at spawn and owns its field set. Without the flag the brief is
+# byte-for-byte what it was.
 # Refused on --scout and --secondmate: neither makes a branch to bound.
 # --forge names the project's forge, defaults to none, and is orthogonal to --mode
 # exactly as the registry's `forge=` token is. It is the captain's confirmed
@@ -748,6 +751,7 @@ if [ -n "$ALLOWED_FILES_BODY" ]; then
 $ALLOWED_FILES_BODY
 ALLOWED_ENTRIES
   ALLOWED_BLOCK="# Allowed files
+File boundary: required
 This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (\`*\` and \`?\` stay inside one directory, \`**\` crosses directories, and \`**/\` also matches none).
 $ALLOWED_LIST
 

@@ -20,20 +20,30 @@
 #   each named on stderr. Exit 2: the check could not be made - a usage error,
 #   an unreadable base, file list, or head, or a forge this script cannot
 #   read - because an unreadable boundary must not read as a pass.
-#   recorded prints the list's path and exits 0 when the task has a list, and
-#   exits 1 silently when it has none; bin/fm-pr-merge.sh uses it to decide
+#   recorded prints the list's path and exits 0 when the task has a list, exits
+#   1 silently when it has none, and exits 2 when the task was briefed with a
+#   list that cannot be read: a boundary that was recorded and then lost must
+#   refuse, never read as "no boundary". bin/fm-pr-merge.sh uses it to decide
 #   whether the merge-time refusal applies.
 # The list is a task record: bin/fm-brief.sh --allowed-files copies it to
 # <data>/<task-id>/allowed-files, one path or glob per line, already validated
 # and stripped of blank and comment lines, and this script is the only reader
-# of that path. It lives beside the brief rather than in state/<id>.meta
-# because bin/fm-spawn.sh publishes that file fresh at every spawn and owns its
-# field set, while the data directory is the task's private record that no CI
-# job or no-mistakes step can read, which is why the merge-time check runs in
+# of that path. The same scaffold writes a `File boundary: required` line into
+# <data>/<task-id>/brief.md, so a list that is later deleted or made unreadable
+# is found missing rather than taken for a task that never had one; a task
+# whose brief carries no such line, or that has no brief, has no boundary. The
+# record lives beside the brief rather than in state/<id>.meta because
+# bin/fm-spawn.sh publishes that file fresh at every spawn and owns its field
+# set, while the data directory is the task's private record that no CI job or
+# no-mistakes step can read, which is why the merge-time check runs in
 # fm-pr-merge.sh. A glob's `*` and `?` stay inside one directory; `**` crosses
 # directories, and `**/` also matches no directory at all, so `docs/**/*.md`
 # allows docs/a.md. Every other character, `[` included, is literal. Exact
-# paths and globs are matched against repo-relative paths.
+# paths and globs are matched against repo-relative paths. A list entry names a
+# file or a glob, not a directory: `docs/` matches only that literal path.
+# Changed paths are read without splitting on newlines (git's -z output, and a
+# JSON field per path from the forge), and a path that itself contains a
+# newline is reported as outside the list, because no one-line entry can name it.
 # Environment: FM_HOME, FM_DATA_OVERRIDE, and FM_STATE_OVERRIDE select the data
 # and state directories exactly as for bin/fm-brief.sh.
 set -eu
@@ -102,19 +112,69 @@ else
 fi
 
 LIST="$DATA/$ID/allowed-files"
-if [ ! -f "$LIST" ]; then
-  [ "$SUBCOMMAND" = recorded ] && exit 1
-  printf 'no boundary recorded for task %s; every file is allowed\n' "$ID"
-  exit 0
-fi
+BRIEF_FILE="$DATA/$ID/brief.md"
+BOUNDARY_MARKER='File boundary: required'
+
+# Whether the task has a boundary, and if it does whether it can be read:
+# BOUNDARY is list (read it), none (no boundary), or lost (one was recorded and
+# cannot be read, with the reason in BOUNDARY_WHY).
+BOUNDARY=none
+BOUNDARY_WHY=
+resolve_boundary() {
+  local line
+  if [ -e "$LIST" ] || [ -L "$LIST" ]; then
+    if [ -f "$LIST" ] && [ -r "$LIST" ]; then
+      BOUNDARY=list
+    else
+      BOUNDARY=lost
+      BOUNDARY_WHY="the allowed-file list for task $ID is not a readable file: $LIST"
+    fi
+    return 0
+  fi
+  if [ -d "$DATA/$ID" ] && [ ! -x "$DATA/$ID" ]; then
+    BOUNDARY=lost
+    BOUNDARY_WHY="the task data directory for task $ID cannot be read, so its allowed-file list cannot be found: $DATA/$ID"
+    return 0
+  fi
+  [ -e "$BRIEF_FILE" ] || [ -L "$BRIEF_FILE" ] || return 0
+  if [ ! -f "$BRIEF_FILE" ] || [ ! -r "$BRIEF_FILE" ]; then
+    BOUNDARY=lost
+    BOUNDARY_WHY="the brief of task $ID is not a readable file, so whether it carried an allowed-file list cannot be told: $BRIEF_FILE"
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$line" = "$BOUNDARY_MARKER" ]; then
+      BOUNDARY=lost
+      BOUNDARY_WHY="task $ID was briefed with an allowed-file list but $LIST is missing"
+      return 0
+    fi
+  done < "$BRIEF_FILE"
+  return 0
+}
+resolve_boundary
+
+case "$BOUNDARY" in
+  list) ;;
+  none)
+    [ "$SUBCOMMAND" = recorded ] && exit 1
+    printf 'no boundary recorded for task %s; every file is allowed\n' "$ID"
+    exit 0
+    ;;
+  *) die "$BOUNDARY_WHY" ;;
+esac
 if [ "$SUBCOMMAND" = recorded ]; then
   printf '%s\n' "$LIST"
   exit 0
 fi
-[ -r "$LIST" ] || die "the allowed-file list for task $ID is unreadable: $LIST"
 
-# Resolve the changed files into $CHANGED, one path per line.
-CHANGED=
+# Resolve the changed files into $CHANGED_FILE, one NUL-terminated record per
+# path. A newline is a legal file-name character, so no step below may treat the
+# list as lines. Records from a local branch are bare paths; records from a pull
+# request are `P:<path>`, or `N:` for a path that contains a newline, which the
+# forge read replaces before the name can reach a line-oriented stream.
+CHANGED_FILE=$(mktemp "${TMPDIR:-/tmp}/fm-file-boundary.XXXXXX") || die "cannot create a scratch file"
+trap 'rm -f "$CHANGED_FILE"' EXIT
+CHANGED_FROM=branch
 meta_get() {  # <key>
   sed -n "s/^$1=//p" "$STATE/$ID.meta" 2>/dev/null | tail -n 1
 }
@@ -143,12 +203,12 @@ changed_from_branch() {
   [ -n "$ref" ] || die "cannot find the base branch to compare against in $wt${base:+ (base_branch=$base)}"
   merge_base=$(git -C "$wt" merge-base "$ref" HEAD 2>/dev/null) \
     || die "cannot find a merge base between $ref and HEAD in $wt"
-  CHANGED=$(set -o pipefail; git -C "$wt" diff -z --no-renames --name-only "$merge_base...HEAD" | tr '\0' '\n') \
+  git -C "$wt" diff -z --no-renames --name-only "$merge_base...HEAD" > "$CHANGED_FILE" \
     || die "cannot list the changes since $merge_base in $wt"
 }
 
 changed_from_pr() {
-  local live_head
+  local live_head pr_files
   [ "$FM_PR_PROVIDER" = github ] \
     || die "the file boundary cannot read a $FM_PR_PROVIDER change's file list; only GitHub pull requests are supported"
   command -v gh >/dev/null 2>&1 || die "reading a pull request's files requires gh on PATH"
@@ -160,9 +220,11 @@ changed_from_pr() {
   fi
   # Every page, and both paths of a rename: the old path is a file this change
   # touched even though it no longer exists.
-  CHANGED=$(gh api --paginate "repos/$FM_PR_OWNER/$FM_PR_REPO/pulls/$FM_PR_NUMBER/files" \
-    --jq '.[] | .filename, (.previous_filename // empty)' 2>/dev/null) \
+  CHANGED_FROM="pr"
+  pr_files=$(gh api --paginate "repos/$FM_PR_OWNER/$FM_PR_REPO/pulls/$FM_PR_NUMBER/files" \
+    --jq '.[] | (.filename, (.previous_filename // empty)) | if test("\n") then "N:" else "P:" + . end' 2>/dev/null) \
     || die "could not read the changed files of $FM_PR_URL"
+  printf '%s' "$pr_files" | tr '\n' '\0' > "$CHANGED_FILE"
 }
 
 if [ -n "$PR_URL" ]; then
@@ -217,16 +279,27 @@ path_allowed() {  # <path>
 
 total=0
 outside=
-while IFS= read -r file || [ -n "$file" ]; do
-  [ -n "$file" ] || continue
+while IFS= read -r -d '' record || [ -n "$record" ]; do
   total=$((total + 1))
-  if ! path_allowed "$file"; then
+  file=$record
+  newline_path=0
+  if [ "$CHANGED_FROM" = pr ]; then
+    case "$record" in
+      P:*) file=${record#P:} ;;
+      *) newline_path=1 ;;
+    esac
+  fi
+  case "$file" in
+    *$'\n'*) newline_path=1 ;;
+  esac
+  if [ "$newline_path" -eq 1 ]; then
+    outside="${outside}  - (a changed file whose name contains a newline; no list entry can name it)
+"
+  elif ! path_allowed "$file"; then
     outside="${outside}  - $file
 "
   fi
-done <<EOF
-$CHANGED
-EOF
+done < "$CHANGED_FILE"
 
 if [ -n "$outside" ]; then
   printf 'error: file boundary for task %s: these changed files are outside the allowed list %s:\n%s' \

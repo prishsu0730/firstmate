@@ -1483,6 +1483,7 @@ test_allowed_files_flag_adds_only_a_section() {
     cp "$home/data/$id/brief.md" "$plain"
     assert_absent "$home/data/$id/allowed-files" "$mode: no flag must record no list"
     assert_no_grep 'Allowed files' "$plain" "$mode: no flag must add no section"
+    assert_no_grep 'File boundary' "$plain" "$mode: no flag must add no marker"
     assert_no_grep 'fm-file-boundary' "$plain" "$mode: no flag must name no checker"
     rm -rf "${home:?}/data/$id"
 
@@ -1490,6 +1491,7 @@ test_allowed_files_flag_adds_only_a_section() {
       || fail "$mode: the brief with a list should scaffold"
     flagged="$home/data/$id/brief.md"
     assert_grep '# Allowed files' "$flagged" "$mode: the section is missing"
+    assert_grep 'File boundary: required' "$flagged" "$mode: the lost-record marker is missing"
     assert_grep "- \`bin/fm-brief.sh\`" "$flagged" "$mode: the dotted entry was not normalized"
     assert_grep "- \`tests/fm-brief*.test.sh\`" "$flagged" "$mode: the padded entry was not trimmed"
     assert_grep 'fm-file-boundary.sh' "$flagged" "$mode: the checker command is missing"
