@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--supersedes <task>] [--allow-duplicate] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
@@ -48,6 +48,15 @@
 #   base_branch= in state/<id>.meta, which a relaunch reuses and later review and
 #   cleanup read; it is refused on secondmates and relaunches, and without it
 #   nothing changes.
+#   A fresh ship spawn also refuses a second task for a change another open task
+#   already carries: bin/fm-duplicate-intake.sh (its header owns what counts as a
+#   match and as open) reads the commit SHAs the brief's Task names and refuses,
+#   naming the earlier task, when one is already in that task's recorded branch or
+#   recorded pr_head=, before any launch brief, worktree, or endpoint exists.
+#   --supersedes <task> excuses that one task and records supersedes=<task> in
+#   state/<id>.meta; --allow-duplicate proceeds past every match with a notice.
+#   Both are refused on scouts, secondmates, relaunches, and batches. Matches on
+#   anything looser than a SHA only print a warning.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -708,6 +717,9 @@ YOLO_SET=0
 BRANCH_PREFIX_SET=0
 BASE_BRANCH=
 BASE_BRANCH_SET=0
+SUPERSEDES=
+SUPERSEDES_SET=0
+ALLOW_DUPLICATE=0
 TRACEPARENT_SET=0
 RELAUNCH=0
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
@@ -755,6 +767,10 @@ for a in "$@"; do
     base-branch)
       BASE_BRANCH=$a
       BASE_BRANCH_SET=1
+      ;;
+    supersedes)
+      SUPERSEDES=$a
+      SUPERSEDES_SET=1
       ;;
     traceparent)
       TRACEPARENT_ARG=$a
@@ -819,6 +835,12 @@ for a in "$@"; do
     BASE_BRANCH=${a#--base-branch=}
     BASE_BRANCH_SET=1
     ;;
+  --supersedes) want_value=supersedes ;;
+  --supersedes=*)
+    SUPERSEDES=${a#--supersedes=}
+    SUPERSEDES_SET=1
+    ;;
+  --allow-duplicate) ALLOW_DUPLICATE=1 ;;
   --traceparent) want_value=traceparent ;;
   --traceparent=*)
     TRACEPARENT_ARG=${a#--traceparent=}
@@ -857,6 +879,10 @@ done
 }
 [ "$TRACEPARENT_SET" -eq 0 ] || [ -n "$TRACEPARENT_ARG" ] || {
   echo "error: --traceparent requires a non-empty value" >&2
+  exit 1
+}
+[ "$SUPERSEDES_SET" -eq 0 ] || [ -n "$SUPERSEDES" ] || {
+  echo "error: --supersedes requires a task id" >&2
   exit 1
 }
 # A parent-delivered carrier replaces this home's own resolution, so it is
@@ -909,6 +935,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: --relaunch reuses the task's recorded base branch; --base-branch cannot override it" >&2
     exit 1
   }
+  [ "$SUPERSEDES_SET" -eq 0 ] && [ "$ALLOW_DUPLICATE" -eq 0 ] || {
+    echo "error: --supersedes and --allow-duplicate apply only to a fresh ship spawn; a relaunch keeps the task's recorded record" >&2
+    exit 1
+  }
 else
   # Delivery contract (AGENTS.md section 7). A ship task's mode and yolo are
   # firstmate's per-task decision, so they are required and closed-set validated
@@ -956,6 +986,10 @@ else
     }
     [ "$KIND" != secondmate ] || [ "$BASE_BRANCH_SET" -eq 0 ] || {
       echo "error: --base-branch applies only to ship and scout spawns; a secondmate charter has no task base" >&2
+      exit 1
+    }
+    [ "$SUPERSEDES_SET" -eq 0 ] && [ "$ALLOW_DUPLICATE" -eq 0 ] || {
+      echo "error: --supersedes and --allow-duplicate apply only to ship spawns; a scout makes no branch or PR and a secondmate is not task work" >&2
       exit 1
     }
   fi
@@ -1557,6 +1591,12 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   [ "$BRANCH_PREFIX_SET" -eq 0 ] || shared_args+=(--branch-prefix "$BRANCH_PREFIX")
   [ "$BASE_BRANCH_SET" -eq 0 ] || shared_args+=(--base-branch "$BASE_BRANCH")
   [ "$HERDR_RESUME_LOCK_WAIT" -eq 0 ] || shared_args+=(--herdr-resume-lock-wait)
+  # A batch names several tasks, so a single --supersedes target cannot apply to
+  # them; --allow-duplicate is a per-pair decision for the same reason.
+  if [ "$SUPERSEDES_SET" -eq 1 ] || [ "$ALLOW_DUPLICATE" -eq 1 ]; then
+    echo "error: --supersedes and --allow-duplicate are single-task only; spawn the task explicitly" >&2
+    exit 1
+  fi
   for pair in "${POS[@]}"; do
     case "$pair" in
     *=*) : ;;
@@ -3207,6 +3247,14 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   elif fm_brief_base_branches "$BRIEF" >/dev/null; then
     echo "error: $BRIEF records a Base branch line but the spawn has no --base-branch; pass the brief's base with --base-branch or re-scaffold the brief without one" >&2
     exit 1
+  fi
+  # One logical change, one task: refuse before any launch brief, worktree, or
+  # endpoint exists (bin/fm-duplicate-intake.sh owns the match and open rules).
+  if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
+    DUPLICATE_INTAKE_ARGS=("$ID" "$PROJ_ABS" "$BRIEF" --state "$STATE" --data "$DATA")
+    [ -z "$SUPERSEDES" ] || DUPLICATE_INTAKE_ARGS+=(--supersedes "$SUPERSEDES")
+    [ "$ALLOW_DUPLICATE" -eq 0 ] || DUPLICATE_INTAKE_ARGS+=(--allow-duplicate)
+    "$FM_ROOT/bin/fm-duplicate-intake.sh" "${DUPLICATE_INTAKE_ARGS[@]}" || exit 1
   fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
@@ -5107,6 +5155,7 @@ preserve_relaunch_meta() {
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"
   echo "tasktmp=$TASK_TMP"
   [ -z "$BASE_BRANCH" ] || echo "base_branch=$BASE_BRANCH"
+  [ -z "$SUPERSEDES" ] || echo "supersedes=$SUPERSEDES"
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   # The worker account pin, only when this home declares one, so an unpinned
