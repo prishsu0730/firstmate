@@ -1,0 +1,21 @@
+== [1ea32a4d kind=ship] real treehouse leased slot: /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.IUBnCa/real-th-ship/pool/.treehouse/project-e5fdb5/1/project (rc=0)
+firstmate sees a treehouse pool slot: yes
+-- untracked before teardown:
+   ?? scratch-clone/
+   ?? scratch.txt
+-- teardown exit=1
+-- stdout:
+-- stderr:
+   REFUSED: worktree /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.IUBnCa/real-th-ship/pool/.treehouse/project-e5fdb5/1/project has uncommitted changes.
+   uncommitted changes present (untracked-only leftovers)
+   untracked paths (up to 10):
+     scratch-clone/
+     scratch.txt
+   Commit them (or get the captain's explicit OK to discard, then --force).
+-- untracked in slot after teardown:
+   ?? scratch-clone/
+   ?? scratch.txt
+-- nested clone present after: yes
+-- treehouse status:
+   base  main  (repository default)
+   1     leased       /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.IUBnCa/real-th-ship/pool/.treehouse/project-e5fdb5/1/project  (detached)

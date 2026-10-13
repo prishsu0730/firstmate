@@ -1,0 +1,11 @@
+== [BASE-3ef982ce] alpha corr=93b28e8ef72aa518 beta corr=e00d5ab9baa0a9a4
+1. beta's line echoes alpha's token -> alpha: RESOLVED (phase resolved)   [want: open]
+2. beta's own token in beta.status -> beta: RESOLVED   [want: RESOLVED]
+3. alpha.status has corr=<id>ff and xcorr=<id> only -> alpha: RESOLVED   [want: open]
+4. alpha's own exact token -> alpha: RESOLVED   [want: RESOLVED]
+
+== [TARGET-1ea32a4d] alpha corr=940ee0e6aaa41a2c beta corr=698840cbb70370e2
+1. beta's line echoes alpha's token -> alpha: open (phase awaiting_report)   [want: open]
+2. beta's own token in beta.status -> beta: RESOLVED   [want: RESOLVED]
+3. alpha.status has corr=<id>ff and xcorr=<id> only -> alpha: open   [want: open]
+4. alpha's own exact token -> alpha: RESOLVED   [want: RESOLVED]

@@ -1,0 +1,19 @@
+== [BASE-3ef982ce kind=scout] real treehouse leased slot: /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.PSokjn/real-th-scout/pool/.treehouse/project-d089cb/1/project (rc=0)
+/tmp/fmval.XMXK2n/th-drive.sh: line 14: prepare_scout_teardown: command not found
+/tmp/fmval.XMXK2n/th-drive.sh: line 15: seed_nested_clone_and_scratch: command not found
+firstmate sees a treehouse pool slot: yes
+-- untracked before teardown:
+-- teardown exit=1
+-- stdout:
+-- stderr:
+   REFUSED: scout task task-x1 has no report at /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.PSokjn/real-th-scout/data/task-x1/report.md.
+   The report is the work product. Have the crewmate write it, or use --force after explicit discard approval.
+-- untracked in slot after teardown:
+   (none - slot is clean)
+-- nested clone present after: no
+-- treehouse status:
+   A new version of treehouse is available: v3.1.0 → v3.1.2
+   Run "treehouse update" to update
+   
+   base  main  (repository default)
+   1     leased       /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.PSokjn/real-th-scout/pool/.treehouse/project-d089cb/1/project  (detached)

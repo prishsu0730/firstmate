@@ -1,0 +1,12 @@
+[target-1ea32a4d] first: exit=124 out='checkpoint: no actionable wake within 1s' err='' lock=25644
+[target-1ea32a4d] second: exit=0 out='check: rearm-resurface' err='' lock=none
+[target-1ea32a4d] first: exit=124 out='checkpoint: no actionable wake within 1s' err='' lock=25647
+[target-1ea32a4d] second: exit=0 out='check: rearm-resurface' err='' lock=none
+[target-1ea32a4d] first: exit=124 out='checkpoint: no actionable wake within 1s' err='' lock=25645
+[target-1ea32a4d] second: exit=0 out='check: rearm-resurface' err='' lock=none
+[target-1ea32a4d] first: exit=124 out='checkpoint: no actionable wake within 1s' err='' lock=25646
+[target-1ea32a4d] second: exit=0 out='check: rearm-resurface' err='' lock=none
+[target-1ea32a4d] first: exit=124 out='checkpoint: no actionable wake within 1s' err='' lock=25649
+[target-1ea32a4d] second: exit=0 out='check: rearm-resurface' err='' lock=none
+[target-1ea32a4d] first: exit=124 out='checkpoint: no actionable wake within 1s' err='' lock=25648
+[target-1ea32a4d] second: exit=0 out='check: rearm-resurface' err='' lock=none

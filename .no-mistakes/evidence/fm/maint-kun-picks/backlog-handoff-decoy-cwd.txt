@@ -1,0 +1,39 @@
+== [BASE-3ef982ce] run fm-backlog-handoff.sh design decoy-item from cwd holding a beads .tasks.toml
+error: "Unsupported backend \"beads\" — P1 ships the markdown backend only"
+code: UNSUPPORTED
+help[1]: "Set `backend = \"markdown\"` in .tasks.toml, or omit --backend"
+error: tasks-axi mv failed; nothing was moved.
+exit=1
+-- main backlog:
+## Queued
+- [ ] decoy-item - moves despite a cwd beads config (repo: alpha)
+- [ ] decoy-keep - stays put (repo: alpha)
+
+## Done
+-- secondmate backlog:
+cat: /tmp/fmval-ho.K470aP/sub/data/backlog.md: No such file or directory
+
+== [TARGET-1ea32a4d] run fm-backlog-handoff.sh design decoy-item from cwd holding a beads .tasks.toml
+handed off 1 item(s) to design: decoy-item
+  into /private/tmp/fmval-ho.XQZiI9/sub/data/backlog.md
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the requested message WILL still be sent.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fm-send: doorbell not typed because the agent in firstmate:fm-design has exited; the steer is durably recorded at /tmp/fmval-ho.XQZiI9/main/state/design.inbox/001.msg for recovery (stuck-crewmate-recovery), and the watcher will not re-ring a dead pane
+exit=0
+-- main backlog:
+## Queued
+- [ ] decoy-keep - stays put (repo: alpha)
+
+## Done
+-- secondmate backlog:
+## In flight
+
+## Queued
+- [ ] decoy-item - moves despite a cwd beads config (repo: alpha)
+
+## Done

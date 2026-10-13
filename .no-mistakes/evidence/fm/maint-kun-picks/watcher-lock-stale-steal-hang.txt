@@ -1,0 +1,6 @@
+1ea32a4d solo run 1: ok - disposable watcher refuses inherited state outside its marked lab TIMEOUT after 60s 
+1ea32a4d solo run 2: ok - disposable watcher refuses inherited state outside its marked lab TIMEOUT after 60s 
+1ea32a4d solo run 3: ok - disposable watcher refuses inherited state outside its marked lab TIMEOUT after 60s 
+3ef982ce solo run 1: ok - disposable watcher refuses inherited state outside its marked lab ok - concurrent stale-lock steal yields exactly one winner 
+3ef982ce solo run 2: ok - disposable watcher refuses inherited state outside its marked lab ok - concurrent stale-lock steal yields exactly one winner 
+3ef982ce solo run 3: ok - disposable watcher refuses inherited state outside its marked lab ok - concurrent stale-lock steal yields exactly one winner 

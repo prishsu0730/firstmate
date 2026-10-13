@@ -1,0 +1,17 @@
+== [BASE-3ef982ce]
+1. --no-projects into a home listing 'spaced app': exit=1  msg: data/projects.md entries: spaced
+2. seed design with project 'spaced app': exit=1; child registry line: (none) error: failed to initialize no-mistakes for spaced app at /private/tmp/fmval-seed.h7S31Z/design/projects/spaced app
+3.1 seed design with 'dash - app': exit=1 error: failed to initialize no-mistakes for dash - app at /private/tmp/fmval-seed.h7S31Z/design/projects/dash - app
+3.2 seed design with 'dash - app': exit=1 error: failed to initialize no-mistakes for dash - app at /private/tmp/fmval-seed.h7S31Z/design/projects/dash - app
+   child registry rows for 'dash - app':   [want 1]
+   child projects.md:
+
+== [TARGET-1ea32a4d]
+1. --no-projects into a home listing 'spaced app': exit=1  msg: data/projects.md entries: spaced app
+2. seed design with project 'spaced app': exit=0; child registry line: - spaced app [direct-PR] - spaced project with posture (added 2026-06-22) 
+3.1 seed design with 'dash - app': exit=0 
+3.2 seed design with 'dash - app': exit=0 
+   child registry rows for 'dash - app': 1  [want 1]
+   child projects.md:
+     - spaced app [direct-PR] - spaced project with posture (added 2026-06-22)
+     - dash - app [direct-PR] - dashed project with posture (added 2026-06-22)

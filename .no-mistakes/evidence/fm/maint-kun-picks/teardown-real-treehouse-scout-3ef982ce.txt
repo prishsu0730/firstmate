@@ -1,0 +1,17 @@
+== [3ef982ce kind=scout] real treehouse leased slot: /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.6UARLP/real-th-scout/pool/.treehouse/project-b1c84f/1/project (rc=0)
+firstmate sees a treehouse pool slot: yes
+-- untracked before teardown:
+   ?? scratch-clone/
+   ?? scratch.txt
+-- teardown exit=0
+-- stdout:
+   🌳 Worktree returned to pool.
+   teardown task-x1 complete (window firstmate:fm-task-x1, worktree /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.6UARLP/real-th-scout/pool/.treehouse/project-b1c84f/1/project)
+   Backlog: task-x1 just finished (this home keeps no markdown backlog at /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.6UARLP/real-th-scout/data/backlog.md). Update /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.6UARLP/real-th-scout/data/backlog.md - move task-x1 to Done, keep Done to the 10 most recent, then re-scan Queued and dispatch only work whose blockers are gone and date is due.
+-- stderr:
+-- untracked in slot after teardown:
+   ?? scratch-clone/
+-- nested clone present after: yes
+-- treehouse status:
+   base  main  (repository default)
+   1     dirty        /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-teardown-tests.6UARLP/real-th-scout/pool/.treehouse/project-b1c84f/1/project  (detached)

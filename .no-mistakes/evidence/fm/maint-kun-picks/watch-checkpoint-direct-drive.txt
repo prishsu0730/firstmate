@@ -1,0 +1,21 @@
+/tmp/fmval.XMXK2n/ckpt.sh: line 10: 37430 Terminated: 15          ( while :; do
+    :;
+done )
+[TARGET-1ea32a4d load=0] exit=124 elapsed=1.23s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[BASE-3ef982ce load=0] exit=124 elapsed=1.19s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[TARGET-1ea32a4d load=0] exit=124 elapsed=1.24s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+/tmp/fmval.XMXK2n/ckpt.sh: line 10: 44037 Terminated: 15          ( while :; do
+    :;
+done )
+[BASE-3ef982ce load=0] exit=124 elapsed=1.31s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[TARGET-1ea32a4d load=0] exit=124 elapsed=1.51s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[BASE-3ef982ce load=0] exit=124 elapsed=1.30s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[TARGET-1ea32a4d load=14] exit=124 elapsed=1.63s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[BASE-3ef982ce load=14] exit=124 elapsed=1.21s stdout='checkpoint: no actionable wake within 1s' lock_pid=52135 lock_owner_alive=no
+[TARGET-1ea32a4d load=14] exit=124 elapsed=1.39s stdout='checkpoint: no actionable wake within 1s' lock_pid=52423 lock_owner_alive=no
+[BASE-3ef982ce load=14] exit=124 elapsed=1.37s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+/tmp/fmval.XMXK2n/ckpt.sh: line 10: 53782 Terminated: 15          ( while :; do
+    :;
+done )
+[TARGET-1ea32a4d load=14] exit=124 elapsed=1.67s stdout='checkpoint: no actionable wake within 1s' lock_pid=none lock_owner_alive=no
+[BASE-3ef982ce load=14] exit=124 elapsed=1.15s stdout='checkpoint: no actionable wake within 1s' lock_pid=55750 lock_owner_alive=no

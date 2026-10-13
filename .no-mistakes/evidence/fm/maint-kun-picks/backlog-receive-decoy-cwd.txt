@@ -1,0 +1,22 @@
+== [BASE-3ef982ce] fm-backlog-receive.sh from cwd holding a beads .tasks.toml
+error: "Unsupported backend \"beads\" — P1 ships the markdown backend only"
+code: UNSUPPORTED
+help[1]: "Set `backend = \"markdown\"` in .tasks.toml, or omit --backend"
+error: atomic backlog receipt failed; delivered outbox is preserved for retry
+exit=1
+-- receiver backlog:
+## Queued
+
+## Done
+-- outbox still present? yes
+
+== [TARGET-1ea32a4d] fm-backlog-receive.sh from cwd holding a beads .tasks.toml
+received: design moved=1 already=0
+exit=0
+-- receiver backlog:
+## Queued
+- [ ] rx-item - delivered remote work (repo: alpha)
+
+## Done
+## In flight
+-- outbox still present? no

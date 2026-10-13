@@ -1,0 +1,13 @@
+== 6 concurrent runs of tests/fm-watch-checkpoint.test.sh
+target run 1: not ok - watch lock pid survived quiet checkpoint timeout
+target run 2: not ok - watch lock pid survived quiet checkpoint timeout
+target run 3: not ok - watch lock pid survived quiet checkpoint timeout
+target run 4: not ok - watch lock pid survived quiet checkpoint timeout
+target run 5: not ok - watch lock pid survived quiet checkpoint timeout
+target run 6: not ok - watch lock pid survived quiet checkpoint timeout
+base-3ef982ce run 1: exit=0
+base-3ef982ce run 2: exit=0
+base-3ef982ce run 3: exit=0
+base-3ef982ce run 4: exit=0
+base-3ef982ce run 5: exit=0
+base-3ef982ce run 6: exit=0

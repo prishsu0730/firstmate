@@ -1,0 +1,6 @@
+== 5 rounds x 6 concurrent fm-watch-checkpoint.sh --seconds 1 (no extra CPU load)
+target-1ea32a4d: runs=30 stale_lock=30 live_leftover=0 non124=0 max_elapsed=6.53s
+base-3ef982ce: runs=30 stale_lock=15 live_leftover=0 non124=0 max_elapsed=1.48s
+== 5 rounds x 2 concurrent fm-watch-checkpoint.sh --seconds 1
+target-1ea32a4d: runs=10 stale_lock=10 max_elapsed=6.52s
+base-3ef982ce: runs=10 stale_lock=0 max_elapsed=1.60s
