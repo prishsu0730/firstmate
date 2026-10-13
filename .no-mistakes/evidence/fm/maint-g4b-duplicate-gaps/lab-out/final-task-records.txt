@@ -1,0 +1,30 @@
+== labaa1
+kind=ship
+branch=fm/labaa1
+commits=12eb201858ca88acc1a51bbeec984e8a2b551d59
+== labcc3
+kind=ship
+branch=fm/labcc3
+commits=910e930138001b725715007257d472b97986c769
+== labsc5
+kind=ship
+branch=fm/labsc5
+supersedes=labaa1
+commits=12eb201858ca88acc1a51bbeec984e8a2b551d59
+== labsc6
+kind=ship
+branch=fm/labsc6
+== labdd4
+kind=ship
+branch=fm/labdd4
+commits=12eb201858ca88acc1a51bbeec984e8a2b551d59
+== labee7
+kind=ship
+branch=fm/labee7
+primary:0: bash* (1 panes) [200x50] 
+primary:1: fm-labaa1 (1 panes) [200x50] 
+primary:2: fm-labcc3 (1 panes) [200x50] 
+primary:3: fm-labsc5 (1 panes) [200x50] 
+primary:4: fm-labdd4 (1 panes) [200x50] 
+primary:5: fm-labsc6 (1 panes) [200x50] 
+primary:6: fm-labee7 (1 panes) [200x50] 

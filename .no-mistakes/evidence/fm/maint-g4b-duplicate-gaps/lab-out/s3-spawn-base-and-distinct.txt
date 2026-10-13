@@ -1,0 +1,6 @@
+$ bin/fm-spawn.sh labcc3 /tmp/fm-lab.pH8Veo/projects/demo --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.pH8Veo
+warning: /tmp/fm-lab.pH8Veo/data/labcc3/launch-brief.md records no ship branch; defaulting to legacy branch fm/labcc3
+warning: /tmp/fm-lab.pH8Veo/data/labcc3/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned labcc3 harness=claude kind=ship mode=no-mistakes yolo=off window=primary:fm-labcc3 worktree=/private/tmp/fm-lab.pH8Veo/treehouse/.treehouse/demo-eae2b9/2/demo
+exit=0

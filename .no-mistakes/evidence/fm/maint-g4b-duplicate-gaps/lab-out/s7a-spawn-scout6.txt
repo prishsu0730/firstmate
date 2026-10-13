@@ -1,0 +1,4 @@
+$ bin/fm-spawn.sh labsc6 /tmp/fm-lab.pH8Veo/projects/demo --scout
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.pH8Veo
+spawned labsc6 harness=claude kind=scout window=primary:fm-labsc6 worktree=/private/tmp/fm-lab.pH8Veo/treehouse/.treehouse/demo-eae2b9/5/demo
+exit=0

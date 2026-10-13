@@ -1,0 +1,18 @@
+$ bash /Users/priscillahsu/.no-mistakes/evidence/01M4T5F4EWZSZJBYY5C4BVQ4NH/lab-lockwait.sh
+held task-set lock (pid 82840)
+after 3s: promotion still WAITING (alive)
+labsc6 meta while waiting: kind=scout
+--- spawn while lock held:
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.pH8Veo
+error: this home's task set is locked by another operation (a forced teardown is enumerating or removing its tasks); refusing to create task labff6 rather than racing it
+spawn exit=1
+labff6.meta absent
+released lock
+promotion exit=0
+warn: no registry at /tmp/fm-lab.pH8Veo/data/projects.md; defaulting demo to no-mistakes off
+promoted labsc6 to ship mode=no-mistakes yolo=off (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: /tmp/fm-lab.pH8Veo/data/labsc6/ship-instructions.md
+next: FM_HOME=/tmp/fm-lab.pH8Veo bin/fm-send.sh fm-labsc6 "$(cat /tmp/fm-lab.pH8Veo/data/labsc6/ship-instructions.md)"
+kind=ship
+lock released after promotion
+exit=0

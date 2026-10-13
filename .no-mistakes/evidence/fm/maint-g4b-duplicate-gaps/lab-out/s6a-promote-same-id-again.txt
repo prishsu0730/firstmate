@@ -1,0 +1,3 @@
+$ bin/fm-promote.sh labsc5 --mode no-mistakes --yolo off
+error: task labsc5 is not a scout task (kind=scout not in meta)
+exit=1

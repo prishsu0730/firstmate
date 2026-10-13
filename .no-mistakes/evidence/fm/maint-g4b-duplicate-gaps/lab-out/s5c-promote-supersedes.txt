@@ -1,0 +1,7 @@
+$ bin/fm-promote.sh labsc5 --mode no-mistakes --yolo off --supersedes labaa1
+warn: no registry at /tmp/fm-lab.pH8Veo/data/projects.md; defaulting demo to no-mistakes off
+notice: labsc5 supersedes labaa1 carries 12eb201858 (its instructions name this commit)
+promoted labsc5 to ship mode=no-mistakes yolo=off (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: /tmp/fm-lab.pH8Veo/data/labsc5/ship-instructions.md
+next: FM_HOME=/tmp/fm-lab.pH8Veo bin/fm-send.sh fm-labsc5 "$(cat /tmp/fm-lab.pH8Veo/data/labsc5/ship-instructions.md)"
+exit=0

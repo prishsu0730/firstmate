@@ -1,0 +1,8 @@
+$ bin/fm-spawn.sh labdd4 /tmp/fm-lab.pH8Veo/projects/demo --mode no-mistakes --yolo off --allow-duplicate
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.pH8Veo
+notice: labdd4 proceeds past a duplicate-work match under --allow-duplicate: labaa1 carries 12eb201 (its instructions name this commit)
+notice: labdd4 proceeds past a duplicate-work match under --allow-duplicate: labsc5 carries 12eb201 (its instructions name this commit)
+warning: /tmp/fm-lab.pH8Veo/data/labdd4/launch-brief.md records no ship branch; defaulting to legacy branch fm/labdd4
+warning: /tmp/fm-lab.pH8Veo/data/labdd4/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the explicit --mode no-mistakes - confirm its definition of done matches
+spawned labdd4 harness=claude kind=ship mode=no-mistakes yolo=off window=primary:fm-labdd4 worktree=/private/tmp/fm-lab.pH8Veo/treehouse/.treehouse/demo-eae2b9/4/demo
+exit=0

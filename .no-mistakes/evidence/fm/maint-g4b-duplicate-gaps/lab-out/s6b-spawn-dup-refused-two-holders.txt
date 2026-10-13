@@ -1,0 +1,7 @@
+$ bin/fm-spawn.sh labdd4 /tmp/fm-lab.pH8Veo/projects/demo --mode no-mistakes --yolo off
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /tmp/fm-lab.pH8Veo
+error: spawn refused: the instructions for labdd4 name a commit that another open task already carries, so a second task would open a second PR for one change:
+  labaa1 already carries commit 12eb201 (its instructions name this commit)
+  labsc5 already carries commit 12eb201 (its instructions name this commit)
+close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+exit=1

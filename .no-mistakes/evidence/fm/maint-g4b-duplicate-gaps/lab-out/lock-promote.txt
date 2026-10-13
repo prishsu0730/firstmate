@@ -1,0 +1,4 @@
+warn: no registry at /tmp/fm-lab.pH8Veo/data/projects.md; defaulting demo to no-mistakes off
+promoted labsc6 to ship mode=no-mistakes yolo=off (teardown protection restored)
+wrote ship instructions for mode=no-mistakes: /tmp/fm-lab.pH8Veo/data/labsc6/ship-instructions.md
+next: FM_HOME=/tmp/fm-lab.pH8Veo bin/fm-send.sh fm-labsc6 "$(cat /tmp/fm-lab.pH8Veo/data/labsc6/ship-instructions.md)"
