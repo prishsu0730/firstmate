@@ -381,12 +381,14 @@ upper() {  # <text>
   printf '%s' "$1" | tr 'a-f' 'A-F'
 }
 
-# add_scout <id> <intent>: a scout task of the case project and its brief.
+# add_scout <id> <intent> [meta-line...]: a scout task of the case project and
+# its brief, with any extra meta lines (such as base_branch=<branch>).
 add_scout() {
   local id=$1 intent=$2
+  shift 2
   fm_write_meta "$HOME_DIR/state/$id.meta" \
     "window=firstmate:fm-$id" "endpoint_task_id=$id" "worktree=$CASE_DIR/$id-scout-wt" \
-    "project=$PROJ_DIR" "harness=claude" "kind=scout" "mode=scout" "yolo=off"
+    "project=$PROJ_DIR" "harness=claude" "kind=scout" "mode=scout" "yolo=off" "$@"
   fm_test_spawn_brief "$HOME_DIR" "$id" "$intent"
 }
 
@@ -801,6 +803,62 @@ test_unresolvable_base_still_compares_recorded_claims() {
   pass "an unresolvable base ref falls back to the recorded claims instead of skipping"
 }
 
+# 4. A stacked task starts from another open task's commit: that commit is on its
+# own base branch, so it is a starting point rather than a second claim, while
+# new work it names still is one.
+test_stacked_task_may_start_from_an_open_tasks_commit() {
+  local x y out status stack=fm/$OLD_ID
+  make_case stacked
+  x=$(add_open_task "$OLD_ID")
+  y=$(floating_commit "floating stacked follow-up")
+  write_new_brief "Build on commit ${x:0:8} and land the follow-up commit ${y:0:8}."
+
+  # Control: without naming the earlier task's branch, its commit is a second claim.
+  out=$(guard)
+  status=$?
+  expect_code 1 "$status" "naming an open task's commit without its base branch must still refuse"
+  assert_contains "$out" "$OLD_ID already carries commit ${x:0:8}" "control refusal does not name the holder"
+
+  out=$(guard --base-branch "$stack")
+  status=$?
+  expect_code 0 "$status" "a task based on the earlier task's branch must be allowed: $out"
+  assert_not_contains "$out" "already carries" "a starting commit was reported as a collision"
+  assert_contains "$out" "commits=$y" "the new work it names must still be claimed"
+  assert_not_contains "$out" "$x" "the starting commit must not be claimed"
+
+  # The real spawn: base branch on origin, brief and flag agreeing, then recorded.
+  git -C "$PROJ_DIR" push --quiet origin "$stack" || fail "could not publish $stack"
+  printf '\n# Setup\nYou are in a disposable git worktree of project, at a detached HEAD on a clean copy of its base branch.\nBase branch: %s\n' \
+    "$stack" >> "$HOME_DIR/data/$NEW_ID/brief.md"
+  out=$(spawn_new --base-branch "$stack")
+  status=$?
+  expect_code 0 "$status" "the stacked spawn must launch: $out"
+  assert_equals "$y" "$(claim_of "$NEW_ID")" "the stacked spawn must record only the new commit"
+  assert_equals 0 "$(claim_holders "$x")" "the starting commit must not be recorded as a claim"
+
+  # Distinct work stays protected: a third task naming the new commit is refused.
+  fm_test_spawn_brief "$HOME_DIR" third-c3 "Rework commit ${y:0:8}."
+  out=$(spawn_task third-c3)
+  status=$?
+  expect_code 1 "$status" "the stacked task's own commit must still be claimed"
+  assert_contains "$out" "$NEW_ID already carries commit" "refusal does not name the stacked task"
+
+  # Promotion agrees: a scout on that base keeps it as its starting point.
+  make_case stacked-promote
+  x=$(add_open_task "$OLD_ID")
+  add_scout scout-s1 "Ship the follow-up on top of commit ${x:0:8}." "base_branch=$stack"
+  out=$(promote_scout scout-s1)
+  status=$?
+  expect_code 0 "$status" "promotion on the earlier task's base branch must be allowed: $out"
+  assert_grep "kind=ship" "$HOME_DIR/state/scout-s1.meta" "the stacked promotion did not make the task a ship"
+  assert_no_grep "commits=" "$HOME_DIR/state/scout-s1.meta" "a starting commit was recorded as the promotion's claim"
+  add_scout scout-s2 "Ship another change on commit ${x:0:8}."
+  out=$(promote_scout scout-s2)
+  status=$?
+  expect_code 1 "$status" "promotion without the base branch must still refuse"
+  assert_contains "$out" "$OLD_ID already carries commit" "promotion refusal does not name the holder"
+  pass "a stacked task may start from another open task's commit; its own new work stays claimed"
+}
 
 test_second_spawn_naming_same_commit_is_refused
 test_full_length_sha_is_matched_too
@@ -823,3 +881,4 @@ test_distinct_legitimate_work_stays_allowed
 test_concurrent_spawns_and_retries_create_one_owner
 test_unresolvable_base_still_compares_recorded_claims
 test_task_set_lock_serializes_promotion_and_spawn
+test_stacked_task_may_start_from_an_open_tasks_commit

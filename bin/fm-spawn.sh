@@ -55,7 +55,8 @@
 #   recorded commits= or holds it in its recorded branch or recorded pr_head=,
 #   before any launch brief, worktree, or endpoint exists. The spawn records the
 #   full SHAs its own brief names as commits= in state/<id>.meta, under the same
-#   task-set lock that serializes the check, so two spawns cannot both pass.
+#   task-set lock that serializes the check, so two spawns cannot both pass. A
+#   commit already on --base-branch is the task's starting point and never counts.
 #   --supersedes <task> excuses that one task and records supersedes=<task> in
 #   state/<id>.meta; --allow-duplicate proceeds past every match with a notice.
 #   Both are refused on scouts, secondmates, relaunches, and batches. Matches on
@@ -3259,6 +3260,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   # endpoint exists (bin/fm-duplicate-intake.sh owns the match and open rules).
   if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
     DUPLICATE_INTAKE_ARGS=("$ID" "$PROJ_ABS" "$BRIEF" --state "$STATE" --data "$DATA")
+    [ "$BASE_BRANCH_SET" -eq 0 ] || DUPLICATE_INTAKE_ARGS+=(--base-branch "$BASE_BRANCH")
     [ -z "$SUPERSEDES" ] || DUPLICATE_INTAKE_ARGS+=(--supersedes "$SUPERSEDES")
     [ "$ALLOW_DUPLICATE" -eq 0 ] || DUPLICATE_INTAKE_ARGS+=(--allow-duplicate)
     DUPLICATE_COMMITS=$("$FM_ROOT/bin/fm-duplicate-intake.sh" "${DUPLICATE_INTAKE_ARGS[@]}") || exit 1

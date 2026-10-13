@@ -43,6 +43,8 @@
 # owns the match rules) against the scout brief's `# Task`, refuses before it
 # changes anything when another open task already names or carries one of its
 # commits, and on success records the full SHAs it names as commits= in the meta.
+# The scout's recorded base_branch= is that check's starting point, as --base-branch
+# is for a spawn: a commit already on it never counts.
 # --supersedes <task> and --allow-duplicate pass through to that check exactly as
 # they do for bin/fm-spawn.sh, and --supersedes also records supersedes=<task>.
 # The check and the meta publication run under the home's task-set lock, so a
@@ -270,6 +272,7 @@ fi
 PROMOTE_COMMITS=
 if [ -n "$PROMOTE_PROJECT" ]; then
   PROMOTE_DUPLICATE_ARGS=("$ID" "$PROMOTE_PROJECT" "$SCOUT_BRIEF" --state "$STATE" --data "$DATA")
+  [ -z "$BASE_BRANCH" ] || PROMOTE_DUPLICATE_ARGS+=(--base-branch "$BASE_BRANCH")
   [ -z "$SUPERSEDES" ] || PROMOTE_DUPLICATE_ARGS+=(--supersedes "$SUPERSEDES")
   [ "$ALLOW_DUPLICATE" -eq 0 ] || PROMOTE_DUPLICATE_ARGS+=(--allow-duplicate)
   PROMOTE_DUPLICATE_RC=0
