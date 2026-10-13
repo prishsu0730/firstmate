@@ -742,7 +742,7 @@ SH
 # Promotion and spawn publish under one home-wide lock, so neither can pass its
 # check while the other is between its own check and its record.
 test_task_set_lock_serializes_promotion_and_spawn() {
-  local x out status holder
+  local x out status holder promoter outfile
   make_case locked
   x=$(floating_commit "floating locked")
   add_scout scout-e8 "Ship commit ${x:0:8}."
@@ -752,12 +752,13 @@ test_task_set_lock_serializes_promotion_and_spawn() {
   holder=$!
   until [ -d "$HOME_DIR/state/.task-set.lock" ]; do sleep 0.1; done
 
-  out=$(promote_scout scout-e8)
-  status=$?
-  expect_code 1 "$status" "a promotion must refuse while another operation owns the task set"
-  assert_contains "$out" "task set is locked" "the refusal does not say why"
-  assert_grep "kind=scout" "$HOME_DIR/state/scout-e8.meta" "a refused promotion changed the task kind"
-  assert_no_grep "commits=" "$HOME_DIR/state/scout-e8.meta" "a refused promotion recorded a claim"
+  outfile="$CASE_DIR/promote.out"
+  promote_scout scout-e8 > "$outfile" &
+  promoter=$!
+  sleep 1
+  kill -0 "$promoter" 2>/dev/null || fail "a promotion must wait while another operation owns the task set: $(cat "$outfile")"
+  assert_grep "kind=scout" "$HOME_DIR/state/scout-e8.meta" "a waiting promotion changed the task kind"
+  assert_no_grep "commits=" "$HOME_DIR/state/scout-e8.meta" "a waiting promotion recorded a claim"
   out=$(spawn_new)
   status=$?
   expect_code 1 "$status" "a spawn must refuse while another operation owns the task set"
@@ -765,12 +766,12 @@ test_task_set_lock_serializes_promotion_and_spawn() {
 
   kill "$holder" 2>/dev/null
   wait "$holder" 2>/dev/null
-  out=$(promote_scout scout-e8)
+  wait "$promoter"
   status=$?
-  expect_code 0 "$status" "the promotion must proceed once the lock is free: $out"
+  expect_code 0 "$status" "the promotion must proceed once the lock is free: $(cat "$outfile")"
   assert_equals "$x" "$(claim_of scout-e8)" "the promotion did not record its claim"
   assert_absent "$HOME_DIR/state/.task-set.lock" "promotion left the task-set lock behind"
-  pass "promotion and spawn refuse while the task set is locked and release it when done"
+  pass "promotion waits for a locked task set, a spawn refuses, and the lock is released when done"
 }
 
 # Gap 5: an unresolvable base must not silently skip the comparison.

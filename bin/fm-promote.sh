@@ -194,15 +194,13 @@ trap promote_cleanup EXIT
 # step against every concurrent spawn and promotion, so the home's task-set lock
 # (bin/fm-wake-lib.sh's fm_task_set_lock_path owns what it guards and the order
 # it is taken in) is held from before this task's own locks through publication.
-# Refusing rather than waiting is the same direction a spawn takes.
+# Promotion waits for it rather than refusing: it holds no other lock yet, so a
+# spawn or teardown in flight only delays it.
 TASK_SET_LOCK=$(fm_task_set_lock_path "$STATE") || {
   echo "error: could not resolve the task-set lock for $STATE; nothing was changed" >&2
   exit 1
 }
-fm_lock_try_acquire "$TASK_SET_LOCK" || {
-  echo "error: this home's task set is locked by another operation (a spawn, a promotion, or a forced teardown is changing its tasks); nothing was changed for task $ID" >&2
-  exit 1
-}
+fm_lock_acquire_wait "$TASK_SET_LOCK"
 TASK_SET_LOCK_HELD=1
 fm_lock_try_acquire "$CONTROL_LOCK" || {
   echo "error: another lifecycle action is already running for task $ID; nothing was changed" >&2
