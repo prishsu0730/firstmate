@@ -1,0 +1,139 @@
+
+=================== S1 brief WITH --allowed-files ===================
+--- input list:
+# comment
+
+./bin/fm-brief.sh
+tests/*.test.sh
+docs/**/*.md
+  ./././src/a b.sh  
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-allow demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/list.txt
+scaffolded: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-allow/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+[exit 0]
+--- recorded list data/t-allow/allowed-files:
+bin/fm-brief.sh$
+tests/*.test.sh$
+docs/**/*.md$
+src/a b.sh$
+--- Allowed files section of generated brief:
+# Allowed files
+This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (`*` and `?` stay inside one directory, `**` crosses directories, and `**/` also matches none).
+- `bin/fm-brief.sh`
+- `tests/*.test.sh`
+- `docs/**/*.md`
+- `src/a b.sh`
+
+Before you append `done:` - which hands the branch to the pipeline that pushes it - and before any push you make yourself, run:
+   `FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh' check 't-allow'`
+If it exits non-zero, do not push and do not report done. Exit 1 means files are outside the list: append `blocked [at=<epoch>]: files outside the allowed list: {the file names it printed}` and stop; firstmate decides whether the boundary or the change moves. Any other non-zero exit means the check could not run: append `blocked [at=<epoch>]: file boundary check failed: {its error text}` and stop.
+A file you believe the task needs beyond the list is the same case: name it in that blocked line instead of changing it.
+
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh recorded t-allow
+/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-allow/allowed-files
+[exit 0]
+
+=================== S2 brief WITHOUT list is byte-identical to the base commit ===================
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-none demo --mode no-mistakes
+scaffolded: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-none/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+[exit 0]
+$ /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-base.xdoC63/bin/fm-brief.sh t-none demo --mode no-mistakes
+scaffolded: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-none/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+[exit 0]
+/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/new.md /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-none/brief.md differ: char 2312, line 32
+DIFFERENT
+32c32
+<    `echo "{state} [at=<epoch>]: {one short line}" >> '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/state/t-none.status' && { [ ! -e '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/config/fleet-ledger' ] || '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-base.xdoC63/bin/fm-fleet-ledger.sh' appended '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/config' '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/state/t-none.status' >/dev/null 2>&1 || true; }`
+---
+>    `echo "{state} [at=<epoch>]: {one short line}" >> '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/state/t-none.status' && { [ ! -e '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/config/fleet-ledger' ] || '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-fleet-ledger.sh' appended '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/config' '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/state/t-none.status' >/dev/null 2>&1 || true; }`
+91c91
+< A correction edits only the wrong text: do not run `/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-base.xdoC63/bin/fm-ensure-agents-md.sh`, create either file, or add sections, headings, or pointers alongside it.
+---
+> A correction edits only the wrong text: do not run `/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-ensure-agents-md.sh`, create either file, or add sections, headings, or pointers alongside it.
+allowed-files record present? no
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh recorded t-none
+[exit 1]
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-none
+no boundary recorded for task t-none; every file is allowed
+[exit 0]
+
+=================== S3 brief refusals (adversarial list input) ===================
+--- list: '/etc/passwd'
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-bad1 demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/bad.txt
+error: --allowed-files entries must be repo-relative paths with no '..' segment (got '/etc/passwd')
+[exit 1]
+scaffold left behind? no
+--- list: 'src/../secret'
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-bad2 demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/bad.txt
+error: --allowed-files entries must be repo-relative paths with no '..' segment (got 'src/../secret')
+[exit 1]
+scaffold left behind? no
+--- list: './'
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-bad3 demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/bad.txt
+error: --allowed-files list has no entries: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/bad.txt
+[exit 1]
+scaffold left behind? no
+--- list: '# only comment'
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-bad4 demo --mode no-mistakes --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/bad.txt
+error: --allowed-files list has no entries: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/bad.txt
+[exit 1]
+scaffold left behind? no
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-brief.sh t-sc demo --scout --allowed-files /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/ok.txt
+error: --allowed-files applies only to ship briefs; a scout makes no branch and a secondmate charter is not a delivery contract
+[exit 1]
+
+=================== S4 worker runs the exact command printed in its brief (disposable repo) ===================
+--- branch changes:
+bin/fm-brief.sh
+docs/a.md
+docs/x/b.md
+src/a b.sh
+tests/new.test.sh
+command copied from brief: FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh' check 't-allow'
+--- in-list commit:
+file boundary ok for task t-allow: 5 changed file(s), all within the allowed list
+[exit 0]
+--- after also touching README.md and tests/deep/x.test.sh (single * must not cross dirs):
+error: file boundary for task t-allow: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-allow/allowed-files:
+  - README.md
+  - tests/deep/x.test.sh
+[exit 1]
+
+=================== S5 adversarial: odd names, rename, worktree= from meta, base_branch ===================
+--- non-ASCII + double-quote names in list and commit (run from / so meta worktree= must be used):
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-ren
+file boundary ok for task t-ren: 2 changed file(s), all within the allowed list
+[exit 0]
+--- rename README.md -> docs/new.md (old path must count):
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-ren
+error: file boundary for task t-ren: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-ren/allowed-files:
+  - README.md
+[exit 1]
+--- missing origin/<base_branch> must exit 2, not pass:
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-ren
+error: cannot find the base branch to compare against in /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/repo2 (base_branch=nope)
+[exit 2]
+
+=================== S6 PR mode against the real GitHub API (read-only, closed PR #9) ===================
+--- list without AGENTS.md:
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-pr --pr https://github.com/prishsu0730/firstmate/pull/9
+error: file boundary for task t-pr: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9deg0a/data/t-pr/allowed-files:
+  - AGENTS.md
+[exit 1]
+--- list with AGENTS.md:
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-pr --pr https://github.com/prishsu0730/firstmate/pull/9
+file boundary ok for task t-pr: 4 changed file(s), all within the allowed list
+[exit 0]
+--- bound to the real head:
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-pr --pr https://github.com/prishsu0730/firstmate/pull/9 --head e9b5ab02d1f4271a7237af1be4d942897d2115c0
+file boundary ok for task t-pr: 4 changed file(s), all within the allowed list
+[exit 0]
+--- bound to a wrong head:
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-pr --pr https://github.com/prishsu0730/firstmate/pull/9 --head 0000000000000000000000000000000000000000
+error: the head of https://github.com/prishsu0730/firstmate/pull/9 is e9b5ab02d1f4271a7237af1be4d942897d2115c0, not the verified 0000000000000000000000000000000000000000; its file list was not checked
+[exit 2]
+--- task with no list:
+$ /Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4THY31EK41PG47D4PWTT0MC/bin/fm-file-boundary.sh check t-none --pr https://github.com/prishsu0730/firstmate/pull/9
+no boundary recorded for task t-none; every file is allowed
+[exit 0]
+
+lab removed: yes

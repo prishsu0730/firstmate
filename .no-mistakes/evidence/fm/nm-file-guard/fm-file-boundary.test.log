@@ -1,0 +1,22 @@
+ok - fm-file-boundary.sh: bash -n succeeds
+ok - fm-file-boundary.sh: --help prints the header
+ok - fm-file-boundary check passes when every changed file is in the list
+ok - fm-file-boundary check exits 1 and names every file outside the list
+ok - fm-file-boundary check passes with a note, and recorded is silent, when no list exists
+ok - fm-file-boundary recorded prints the list path when one exists
+ok - fm-file-boundary glob entries match, and * and ? stay inside one directory
+ok - fm-file-boundary **/ matches zero or more directories, while * and ? stay inside one
+ok - fm-file-boundary check compares non-ASCII and quote-holding paths as written, not git-quoted
+ok - fm-file-boundary counts renames and deletions against both paths
+ok - fm-file-boundary measures from the task's recorded base branch
+ok - fm-file-boundary fails closed when it cannot find the base to compare against
+ok - fm-file-boundary refuses malformed invocations with exit 2
+ok - fm-file-boundary check --pr passes when the live PR file list is in the list
+ok - fm-file-boundary check --pr exits 1 and names a live PR file outside the list
+ok - fm-file-boundary check --pr counts a rename's previous path
+ok - fm-file-boundary check --pr --head refuses a head that moved since it was verified
+ok - fm-file-boundary check --pr fails closed when the forge file list cannot be read
+ok - fm-file-boundary check --pr makes no forge call when no list is recorded
+ok - fm-file-boundary check --pr fails closed on a forge it cannot read
+ok - a brief's printed checker command runs as written and gives the verdict
+ok - a brief's printed checker command exits 2 with its own error when the check cannot be made
