@@ -407,7 +407,7 @@ test_brief_command_runs_as_printed() {
     || fail "brief-command: the brief did not scaffold"
   brief="$case_dir/home/data/$TASK/brief.md"
   assert_present "$case_dir/home/data/$TASK/allowed-files" "brief-command: the list was not recorded"
-  cmd=$(grep -E '^   `FM_HOME=.*fm-file-boundary\.sh.* check ' "$brief" | head -n 1 | sed 's/^   `//; s/`$//')
+  cmd=$(grep -E '^   `FM_HOME=.*fm-file-boundary\.sh.* check ' "$brief" | head -n 1 | sed "s/^   \`//; s/\`\$//")
   [ -n "$cmd" ] || fail "brief-command: the brief carries no runnable checker command"
 
   commit_files "$case_dir" bin/a.sh
@@ -433,7 +433,7 @@ test_brief_command_unmade_check_exits_2() {
     "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes --allowed-files "$list" >/dev/null \
     || fail "brief-unmade: the brief did not scaffold"
   brief="$case_dir/home/data/$TASK/brief.md"
-  cmd=$(grep -E '^   `FM_HOME=.*fm-file-boundary\.sh.* check ' "$brief" | head -n 1 | sed 's/^   `//; s/`$//')
+  cmd=$(grep -E '^   `FM_HOME=.*fm-file-boundary\.sh.* check ' "$brief" | head -n 1 | sed "s/^   \`//; s/\`\$//")
   [ -n "$cmd" ] || fail "brief-unmade: the brief carries no runnable checker command"
   assert_grep 'Exit 1 means files are outside the list' "$brief" "brief-unmade: exit 1 is not tied to file names"
   assert_grep 'blocked [at=<epoch>]: file boundary check failed: {its error text}' "$brief" \
