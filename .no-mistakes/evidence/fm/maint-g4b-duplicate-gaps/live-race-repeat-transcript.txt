@@ -1,0 +1,26 @@
+round 1: exit codes 1 0 1 | ships=1 | records claiming commit=1
+round 2: exit codes 1 0 1 | ships=1 | records claiming commit=1
+round 3: exit codes 1 1 0 | ships=1 | records claiming commit=1
+round 4: exit codes 0 1 1 | ships=1 | records claiming commit=1
+round 5: exit codes 0 1 1 | ships=1 | records claiming commit=1
+   1 error: r1-1 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r1-3 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r2-1 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r2-3 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r3-1 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r3-2 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r4-2 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r4-3 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r5-2 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: r5-3 was not promoted: its instructions overlap work another task already holds; nothing was changed
+   1 error: spawn refused: the instructions for r1-1 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r1-3 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r2-1 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r2-3 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r3-1 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r3-2 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r4-2 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r4-3 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r5-2 name a commit that another open task already carries, so a second task would open a second PR for one change:
+   1 error: spawn refused: the instructions for r5-3 name a commit that another open task already carries, so a second task would open a second PR for one change:
+lab removed: yes

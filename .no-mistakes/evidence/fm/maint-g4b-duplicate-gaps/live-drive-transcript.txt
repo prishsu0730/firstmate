@@ -1,0 +1,74 @@
+lab home: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw
+X=312620c633d011a8739cc1e794e7dc5ffb9cd460
+Y=4dbf6b5063dfeffc0abb61b1c60fd8d81b98ef1c
+Z=6d7156235bbcb92548bfb2a5d0be7f2bcba7f678
+
+== S1 promote scout-a naming X in UPPERCASE, no branch holds X yet
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ●  WATCHER DOWN - SUPERVISION IS OFF
+  ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+  ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+  ●  This is a supervision warning only; the guarded operation WILL still run.
+  ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  warn: no registry at /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/projects.md; defaulting demo to no-mistakes off
+  promoted scout-a to ship mode=no-mistakes yolo=off (teardown protection restored)
+  wrote ship instructions for mode=no-mistakes: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/scout-a/ship-instructions.md
+  next: FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw bin/fm-send.sh fm-scout-a "$(cat /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/scout-a/ship-instructions.md)"
+  exit=0
+  [scout-a.meta] kind=ship commits=312620c633d011a8739cc1e794e7dc5ffb9cd460 
+
+== S2 promote scout-b naming X lowercase abbreviated (312620c63) -> must refuse, nothing changed
+  WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+  warn: no registry at /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/projects.md; defaulting demo to no-mistakes off
+  error: spawn refused: the instructions for scout-b name a commit that another open task already carries, so a second task would open a second PR for one change:
+    scout-a already carries commit 312620c63 (its instructions name this commit)
+  close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+  error: scout-b was not promoted: its instructions overlap work another task already holds; nothing was changed
+  exit=1
+  [scout-b.meta] kind=scout 
+  scout-b.meta byte-identical after refusal: yes
+
+== S2b retry same refused promotion -> still refused
+  error: scout-b was not promoted: its instructions overlap work another task already holds; nothing was changed
+  exit=1
+
+== S3 fm-duplicate-intake (spawn guard) for a fresh ship brief naming X -> refuse
+  error: spawn refused: the instructions for new-c name a commit that another open task already carries, so a second task would open a second PR for one change:
+    scout-a already carries commit 312620c (its instructions name this commit)
+  close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+  exit=1
+
+== S4 distinct work: promote scout-d naming Y (plus a non-commit hex deadbeef1234 and a landed base commit) -> allowed
+  WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+  warn: no registry at /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/projects.md; defaulting demo to no-mistakes off
+  promoted scout-d to ship mode=no-mistakes yolo=off (teardown protection restored)
+  wrote ship instructions for mode=no-mistakes: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/scout-d/ship-instructions.md
+  next: FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw bin/fm-send.sh fm-scout-d "$(cat /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/scout-d/ship-instructions.md)"
+  exit=0
+  [scout-d.meta] kind=ship commits=4dbf6b5063dfeffc0abb61b1c60fd8d81b98ef1c 
+
+== S5 --supersedes scout-a lets scout-b through and records the link
+  WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+  warn: no registry at /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw/data/projects.md; defaulting demo to no-mistakes off
+  notice: scout-b supersedes scout-a carries 312620c63 (its instructions name this commit)
+  [scout-b.meta] kind=ship supersedes=scout-a commits=312620c633d011a8739cc1e794e7dc5ffb9cd460 
+
+== S6 concurrent: two scouts naming Z promoted at the same instant -> exactly one owner
+  race-1: exit=1 error: spawn refused: the instructions for race-1 name a commit that another open task already carries, so a second task would open a second PR for one change:
+  [race-1.meta] kind=scout 
+  race-2: exit=0 
+  [race-2.meta] kind=ship commits=6d7156235bbcb92548bfb2a5d0be7f2bcba7f678 
+  task records claiming Z: 1
+
+== S7 real fm-spawn.sh fresh ship naming Z inside a lab tmux pane -> refused before any record
+  fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.H4mUlw
+  WARNING: watcher still down (same stale episode; last beat: never, grace 300s) - full banner already printed this episode.
+  error: spawn refused: the instructions for new-e name a commit that another open task already carries, so a second task would open a second PR for one change:
+    race-2 already carries commit 6d715623 (its instructions name this commit)
+  close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+  spawn-exit=1
+  new-e.meta exists: no; launch-brief exists: no
+  lab tmux windows: primary:zsh 
+
+lab removed: yes
