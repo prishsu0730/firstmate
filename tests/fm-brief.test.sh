@@ -1519,6 +1519,7 @@ test_allowed_files_flag_is_validated() {
   printf '%s\n' '# nothing' '' > "$home/comments.txt"
   printf '%s\n' '/etc/passwd' > "$home/absolute.txt"
   printf '%s\n' 'bin/../../escape' > "$home/dotdot.txt"
+  printf '%s\n' './' '././' > "$home/dotslash.txt"
   while IFS='|' read -r label args expect; do
     [ -n "$label" ] || continue
     # shellcheck disable=SC2086  # args is an intentional word-split arg list
@@ -1537,6 +1538,7 @@ empty file|brief-allowed-r5 some-proj --mode no-mistakes --allowed-files $home/e
 comments only|brief-allowed-r6 some-proj --mode no-mistakes --allowed-files $home/comments.txt|list has no entries
 absolute entry|brief-allowed-r7 some-proj --mode no-mistakes --allowed-files $home/absolute.txt|repo-relative paths
 parent segment|brief-allowed-r8 some-proj --mode no-mistakes --allowed-files $home/dotdot.txt|no '..' segment
+dot-slash only|brief-allowed-r9 some-proj --mode no-mistakes --allowed-files $home/dotslash.txt|list has no entries
 ROWS
   pass "fm-brief.sh: --allowed-files is refused where it does not apply and for an unusable list"
 }

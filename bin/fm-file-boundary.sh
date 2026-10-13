@@ -11,8 +11,8 @@
 #   With --pr the changed files are the live pull request's file list, read
 #   from GitHub with every page and including a rename's previous path.
 #   --head <sha> binds that read to a head the caller already verified: a live
-#   head that differs is refused, because the list would then describe a
-#   commit nobody verified. It is only valid with --pr.
+#   head that differs is refused with exit 2, because the list would then
+#   describe a commit nobody verified. It is only valid with --pr.
 #   Exit 0: every changed file is in the list, or no list is recorded for the
 #   task (a note says so and nothing is read, so a task without a boundary is
 #   never touched). Exit 1: one or more changed files fall outside the list,
@@ -30,7 +30,9 @@
 # field set, while the data directory is the task's private record that no CI
 # job or no-mistakes step can read, which is why the merge-time check runs in
 # fm-pr-merge.sh. A glob's `*` and `?` stay inside one directory; `**` crosses
-# directories. Exact paths and globs are matched against repo-relative paths.
+# directories, and `**/` also matches no directory at all, so `docs/**/*.md`
+# allows docs/a.md. Every other character, `[` included, is literal. Exact
+# paths and globs are matched against repo-relative paths.
 # Environment: FM_HOME, FM_DATA_OVERRIDE, and FM_STATE_OVERRIDE select the data
 # and state directories exactly as for bin/fm-brief.sh.
 set -eu
@@ -152,11 +154,8 @@ changed_from_pr() {
   if [ -n "$HEAD" ]; then
     live_head=$(gh pr view "$FM_PR_URL" --json headRefOid -q .headRefOid 2>/dev/null) \
       || die "could not read the head of $FM_PR_URL"
-    if [ "$live_head" != "$HEAD" ]; then
-      printf 'error: the head of %s is %s, not the verified %s; its file list was not checked\n' \
-        "$FM_PR_URL" "$live_head" "$HEAD" >&2
-      exit 1
-    fi
+    [ "$live_head" = "$HEAD" ] \
+      || die "the head of $FM_PR_URL is $live_head, not the verified $HEAD; its file list was not checked"
   fi
   # Every page, and both paths of a rename: the old path is a file this change
   # touched even though it no longer exists.
@@ -171,28 +170,47 @@ else
   changed_from_branch
 fi
 
-# Whether <path> is allowed. Without `**` a glob must also have as many
-# directory separators as the path, so `*` and `?` never cross a directory.
-slashes() {  # <string>
-  local rest=${1//[!\/]/}
-  printf '%s' "${#rest}"
+# The list entries as anchored extended regexes: `**/` is any run of whole
+# directories including none, any other `**` is anything, `*` and `?` never
+# match a `/`, and every other character matches itself.
+glob_regex() {  # <glob>
+  local glob=$1 re='' c i=0
+  while [ "$i" -lt "${#glob}" ]; do
+    c=${glob:i:1}
+    case "$c" in
+      '*')
+        if [ "${glob:i+1:1}" = '*' ]; then
+          if [ "${glob:i+2:1}" = / ]; then
+            re="$re(.*/)?"
+            i=$((i + 3))
+          else
+            re="$re.*"
+            i=$((i + 2))
+          fi
+          continue
+        fi
+        re="${re}[^/]*"
+        ;;
+      '?') re="${re}[^/]" ;;
+      '.'|'['|']'|'^'|'$'|'+'|'('|')'|'{'|'}'|'|'|\\) re="$re\\$c" ;;
+      *) re="$re$c" ;;
+    esac
+    i=$((i + 1))
+  done
+  printf '^%s$' "$re"
 }
 
+PATTERNS=()
+while IFS= read -r pattern || [ -n "$pattern" ]; do
+  [ -n "$pattern" ] || continue
+  PATTERNS+=("$(glob_regex "$pattern")")
+done < "$LIST"
+
 path_allowed() {  # <path>
-  local path=$1 pattern path_depth
-  path_depth=$(slashes "$path")
-  while IFS= read -r pattern || [ -n "$pattern" ]; do
-    [ -n "$pattern" ] || continue
-    # shellcheck disable=SC2254  # the list entry is a glob on purpose.
-    case "$path" in
-      $pattern)
-        case "$pattern" in
-          *'**'*) return 0 ;;
-        esac
-        [ "$(slashes "$pattern")" = "$path_depth" ] && return 0
-        ;;
-    esac
-  done < "$LIST"
+  local re
+  for re in ${PATTERNS[@]+"${PATTERNS[@]}"}; do
+    [[ $1 =~ $re ]] && return 0
+  done
   return 1
 }
 

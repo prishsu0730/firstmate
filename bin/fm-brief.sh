@@ -341,6 +341,7 @@ if [ "$ALLOWED_FILES_SET" -eq 1 ]; then
         *) break ;;
       esac
     done
+    [ -n "$allowed_line" ] || continue
     case "/$allowed_line/" in
       //*|*/../*)
         echo "error: --allowed-files entries must be repo-relative paths with no '..' segment (got '$allowed_line')" >&2
@@ -747,12 +748,12 @@ if [ -n "$ALLOWED_FILES_BODY" ]; then
 $ALLOWED_FILES_BODY
 ALLOWED_ENTRIES
   ALLOWED_BLOCK="# Allowed files
-This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (\`*\` and \`?\` stay inside one directory, \`**\` crosses directories).
+This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (\`*\` and \`?\` stay inside one directory, \`**\` crosses directories, and \`**/\` also matches none).
 $ALLOWED_LIST
 
 Before you append \`done:\` - which hands the branch to the pipeline that pushes it - and before any push you make yourself, run:
    \`$ALLOWED_CMD\`
-If it exits non-zero, do not push and do not report done: append \`blocked [at=<epoch>]: files outside the allowed list: {the file names it printed}\` and stop; firstmate decides whether the boundary or the change moves.
+If it exits non-zero, do not push and do not report done. Exit 1 means files are outside the list: append \`blocked [at=<epoch>]: files outside the allowed list: {the file names it printed}\` and stop; firstmate decides whether the boundary or the change moves. Any other non-zero exit means the check could not run: append \`blocked [at=<epoch>]: file boundary check failed: {its error text}\` and stop.
 A file you believe the task needs beyond the list is the same case: name it in that blocked line instead of changing it.
 
 "

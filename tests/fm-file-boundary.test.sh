@@ -214,6 +214,24 @@ test_glob_matching_stays_inside_a_directory() {
   pass "fm-file-boundary glob entries match, and * and ? stay inside one directory"
 }
 
+test_globstar_matches_zero_directories() {
+  local case_dir
+  case_dir=$(make_case globstar)
+  write_list "$case_dir" 'docs/**/*.md' '**/*.sh' 'src/**/x/*.c' 'app/[id]/page.tsx'
+  commit_files "$case_dir" docs/a.md docs/one/two/b.md a.sh deep/er/c.sh src/x/d.c src/m/n/x/e.c 'app/[id]/page.tsx'
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "globstar: **/ must match zero or more directories, and [ is literal (stderr: $ERR)"
+
+  commit_files "$case_dir" src/a/x/b/c.c docs/a.txt app/i/page.tsx
+  run_checker "$case_dir" check "$TASK"
+  expect_code 1 "$RC" "globstar: * after ** must still stay inside one directory"
+  assert_contains "$ERR" 'src/a/x/b/c.c' "globstar: the file under x/b/ was not named"
+  assert_contains "$ERR" 'docs/a.txt' "globstar: the non-matching extension was not named"
+  assert_contains "$ERR" 'app/i/page.tsx' "globstar: [id] must not match as a character class"
+  assert_not_contains "$ERR" '  - docs/a.md' "globstar: an in-list file was named"
+  pass "fm-file-boundary **/ matches zero or more directories, while * and ? stay inside one"
+}
+
 test_rename_and_delete_count_both_paths() {
   local case_dir
   case_dir=$(make_case rename)
@@ -325,7 +343,7 @@ test_pr_head_binding() {
   run_checker "$case_dir" check "$TASK" --pr "$PR_URL" --head "$HEAD_SHA"
   expect_code 0 "$RC" "pr-head: a matching head must pass (stderr: $ERR)"
   run_checker "$case_dir" check "$TASK" --pr "$PR_URL" --head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-  expect_code 1 "$RC" "pr-head: a head that moved must fail"
+  expect_code 2 "$RC" "pr-head: a head that moved must fail as an unmade check"
   assert_contains "$ERR" "$HEAD_SHA" "pr-head: the live head was not named"
   pass "fm-file-boundary check --pr --head refuses a head that moved since it was verified"
 }
@@ -390,6 +408,31 @@ test_brief_command_runs_as_printed() {
   pass "a brief's printed checker command runs as written and gives the verdict"
 }
 
+# When the printed command cannot make the check it exits 2, which the brief
+# tells the worker to report with the checker's own error text, not as files.
+test_brief_command_unmade_check_exits_2() {
+  local case_dir list brief cmd rc=0 out
+  case_dir=$(make_case brief-unmade)
+  list="$case_dir/list.txt"
+  printf '%s\n' 'bin/a.sh' > "$list"
+  FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$case_dir/home" \
+    "$BRIEF_SCRIPT" "$TASK" some-proj --mode no-mistakes --allowed-files "$list" >/dev/null \
+    || fail "brief-unmade: the brief did not scaffold"
+  brief="$case_dir/home/data/$TASK/brief.md"
+  cmd=$(grep -E '^   `FM_HOME=.*fm-file-boundary\.sh.* check ' "$brief" | head -n 1 | sed 's/^   `//; s/`$//')
+  [ -n "$cmd" ] || fail "brief-unmade: the brief carries no runnable checker command"
+  assert_grep 'Exit 1 means files are outside the list' "$brief" "brief-unmade: exit 1 is not tied to file names"
+  assert_grep 'blocked [at=<epoch>]: file boundary check failed: {its error text}' "$brief" \
+    "brief-unmade: an unmade check has no blocked line of its own"
+
+  commit_files "$case_dir" bin/a.sh
+  git -C "$case_dir/wt" update-ref -d refs/remotes/origin/main
+  out=$(cd "$case_dir/wt" && FM_STATE_OVERRIDE="$case_dir/state" bash -c "$cmd" 2>&1) || rc=$?
+  expect_code 2 "$rc" "brief-unmade: the printed command must exit 2 when it cannot find the base"
+  assert_contains "$out" 'error: cannot find the base branch' "brief-unmade: the error text was not printed"
+  pass "a brief's printed checker command exits 2 with its own error when the check cannot be made"
+}
+
 test_script_parses
 test_help_prints_the_header
 test_in_list_change_passes
@@ -397,6 +440,7 @@ test_extra_file_fails_and_is_named
 test_no_list_passes_with_a_note
 test_recorded_names_the_list
 test_glob_matching_stays_inside_a_directory
+test_globstar_matches_zero_directories
 test_rename_and_delete_count_both_paths
 test_base_branch_comes_from_task_metadata
 test_unresolvable_base_fails_closed
@@ -409,3 +453,4 @@ test_pr_unreadable_fails_closed
 test_pr_without_list_never_calls_the_forge
 test_pr_on_another_forge_fails_closed
 test_brief_command_runs_as_printed
+test_brief_command_unmade_check_exits_2
