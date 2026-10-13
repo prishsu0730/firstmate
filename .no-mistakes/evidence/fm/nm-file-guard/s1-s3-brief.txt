@@ -1,0 +1,44 @@
+### S1: brief with an allowed-file list
+$ cat list.txt
+# my list
+
+src/a.sh
+./docs/**/*.md
+$ fm-brief.sh t1 proj --mode no-mistakes --allowed-files list.txt
+scaffolded: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t1/brief.md (ship, mode=no-mistakes; replace {TASK} and {FIRSTMATE_SPEC})
+exit=0
+$ cat data/t1/allowed-files
+src/a.sh
+docs/**/*.md
+$ cat state/t1.file-boundary
+File boundary: required
+$ brief.md "# Allowed files" section:
+# Allowed files
+File boundary: required
+This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (`*` and `?` stay inside one directory, `**` crosses directories, and `**/` also matches none).
+- `src/a.sh`
+- `docs/**/*.md`
+
+Before you append `done:` - which hands the branch to the pipeline that pushes it - and before any push you make yourself, run:
+   `FM_HOME='/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV' '/Users/priscillahsu/.no-mistakes/worktrees/d3979e0d8bb7/01M4TY3D7668RQ7HGHGWF4DY50/bin/fm-file-boundary.sh' check 't1'`
+If it exits non-zero, do not push and do not report done. Exit 1 means files are outside the list: append `blocked [at=<epoch>]: files outside the allowed list: {the file names it printed}` and stop; firstmate decides whether the boundary or the change moves. Any other non-zero exit means the check could not run: append `blocked [at=<epoch>]: file boundary check failed: {its error text}` and stop.
+A file you believe the task needs beyond the list is the same case: name it in that blocked line instead of changing it.
+
+
+### S2: refusals of a bad list (nothing written)
+$ list='/etc/passwd'
+error: --allowed-files entries must be repo-relative paths with no '..' segment (got '/etc/passwd')
+exit=1 data/tbad exists? no
+$ list='src/../x'
+error: --allowed-files entries must be repo-relative paths with no '..' segment (got 'src/../x')
+exit=1 data/tbad exists? no
+$ list='# only comment'
+error: --allowed-files list has no entries: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/bad.txt
+exit=1 data/tbad exists? no
+$ fm-brief.sh tsc proj --scout --allowed-files list.txt
+error: --allowed-files applies only to ship briefs; a scout makes no branch and a secondmate charter is not a delivery contract
+exit=1
+
+### S3: reusing an id whose boundary marker remains is refused
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/state/t1.file-boundary already exists: a file boundary was recorded for an earlier task with id t1; trash that marker once the task is finished, then run this again
+exit=1

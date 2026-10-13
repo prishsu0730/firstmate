@@ -1,0 +1,26 @@
+PR: https://github.com/prishsu0730/firstmate/pull/11  live head: a6d6589db9a50758b70e2629c64483d6d432bc73
+$ gh pr view --json files (read-only)
+bin/fm-brief.sh
+bin/fm-file-boundary.sh
+bin/fm-pr-merge.sh
+docs/scripts.md
+tests/fm-brief.test.sh
+tests/fm-file-boundary.test.sh
+tests/fm-pr-merge.test.sh
+
+### S10a: PR files all inside the list -> exit 0
+list: bin/fm-*.sh tests/*.test.sh docs/scripts.md 
+file boundary ok for task t3: 7 changed file(s), all within the allowed list
+exit=0
+
+### S10b: PR touches files outside the list -> exit 1, each named
+list: bin/fm-file-boundary.sh tests/**/*.sh 
+error: file boundary for task t4: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t4/allowed-files:
+  - bin/fm-brief.sh
+  - bin/fm-pr-merge.sh
+  - docs/scripts.md
+exit=1
+
+### S10c: --head that is not the live head -> refused, exit 2
+error: the head of https://github.com/prishsu0730/firstmate/pull/11 is a6d6589db9a50758b70e2629c64483d6d432bc73, not the verified 0000000000000000000000000000000000000000; its file list was not checked
+exit=2

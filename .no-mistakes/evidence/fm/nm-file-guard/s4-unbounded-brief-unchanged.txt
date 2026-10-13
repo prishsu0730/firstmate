@@ -1,0 +1,9 @@
+mode=no-mistakes: brief identical to base (   14170 bytes)
+  file-boundary markers written: 0
+  allowed-files written: no
+mode=direct-PR: brief identical to base (    9141 bytes)
+  file-boundary markers written: 0
+  allowed-files written: no
+mode=local-only: brief identical to base (    8905 bytes)
+  file-boundary markers written: 0
+  allowed-files written: no

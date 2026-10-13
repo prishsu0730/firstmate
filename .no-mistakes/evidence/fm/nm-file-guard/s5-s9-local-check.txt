@@ -1,0 +1,39 @@
+(task t1 list: src/a.sh, docs/**/*.md)
+
+### S5: worker changes only listed files -> exit 0
+$ fm-file-boundary.sh check t1
+file boundary ok for task t1: 3 changed file(s), all within the allowed list
+exit=0
+
+### S6: worker also changes an unlisted file -> exit 1, file named
+$ fm-file-boundary.sh check t1
+error: file boundary for task t1: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t1/allowed-files:
+  - README.md
+  - src/deep/a.sh
+exit=1
+
+### S6b: renaming a listed file to an unlisted one is caught
+error: file boundary for task t1: these changed files are outside the allowed list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t1/allowed-files:
+  - src/b.sh
+exit=1
+
+### S7: a task with no list is untouched
+$ fm-file-boundary.sh check t0
+no boundary recorded for task t0; every file is allowed
+exit=0
+$ fm-file-boundary.sh recorded t0
+exit=1
+
+### S8: a recorded list that is lost refuses (never reads as "no boundary")
+- allowed-files deleted:
+error: task t1 has a file boundary recorded in /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/state/t1.file-boundary but its allowed-file list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t1/allowed-files is missing
+exit=2
+- whole data/t1 deleted (only state/t1.file-boundary left):
+error: task t1 has a file boundary recorded in /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/state/t1.file-boundary but its allowed-file list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t1/allowed-files is missing
+exit=2
+error: task t1 has a file boundary recorded in /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/state/t1.file-boundary but its allowed-file list /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.vfXweV/data/t1/allowed-files is missing
+recorded exit=2
+
+### S9: marker text quoted elsewhere in an unbounded brief is not a boundary
+no boundary recorded for task t2; every file is allowed
+exit=0
