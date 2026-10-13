@@ -7,7 +7,8 @@
 #   task's worktree (the `worktree=` in state/<id>.meta, else the current
 #   directory): `git diff --name-only --no-renames <merge-base>...HEAD`, where
 #   the base is origin/<base_branch=> from the same metadata, else origin/HEAD,
-#   origin/main, or origin/master. A rename or deletion counts both paths.
+#   origin/main, or origin/master. A rename or deletion counts both paths,
+#   and paths are read unquoted so they compare as the forge reports them.
 #   With --pr the changed files are the live pull request's file list, read
 #   from GitHub with every page and including a rename's previous path.
 #   --head <sha> binds that read to a head the caller already verified: a live
@@ -142,7 +143,7 @@ changed_from_branch() {
   [ -n "$ref" ] || die "cannot find the base branch to compare against in $wt${base:+ (base_branch=$base)}"
   merge_base=$(git -C "$wt" merge-base "$ref" HEAD 2>/dev/null) \
     || die "cannot find a merge base between $ref and HEAD in $wt"
-  CHANGED=$(git -C "$wt" diff --no-renames --name-only "$merge_base...HEAD") \
+  CHANGED=$(git -c core.quotePath=false -C "$wt" diff --no-renames --name-only "$merge_base...HEAD") \
     || die "cannot list the changes since $merge_base in $wt"
 }
 

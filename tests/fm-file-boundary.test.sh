@@ -232,6 +232,20 @@ test_globstar_matches_zero_directories() {
   pass "fm-file-boundary **/ matches zero or more directories, while * and ? stay inside one"
 }
 
+test_non_ascii_path_matches_its_entry() {
+  local case_dir
+  case_dir=$(make_case non-ascii)
+  write_list "$case_dir" 'docs/café.md'
+  commit_files "$case_dir" 'docs/café.md'
+  run_checker "$case_dir" check "$TASK"
+  expect_code 0 "$RC" "non-ascii: a non-ASCII file in the list must pass (got: $ERR)"
+  commit_files "$case_dir" 'docs/naïve.md'
+  run_checker "$case_dir" check "$TASK"
+  expect_code 1 "$RC" "non-ascii: a non-ASCII file outside the list must fail"
+  assert_contains "$ERR" 'docs/naïve.md' "non-ascii: the extra file was not named as written"
+  pass "fm-file-boundary check compares non-ASCII paths as written, not git-quoted"
+}
+
 test_rename_and_delete_count_both_paths() {
   local case_dir
   case_dir=$(make_case rename)
@@ -441,6 +455,7 @@ test_no_list_passes_with_a_note
 test_recorded_names_the_list
 test_glob_matching_stays_inside_a_directory
 test_globstar_matches_zero_directories
+test_non_ascii_path_matches_its_entry
 test_rename_and_delete_count_both_paths
 test_base_branch_comes_from_task_metadata
 test_unresolvable_base_fails_closed
