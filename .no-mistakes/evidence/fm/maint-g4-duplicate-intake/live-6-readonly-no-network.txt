@@ -1,0 +1,6 @@
+$ sandbox-exec (deny network*, deny file-write under lab) bin/fm-duplicate-intake.sh new-ro <proj> <brief> --state <state> --data <data>
+error: spawn refused: the instructions for new-ro name a commit that another open task already carries, so a second task would open a second PR for one change:
+  old-task already carries commit 291d84c9e885ea3690a87cc63544111ec0afb677 (branch fm/old-task)
+close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+exit=1
+refs and state unchanged

@@ -1,0 +1,10 @@
+== new-loose
+warning: new-loose has the same captain intent as open task old-task but names no shared commit, so the spawn continues; confirm it is not the same change (--supersedes <task> records a replacement)
+spawned new-loose harness=cat kind=ship mode=no-mistakes yolo=off window=firstmate:fm-new-loose worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.cRFUpU/pool/.treehouse/proj-eee
+1fa/3/proj
+EXIT=0
+== new-short
+spawned new-short harness=cat kind=ship mode=no-mistakes yolo=off window=firstmate:fm-new-short worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.cRFUpU/pool/.treehouse/proj-eee
+1fa/4/proj
+EXIT=0
+lab$

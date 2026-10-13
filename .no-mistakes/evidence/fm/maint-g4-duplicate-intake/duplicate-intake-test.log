@@ -1,0 +1,14 @@
+ok - duplicate task under a different name is refused before any worker or PR can exist
+ok - a full 40-character SHA is matched
+ok - --supersedes proceeds and records supersedes= in the new task's meta
+ok - --supersedes excuses only the task it names
+ok - --allow-duplicate proceeds without recording a link
+ok - unrelated tasks produce no warning and no refusal
+ok - a commit present only in a merged or torn-down task is not refused
+ok - a commit contained only in a recorded PR head is refused
+ok - a commit already on the base branch is never a duplicate
+ok - hex-looking text that is not a commit is ignored silently
+ok - tasks of other projects are not compared
+ok - a title-only similarity prints a warning and spawns
+ok - the flags are refused on scouts, relaunches, batches, and when empty
+ok - the helper refuses malformed invocations and documents itself

@@ -1,0 +1,10 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU
+error: spawn refused: the instructions for new-dup name a commit that another open task already carries, so a second task would open a second PR for one change:
+  old-task already carries commit 291d84c9e (branch fm/old-task)
+close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+EXIT=1
+STATE: old-task.meta
+DATA-new-dup: brief.md
+WINDOWS: firstmate:bash
+POOL:
+lab$

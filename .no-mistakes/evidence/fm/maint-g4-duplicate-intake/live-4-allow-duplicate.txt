@@ -1,0 +1,8 @@
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU
+notice: new-allow proceeds past a duplicate-work match under --allow-duplicate: old-task carries 291d84c9e (branch fm/old-task)
+spawned new-allow harness=cat kind=ship mode=no-mistakes yolo=off window=firstmate:fm-new-allow worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.cRFUpU/pool/.treehouse/proj-eee
+1fa/2/proj
+EXIT=0
+STATE: home-summary.json new-allow.git-hooks new-allow.meta new-sup.git-hooks new-sup.meta old-task.meta
+0
+lab$

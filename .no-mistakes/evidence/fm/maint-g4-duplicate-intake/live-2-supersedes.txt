@@ -1,0 +1,41 @@
+The default interactive shell is now zsh.
+To update your account to use zsh, please run `chsh -s /bin/zsh`.
+For more details, please visit https://support.apple.com/kb/HT208050.
+bash-3.2$ export PS1='lab$ '; echo TMUX=$TMUX FM_HOME=$FM_HOME
+TMUX=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.cRFUpU/tmux/tmux-501/fm-lab,14733,0 FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU
+lab$ clear; bin/fm-spawn.sh new-dup $FM_HOME/../fm-lab.cRFUpU/proj --mode no-mistakes --yolo off --harness cat; echo EXIT=$?; ls $FM_HOME/state; ls $FM_HOME/data/new-dup; T=$(tmux list-windows -a -F '
+#S:#W' | tr '\n' ' '); echo WINDOWS=$T
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU
+error: unknown harness 'cat'; pass a raw launch command to use an unverified adapter
+EXIT=1
+old-task.meta
+brief.md
+WINDOWS=firstmate:bash
+lab$ clear; bin/fm-spawn.sh new-dup $FM_HOME/proj --mode no-mistakes --yolo off --harness 'cat -'; echo EXIT=$?; echo STATE: $(ls $FM_HOME/state); echo DATA-new-dup: $(ls $FM_HOME/data/new-dup); echo
+WINDOWS: $(tmux list-windows -a -F '#S:#W'); echo POOL: $(ls $FM_HOME/pool)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU
+error: spawn refused: the instructions for new-dup name a commit that another open task already carries, so a second task would open a second PR for one change:
+  old-task already carries commit 291d84c9e (branch fm/old-task)
+close or hold the earlier task and pass --supersedes <task> to record the replacement, or pass --allow-duplicate if both tasks really are separate work.
+EXIT=1
+STATE: old-task.meta
+DATA-new-dup: brief.md
+WINDOWS: firstmate:bash
+POOL:
+lab$ clear; bin/fm-spawn.sh new-sup $FM_HOME/proj --mode no-mistakes --yolo off --supersedes old-task --harness 'cat -' 2>&1 | tail -15; echo EXIT=${PIPESTATUS[0]}; echo STATE: $(ls $FM_HOME/state); g
+rep -E 'supersedes|branch=|kind=' $FM_HOME/state/new-sup.meta; echo WINDOWS: $(tmux list-windows -a -F '#S:#W'); echo POOL: $(ls $FM_HOME/pool)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU
+notice: new-sup supersedes old-task carries 291d84c9e (branch fm/old-task)
+warning: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU/data/new-sup/launch-brief.md records no ship branch; defaulting to legacy branch fm/new-sup
+warning: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.cRFUpU/data/new-sup/launch-brief.md records no delivery contract line (scaffolded before ship briefs recorded one); launching on the e
+xplicit --mode no-mistakes - confirm its definition of done matches
+spawned new-sup harness=cat kind=ship mode=no-mistakes yolo=off window=firstmate:fm-new-sup worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.cRFUpU/pool/.treehouse/proj-eee1fa/
+1/proj
+EXIT=0
+STATE: home-summary.json new-sup.git-hooks new-sup.meta old-task.meta
+kind=ship
+branch=fm/new-sup
+supersedes=old-task
+WINDOWS: firstmate:bash firstmate:fm-new-sup
+POOL:
+lab$
