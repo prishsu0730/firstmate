@@ -320,7 +320,8 @@ fm_task_inbox_body() {  # <record-path>
 # of bin/fm-inbox-ack.sh, run as a standalone command so a global ask rule on
 # `mv` with an absolute path never fires. A worker launched before that export
 # falls back to this library's own bin/fm-inbox-ack.sh, so it works when FM_HOME
-# is separate from the code. No home path is printed, so the line's length
+# is separate from the code. That install path is the only absolute path
+# printed; the inbox is never named by its home path, so the rest of the line
 # never grows with the home's depth: a long line wraps
 # past what a harness composer read can prove, and a Herdr submit then reports
 # it did not reach the pane on every re-ring. The leading `: ` is the POSIX
