@@ -1035,6 +1035,12 @@ safe_checkpoint() {
   fi
 }
 
+shell_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
 # record_note: put the required progress note somewhere durable, and - for a
 # ship or scout, whose only record of the interrupted reasoning is the
 # conversation about to be discarded - into the instructions the replacement
@@ -1059,7 +1065,7 @@ record_note() {
         echo
         echo "First, check your instruction inbox: list $STATE/$ID.inbox/*.msg, act on"
         echo "each message in numeric order, then acknowledge each handled one by"
-        echo "running $SCRIPT_DIR/fm-inbox-ack.sh --inbox $STATE/$ID.inbox NNN as its"
+        echo "running $(shell_quote "$SCRIPT_DIR/fm-inbox-ack.sh") --inbox $(shell_quote "$STATE/$ID.inbox") NNN as its"
         echo "own command. A steer sent before the relaunch survives there."
         echo
         printf '%s\n' "$NOTE"

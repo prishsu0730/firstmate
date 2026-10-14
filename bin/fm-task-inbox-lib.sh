@@ -318,7 +318,9 @@ fm_task_inbox_body() {  # <record-path>
 # role contract, bin/fm-brief.sh inbox section).
 # The acknowledgement is named the same way, "$FM_INBOX_ACK", the exported path
 # of bin/fm-inbox-ack.sh, run as a standalone command so a global ask rule on
-# `mv` with an absolute path never fires. No absolute path is printed,
+# `mv` with an absolute path never fires. A worker launched before that export
+# falls back to the script beside its home's state/ (FM_HOME defaults to the
+# checkout root, bin/fm-spawn.sh). No absolute path is printed,
 # so the line's length never grows with the home's depth: a long line wraps
 # past what a harness composer read can prove, and a Herdr submit then reports
 # it did not reach the pane on every re-ring. The leading `: ` is the POSIX
@@ -335,7 +337,7 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     ''|*[![:print:]]*) return 1 ;;
   esac
   quoted=$(printf '%s' "$name" | sed "s/'/'\\\\''/g")
-  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, act on each in numeric order, then acknowledge each: run \"\$FM_INBOX_ACK\" NNN as its own command." \
+  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, act on each in numeric order, then run \"\${FM_INBOX_ACK:-\$FM_TASK_INBOX/../../bin/fm-inbox-ack.sh}\" NNN." \
     "$quoted"
 }
 
