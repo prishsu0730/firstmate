@@ -1,0 +1,26 @@
+ok - fm_branch_outcomes and fm_branch_processed call headers match stock on Pi before and from 0.99
+skip: installed @earendil-works/pi-coding-agent package not found
+skip: installed @earendil-works/pi-coding-agent package not found
+ok - branch owns accepted wakes with a stable prefix and deterministic verdict-driven delivery
+ok - a captain outcome reaches main's model as one typed, sequence-keyed processing request while routine notes stay plain
+ok - requested and unsolicited healthy outcomes keep distinct delivery and event ownership
+ok - captain outcomes are exact and exactly once across crash, reload, busy main, compaction, and an unrelated assistant response
+ok - a captain outcome opens one sequence-keyed processing turn, survives empty and unrelated answers, is re-presented at run end and session start, and closes only on its acknowledgement
+ok - Pi: an abbreviated processing request points to the full outcome and instructs main to read it first
+ok - Pi: a marker-less >1 MiB backlog is presented oldest first in bounded requests and continues after batch acknowledgement
+ok - an unprocessed captain row the store lists without its age is reported to main, never formatted undated, and stays unprocessed until the store is healthy
+ok - scopeForUnreadWake excludes every main-only class without vetoing eligible task-local rows, and writes the eligible snapshot
+ok - second-mate signal rows route by their new span while crewmate and stale routing stay unchanged
+ok - branch prompt_cache_key is stable per home across sessions and distinct between homes
+ok - branch default-on eligibility (task-scoped, heartbeat, legacy flag ignored) binds and a broken branch rejects to watcher fallback
+not ok - the away posture must park main and present after archive: file:///private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-pi-branch-extension.x5ELJb/away-root/.pi/extensions/fm-branch-supervision.ts:1686
+    const trimmed = prompt.trim();
+                           ^
+
+TypeError: Cannot read properties of undefined (reading 'trim')
+    at file:///private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-pi-branch-extension.x5ELJb/away-root/.pi/extensions/fm-branch-supervision.ts:1686:28
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async fire (eval at <anonymous> (file:///Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4WGBDP6H3WST597DAPSEEGF/[eval1]:2:7), <anonymous>:186:63)
+    at async file:///Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4WGBDP6H3WST597DAPSEEGF/[eval1]:114:1
+
+Node.js v24.15.0: expected exit 0, got 1
