@@ -1,0 +1,42 @@
+
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/6548ae86a5f1/01M4WADQFXFJ0E6PP917A81YYD
+
+❯ /bearings
+
+  Listed 2 directories, ran 2 shell commands
+
+⏺ Captain, here are your bearings. Heads up: this report comes from a test home in a temp folder (/var/folders/.../T/fm-lab.gqaeXu), not your real fleet.
+
+  1. Outcome: unknown. No record in this home names a goal.
+  - CONSTRAINT: unknown (no ranking rule recorded)
+  - Recently landed: "Fixed login crash", merged in https://github.com/example/app/pull/7
+
+  2. Active: Nothing is underway.
+
+  3. Waiting:
+  - "Polish onboarding copy" (firstmate). Its worker window is gone, so its state is UNKNOWN. It waits until someone checks or restarts it.
+  - "Ship release notes". It waits on "Polish onboarding copy". Filed 2026-10-08.
+  - "Wire reminder sync". It waits on deleted-task-zz. That blocker is UNKNOWN because the id is not in the snapshot. The snapshot did not cut anything off, so the blocker task may be gone. Filed
+    2026-10-05.
+
+  4. Held: 1 hold, parked until a date ("Decide pricing later", until 2026-12-01). Its reason is in the backlog. 0 holds have an unknown blocker.
+
+  5. Needs Me:
+  - Pick the app font. It is a decision waiting for you.
+  - 1 outside contribution is known, and 0 have been checked. It is the fleet's job, not yours. So this list may not be complete.
+
+  6. Next: unknown (no ranking rule recorded)
+
+  I changed nothing. I did not write a file, did not restart the stopped worker, and did not answer the font decision.
+
+  Why: the shell's FM_HOME setting points at this temp test home, so the report read that home's records. If you want your real fleet, run /bearings again from your real firstmate home.
+
+✻ Cogitated for 18s · done 12:32 PM
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 7% full
+  ⏸ manual mode on · ← 3 agents

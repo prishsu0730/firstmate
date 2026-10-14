@@ -1,0 +1,27 @@
+❯ /bearings
+  Ran 1 shell command
+⏺ Captain, two workers are running now, and two decisions wait for you. This is still the temp test home (/var/folders/.../T/fm-lab.gqaeXu), not your real fleet.
+  1. Outcome: unknown. No record in this home names a goal.
+  - CONSTRAINT: unknown (no ranking rule recorded)
+  - Recently landed: "Fixed login crash", merged in https://github.com/example/app/pull/7
+  2. Active:
+  - "Tune the 320px phone layout" (firstmate). The worker is busy.
+  - "Build the reminder screen" (firstmate). The worker is busy.
+  3. Waiting:
+  - "Polish onboarding copy" (firstmate). Its state is UNKNOWN. Someone needs to check its worker.
+  - "Ship release notes". It waits on "Polish onboarding copy". Filed 2026-10-08.
+  - "Wire reminder sync". It waits on deleted-task-zz: blocker UNKNOWN (id not in snapshot). Nothing was cut off, so that task may be gone. Filed 2026-10-05.
+  4. Held: 1 hold, parked until a date (0 blocked, 1 dated, 0 aged). Its reason is in the backlog. 0 have an unknown blocker.
+  5. Needs Me:
+  - "Tune the 320px phone layout". A decision waits for you. Its worker keeps running in the meantime.
+  - Pick the app font. A decision waits for you.
+  - Outside contributions: 0 of 1 checked. The 1 is the fleet's job. So this list may not be complete.
+  6. Next: unknown (no ranking rule recorded)
+  I changed nothing. I wrote no file.
+  Why: the phone-layout task shows up twice on purpose. It has a live worker (Active) and an open question for you (Needs Me).
+✻ Brewed for 8s · done 12:42 PM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 10% full
+  ⏸ manual mode on · ← 3 agents

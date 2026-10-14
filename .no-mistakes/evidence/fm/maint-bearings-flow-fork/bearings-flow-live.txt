@@ -1,0 +1,43 @@
+❯ /bearings flow
+  Ran 1 shell command
+⏺ Captain, the fleet looks the same as 6 minutes ago. This is still the temp test home (/var/folders/.../T/fm-lab.gqaeXu), not your real fleet.
+  1. Outcome: unknown. No record in this home names a goal.
+  - CONSTRAINT: unknown (no ranking rule recorded)
+  - Recently landed: "Fixed login crash", merged in https://github.com/example/app/pull/7
+  2. Active: Nothing is underway.
+  3. Waiting:
+  - "Polish onboarding copy" (firstmate). Its worker window is gone. State is UNKNOWN until someone checks or restarts it.
+  - "Ship release notes". It waits on "Polish onboarding copy".
+  - "Wire reminder sync". It waits on deleted-task-zz: blocker UNKNOWN (id not in snapshot). The snapshot cut nothing off, so that task may be gone.
+  4. Held: 1 hold, parked until a date (0 blocked, 1 dated, 0 aged). Its reason is in the backlog. 0 have an unknown blocker.
+  5. Needs Me:
+  - Pick the app font. A decision waits for you.
+  - Outside contributions: 0 of 1 checked. The 1 is the fleet's job. So this list may not be complete.
+  6. Next: unknown (no ranking rule recorded)
+  ---
+  Flow
+  - Age (as of 2026-10-14):
+    - "Wire reminder sync": 9 days (filed 2026-10-05).
+    - "Ship release notes": 6 days (filed 2026-10-08).
+    - "Decide pricing later": 48 days left until 2026-12-01.
+    - "Pick the app font" and "Polish onboarding copy": UNKNOWN. They have no filed date.
+  - Critical path: UNKNOWN. No goal is recorded. The only chain I see: "Polish onboarding copy" → "Ship release notes". It is stuck at step 1. That is MEASURED, because the record shows the worker
+    window does not exist.
+  - Unplanned work: UNKNOWN. No plan date is recorded.
+  - Conflicts:
+    - "Wire reminder sync" waits on a task that is not in the records.
+    - "Ship release notes" waits on a worker that has stopped.
+    - I see no duplicate questions.
+  - Neglected (oldest first):
+    a. "Wire reminder sync", 9 days. It starts when the missing blocker is fixed or removed.
+    b. "Ship release notes", 6 days. It starts when "Polish onboarding copy" lands.
+    c. "Decide pricing later", age UNKNOWN. It comes back on 2026-12-01.
+  - Capacity: 0 live workers. The per-project cap is UNKNOWN, because the snapshot does not carry it.
+  I changed nothing. I wrote no file.
+  Why: your shell's FM_HOME setting still points at the temp test home. To see your real fleet, run /bearings flow from your real firstmate home.
+✻ Baked for 14s · done 12:37 PM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 9% full
+  ⏸ manual mode on · ← 3 agents
