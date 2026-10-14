@@ -166,7 +166,7 @@ The `CONSTRAINT:` and `Recently landed:` lines belong to Outcome and are not par
 3. **Waiting** - queued or gated work, plus underway rows that are not progressing, each with what it waits on and its unblock condition: a blocker, a date, or `UNKNOWN`.
    Action-free fleet-integrity warnings render here too.
    A blocker id that the snapshot lists nowhere among `in_flight`, `gates`, `decisions_open`, or `landed` is `UNKNOWN`: render "blocker UNKNOWN (id not in snapshot)" and never present it as a live blocker, because the snapshot cannot tell a removed task from a finished or bounded-out one.
-   Match a blocker inside its gate's owner home: a gate whose `owner` is not `(main)` carries that home's local ids, so look for its blocker as the bare id among that owner's `gates` rows and as `<owner>/<id>` everywhere else.
+   Match a blocker inside its gate's owner home: a gate whose `owner` is not `(main)` carries that home's local ids, so look for its blocker as the bare id among that owner's `gates` and `landed` rows and as `<owner>/<id>` in `in_flight` and `decisions_open`.
    When `omitted[]` shows the `gates`, `in_flight`, `decisions_open`, or `landed` bound was hit, an unmatched id may only be cut off by that bound, so say so beside the `UNKNOWN` instead of calling the task deleted.
    Show a waiting age only from a structured date such as `filed`; otherwise leave the age out or write `UNKNOWN`.
    Empty-state: "Nothing is queued."
