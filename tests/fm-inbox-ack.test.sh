@@ -9,6 +9,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ACK="$ROOT/bin/fm-inbox-ack.sh"
+# Exercise the no-export fallback explicitly unless an individual call sets it.
+unset FM_TASK_INBOX
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-inbox-ack.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 
@@ -31,6 +33,21 @@ test_moves_via_env_and_flag() {
   [ -f "$d/handled/002.msg" ] || fail "002 did not move into handled/"
   [ "$(cat "$d/handled/001.msg")" = one ] || fail "message content changed"
   pass "ack: moves exactly the named messages into handled/"
+}
+
+test_env_inbox_cannot_be_overridden() {
+  local a b rc=0
+  a=$(new_inbox a)
+  b=$(new_inbox b)
+  FM_TASK_INBOX="$a" bash "$ACK" --inbox "$b" 001 >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "--inbox must not override FM_TASK_INBOX"
+  [ -f "$a/001.msg" ] && [ -f "$b/001.msg" ] \
+    || fail "a mismatched --inbox moved a message"
+  FM_TASK_INBOX="$a" bash "$ACK" --inbox "$a" 001 >/dev/null \
+    || fail "a matching --inbox should succeed"
+  [ -f "$a/handled/001.msg" ] && [ -f "$b/001.msg" ] \
+    || fail "a matching --inbox did not handle only its own message"
+  pass "ack: FM_TASK_INBOX cannot be overridden by a sibling inbox"
 }
 
 test_several_ids() {
@@ -107,6 +124,7 @@ test_refusals() {
 }
 
 test_moves_via_env_and_flag
+test_env_inbox_cannot_be_overridden
 test_several_ids
 test_rerun_is_safe
 test_missing_message

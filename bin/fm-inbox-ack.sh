@@ -22,11 +22,14 @@ set -u
 
 die() { printf 'fm-inbox-ack: %s\n' "$*" >&2; exit 2; }
 
-inbox=${FM_TASK_INBOX:-}
+task_inbox=${FM_TASK_INBOX:-}
+inbox=$task_inbox
+specified_inbox=
 case "${1:-}" in
   --inbox)
     [ $# -ge 2 ] || die "--inbox needs a directory"
     inbox=$2
+    specified_inbox=$2
     shift 2
     ;;
   -h|--help)
@@ -36,6 +39,19 @@ case "${1:-}" in
 esac
 [ $# -ge 1 ] || die "usage: fm-inbox-ack.sh [--inbox <dir>] <id>..."
 [ -n "$inbox" ] || die "no inbox: set FM_TASK_INBOX or pass --inbox <dir>"
+
+resolve_dir() {
+  cd -P -- "$1" 2>/dev/null && pwd -P
+}
+
+if [ -n "$task_inbox" ] && [ -n "$specified_inbox" ]; then
+  task_inbox_resolved=$(resolve_dir "$task_inbox") \
+    || die "refusing $task_inbox: cannot resolve FM_TASK_INBOX"
+  specified_inbox_resolved=$(resolve_dir "$specified_inbox") \
+    || die "refusing $specified_inbox: cannot resolve --inbox"
+  [ "$task_inbox_resolved" = "$specified_inbox_resolved" ] \
+    || die "refusing $specified_inbox: must match FM_TASK_INBOX"
+fi
 
 inbox=${inbox%/}
 case "${inbox##*/}" in
