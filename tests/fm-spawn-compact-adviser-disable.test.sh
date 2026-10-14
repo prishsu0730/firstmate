@@ -221,6 +221,11 @@ test_launch_exports_task_inbox() {
     want="$(cd "$HOME_DIR/state" && pwd -P)/$id.inbox"
     assert_equals "$want" "$seen" \
       "a $kind agent must start with FM_TASK_INBOX set to its absolute steering inbox"
+    install_env_probe "$FAKEBIN_DIR" codex FM_INBOX_ACK
+    seen=$(emitted_launch_env "$FAKEBIN_DIR" "$LAUNCH_LOG" "$PANE_LOG") \
+      || fail "$kind: the emitted launch failed to run"
+    assert_equals "$ROOT/bin/fm-inbox-ack.sh" "$seen" \
+      "a $kind agent must start with FM_INBOX_ACK set to the acknowledgement script"
   done
   pass "ship and secondmate launches export their absolute steering inbox as FM_TASK_INBOX"
 }

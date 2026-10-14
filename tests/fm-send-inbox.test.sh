@@ -174,8 +174,8 @@ test_deep_home_doorbell_stays_short() {
     fail "a shell with FM_TASK_INBOX exported could not list the deep inbox"
   [ "$found" = "$home/state/t1.inbox/001.msg" ] ||
     fail "the doorbell's list instruction did not resolve the deep inbox from an unrelated cwd: $found"
-  (cd / && FM_TASK_INBOX="$home/state/t1.inbox" bash -c 'mv "$FM_TASK_INBOX"/001.msg "$FM_TASK_INBOX"/handled/') ||
-    fail "the doorbell's mv instruction did not acknowledge through FM_TASK_INBOX"
+  (cd / && FM_TASK_INBOX="$home/state/t1.inbox" FM_INBOX_ACK="$ROOT/bin/fm-inbox-ack.sh" bash -c '"$FM_INBOX_ACK" 001' >/dev/null) ||
+    fail "the doorbell's acknowledgement did not move the record through FM_TASK_INBOX"
   [ -f "$home/state/t1.inbox/handled/001.msg" ] || fail "the acknowledged record did not land in handled/"
   pass "fm-send inbox: a deep home rings the same short doorbell naming the inbox once"
 }

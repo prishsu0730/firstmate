@@ -5463,6 +5463,9 @@ fi
 # kill switch below it is an export statement, so it survives a compound raw
 # launch and the launch-env-allowlist `env -i` wrapper.
 LAUNCH="export FM_TASK_INBOX=$(shell_quote "$STATE_REAL/$ID.inbox"); $LAUNCH"
+# The doorbell likewise names "$FM_INBOX_ACK", the standalone acknowledgement
+# script (bin/fm-inbox-ack.sh), so the worker never runs a bare `mv`.
+LAUNCH="export FM_INBOX_ACK=$(shell_quote "$SCRIPT_DIR/fm-inbox-ack.sh"); $LAUNCH"
 LAUNCH="export COMPACT_ADVISER_DISABLE=1; $LAUNCH"
 # When the live-harness gate has exported DISABLE_AUTOUPDATER into this spawn's
 # own environment, carry it into the launch command text so Claude Code's

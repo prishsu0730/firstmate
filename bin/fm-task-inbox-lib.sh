@@ -24,7 +24,8 @@
 #
 # Layout under <state-dir>:
 #   <task>.inbox/NNN.msg       one durable steer, numeric sequence, atomic rename
-#   <task>.inbox/handled/      the worker's `mv` here IS the acknowledgement
+#   <task>.inbox/handled/      the record moved here IS the acknowledgement
+#                              (the worker runs bin/fm-inbox-ack.sh, never a bare mv)
 #   <task>.inbox/.seq.lock     serializes sequence allocation across writers
 #                              (the session and the away daemon)
 #   <task>.inbox/.ring-state   watcher re-ring ladder: "<msg>\t<count>\t<epoch>"
@@ -314,7 +315,10 @@ fm_task_inbox_body() {  # <record-path>
 # resolve it from its own environment even after losing its brief context.
 # The short `<task>.inbox` name follows as the fallback for a worker launched
 # before that export, whose brief carries the full path (bin/fm-dod-lib.sh
-# role contract, bin/fm-brief.sh inbox section). No absolute path is printed,
+# role contract, bin/fm-brief.sh inbox section).
+# The acknowledgement is named the same way, "$FM_INBOX_ACK", the exported path
+# of bin/fm-inbox-ack.sh, run as a standalone command so a global ask rule on
+# `mv` with an absolute path never fires. No absolute path is printed,
 # so the line's length never grows with the home's depth: a long line wraps
 # past what a harness composer read can prove, and a Herdr submit then reports
 # it did not reach the pane on every re-ring. The leading `: ` is the POSIX
@@ -331,7 +335,7 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     ''|*[![:print:]]*) return 1 ;;
   esac
   quoted=$(printf '%s' "$name" | sed "s/'/'\\\\''/g")
-  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, read and act on each in numeric order, then mv each into its handled/." \
+  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, act on each in numeric order, then acknowledge each: run \"\$FM_INBOX_ACK\" NNN as its own command." \
     "$quoted"
 }
 
