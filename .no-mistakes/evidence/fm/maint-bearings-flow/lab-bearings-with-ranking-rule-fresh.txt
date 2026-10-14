@@ -1,0 +1,60 @@
+                                                                                                                    
+ ▐▛███▛█   Claude Code v2.1.299                                                                                     
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max                                                                       
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/6548ae86a5f1/01M4VX85SEZH9TSVGTEFZJ7B4R                      
+                                                                                                                              
+                                                      
+❯ /clear                                                                                                                                                                                                
+                                                                                                                    
+❯ /bearings                                                                                                                                                                                             
+                                                                                                                    
+  Listed 1 directory, ran 2 shell commands           
+
+⏺ Captain, here is where Anita stands. Four jobs are running. One choice waits on you.                                                                                                                  
+
+  1. Outcome: Anita M1. Goal: 5 testers use the app. No TestFlight build is out yet.
+  - CONSTRAINT: The TestFlight build for testers. Its record lists a blocker that no record explains. MEASURED: the blocker is a written field in the record.
+  - Recently landed: Anita login screen, https://github.com/example/anita/pull/12. That PR merged. That does not prove it is released.
+
+  2. Active                                                                                                                                                                                        
+  - Anita onboarding screen: working.
+  - Anita daily check-in flow: working.                    
+  - Anita reminder notifications: working.                                                                                    
+  - Anita copy pass: working.                                                                                                 
+                                                                                                                                                 
+  3. Waiting                                                                                                                                     
+  - TestFlight build: blocker UNKNOWN (id not in snapshot).             
+  - Privacy policy page: blocker UNKNOWN (id not in snapshot).                                                                                                      
+  - Mood chart: blocker UNKNOWN (id not in snapshot).                                             
+  - Home widget: blocker UNKNOWN (id not in snapshot).                                                                                                              
+  - Share sheet: blocker UNKNOWN (id not in snapshot).                                                                        
+  - 320px phone layout overflow: no blocker recorded. Why it waits is UNKNOWN.                                                                                      
+  - Needs repair: 4 running jobs have no matching job record. This does not stop work. The records just need fixing.                             
+  - Ages: UNKNOWN. No item has a recorded filed date.                                                        
+                                                                                                                                                                                                        
+  4. Held: 2 choices are parked. 1 waits for a date (paid plan pricing, until 2026-11-01). 1 waits on the TestFlight build (App Store listing). None of them waits on an unknown blocker. The reasons
+  are in the backlog.                                                                                                                                               
+                                                                                                                                                                      
+  5. Needs Me                                                                                                                                                                                           
+  - Pick tester invite wording: A or B.                                                                                       
+  - Outside contributions: I know of 1. None has been checked yet (0 of 1). So I can't say nothing else needs you.            
+                                                                                                                                                                                             
+  6. Next: Find out what is blocking the TestFlight build, then clear it. Owner: me (firstmate). I will look at the backlog record before anything else moves.        
+                                                                                                                                                                                                        
+  Why: Your rule says the top blocker is whatever stops a TestFlight build reaching testers. The build is blocked, and no record explains why, so that is step one.
+                                                                                                                                                                                                        
+✻ Crunched for 24s · done 11:50 AM                                                                                                                                                                      
+                                                                                                                                                                                                        
+                                          
+                                                                                                                                                                                                        
+                    
+                                                                                                                                                                                                        
+                                                                                                                                                                                                     
+                                                                                                                                                                                                      
+
+                                                                                                                                                                                                      
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 8% full 
+  ⏸ manual mode on · ← 3 agents  

@@ -1,0 +1,60 @@
+    - 5 chains end in an unknown blocker: TestFlight, privacy page, mood chart, home widget, and share sheet.       
+    - The App Store listing waits on TestFlight. TestFlight waits on an unknown blocker. So that chain is stuck too.
+    - No duplicate questions. Same-file overlap is UNKNOWN because the snapshot has no file data.                   
+  - Neglected: I can't sort these by age, because no ages exist. What would let each one restart:
+    - The 5 blocked builds restart when someone confirms their blockers.                                                      
+    - The 320px layout fix can start now.             
+    - The App Store listing restarts after TestFlight.                                                                                                                                                  
+    - Paid plan pricing restarts on 2026-11-01.                                                                     
+  - Capacity: 4 workers are live, all on Claude. The project limit is UNKNOWN.             
+                                                                                                                    
+  I changed nothing.                                                                                                                                                            
+                                                                                                                                                                                                        
+  Why: most of the flow details are UNKNOWN because this test home has no structured dates or milestone. The 5 "ghost" blockers are not real tasks, so the snapshot can't tell if they are gone or done.
+
+✻ Cogitated for 16s · done 11:46 AM                                                                                 
+
+❯ /bearings                                                                                                                                                                                             
+                                                                                                                                                                    
+  Ran 1 shell command                                                                                                                                                                              
+
+⏺ Captain, nothing changed. This is still the test home fm-lab.bearings1, not your real fleet.
+                                                                                                                              
+  Outcome: unknown. No record names a milestone.                                                                              
+  - CONSTRAINT: unknown (no ranking rule recorded)                                                                                               
+  - Recently landed: Anita login screen, https://github.com/example/anita/pull/12 (merged; not checked as released).                             
+                                                                        
+  Active                                                                                                                                                            
+  - Anita onboarding screen: working.                                                             
+  - Anita daily check-in flow: working.                                                                                                                             
+  - Anita reminder notifications: working.                                                                                    
+  - Anita copy pass: working.                                                                                                                                       
+                                                                                                                                                 
+  Waiting                                                                                                    
+  - TestFlight build for testers: blocker UNKNOWN (id not in snapshot).                                                                                                                                 
+  - Privacy policy page: blocker UNKNOWN (id not in snapshot).                                                                                                      
+  - Mood chart: blocker UNKNOWN (id not in snapshot).                                                                                                               
+  - Home widget: blocker UNKNOWN (id not in snapshot).                                                                                                                
+  - Share sheet: blocker UNKNOWN (id not in snapshot).                                                                                                                                                  
+  - Layout overflows at 320px phone width: no blocker listed. It can start.                                                   
+  - Needs repair: the task list says 4 tasks are underway, but no worker record exists for them. No action is needed from you.
+                                                                                                                                                                                             
+  Held: 2 holds. 1 has a date (until 2026-11-01). 1 waits on the TestFlight build. Their reasons are in the task list. 0 name an unknown blocker.                     
+                                                                                                                                                                                                        
+  Needs Me                               
+  - Choose tester invite wording: A or B.                                                                                                                                                               
+  - Outside contributions: 0 of 1 checked. 1 waits on the fleet. So this list may not be complete.                                                                                                      
+                                                                                                                                                                                                        
+  Next: unknown (no ranking rule recorded)
+                                                                                                                                                                                                        
+  I changed nothing.
+                                                                                                                                                                                                        
+  Why: this is the same test data as the last two checks, so the result matches. To see your real fleet, run /bearings from your real Firstmate home, not this test copy.
+
+✻ Brewed for 9s · done 11:48 AM                                                           
+                                                                                                                                                                                                      
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯                                                                           
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 10% full
+  ⏸ manual mode on · ← 3 agents  

@@ -1,0 +1,60 @@
+
+ ▐▛███▛█   Claude Code v2.1.299
+▝▜██████▀  Opus 5.5 (1M context) · Claude Max
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/6548ae86a5f1/01M4VX85SEZH9TSVGTEFZJ7B4R
+
+
+❯ /bearings                                                                                                                                                                                             
+
+  Read 1 file, listed 1 directory, ran 1 shell command                                     
+
+⏺ Captain, this snapshot comes from a test home, not your real fleet. The setting FM_HOME points at fm-lab.bearings1, a throwaway test folder. The live digest from it is below.
+
+  Outcome: unknown. No record names a milestone.
+  - CONSTRAINT: unknown (no ranking rule recorded)
+  - Recently landed: Anita login screen, https://github.com/example/anita/pull/12 (merged; not checked as released).
+
+  Active                                                                                                                                                                   
+  - Anita onboarding screen: working.
+  - Anita daily check-in flow: working.                                                                                                                                                            
+  - Anita reminder notifications: working.
+  - Anita copy pass: working.
+         
+  Waiting                                                                   
+  - TestFlight build for testers: blocker UNKNOWN (id not in snapshot).
+  - Privacy policy page: blocker UNKNOWN (id not in snapshot).
+  - Mood chart: blocker UNKNOWN (id not in snapshot).
+  - Home widget: blocker UNKNOWN (id not in snapshot).
+  - Share sheet: blocker UNKNOWN (id not in snapshot).
+  - Layout overflows at 320px phone width: no blocker listed. It can start. Wait time UNKNOWN.
+  - Needs repair: the task list says 4 tasks are underway, but no worker record exists for them. No action is needed from you.
+
+  Held: 2 holds. 1 has a date (until 2026-11-01). 1 waits on the TestFlight build. Their reasons are in the task list. 0 name an unknown blocker.
+
+  Needs Me
+  - Choose tester invite wording: A or B.
+  - Outside contributions: 0 of 1 checked. 1 waits on the fleet. So this list may not be complete.
+
+  Next: unknown (no ranking rule recorded)
+
+  I changed nothing. No home needed a fix request.
+
+  Why: wait times show as UNKNOWN because the records have no structured "filed" date. Some dates appear in task titles, but the rules do not let me trust title text.
+
+✻ Crunched for 22s · done 11:45 AM
+
+
+
+
+
+
+
+                                                                                                                                                                                                     
+                                                                                                                                                                                                      
+
+                                                                                                                                                                                                      
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 (1M context) · memory 8% full
+  ⏸ manual mode on · ← 3 agents  

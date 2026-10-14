@@ -1,0 +1,189 @@
+{
+  "schema": "fm-bearings.v1",
+  "home": "/fm-lab.bearings1",
+  "generated": "2026-10-14T03:41:54Z",
+  "prs": "not_requested (run: /bearings include PRs)",
+  "contributions": {
+    "scope": "owned contributions per home",
+    "known": 1,
+    "checked": 0,
+    "counts": {
+      "captain": 0,
+      "fleet": 1,
+      "maintainer": 0,
+      "nobody": 0
+    },
+    "complete": false,
+    "proven_clear": false,
+    "unmeasured_homes": 0,
+    "unreadable_records": 0,
+    "unmeasured": 0,
+    "stale_verdicts": 0,
+    "missing_verdicts": 0,
+    "captain_omitted": 0,
+    "captain": []
+  },
+  "in_flight": [
+    {
+      "id": "w1-onboarding",
+      "kind": "ship",
+      "state": "working",
+      "repo": "anita",
+      "name": "Anita onboarding screen",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "w2-checkin",
+      "kind": "ship",
+      "state": "working",
+      "repo": "anita",
+      "name": "Anita daily check-in flow",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "w3-reminders",
+      "kind": "ship",
+      "state": "working",
+      "repo": "anita",
+      "name": "Anita reminder notifications",
+      "doing": "harness busy (claude-hook)"
+    },
+    {
+      "id": "w4-copy",
+      "kind": "ship",
+      "state": "working",
+      "repo": "anita",
+      "name": "Anita copy pass",
+      "doing": "harness busy (claude-hook)"
+    }
+  ],
+  "secondmates": [],
+  "secondmate_reconcile": [],
+  "decisions_open": [
+    {
+      "id": "h-live",
+      "key": "h-live",
+      "verb": "captain-hold",
+      "summary": "Choose tester invite wording A or B (repo: anita) (kind: captain) (hold: parked) (hold-kin…",
+      "owner": "(main)"
+    }
+  ],
+  "landed": [
+    {
+      "id": "d1",
+      "what": "Anita login screen",
+      "artifact": "https://github.com/example/anita/pull/12",
+      "owner": "(main)"
+    }
+  ],
+  "gates": [
+    {
+      "id": "(main-inventory)",
+      "title": "in-flight backlog item has no child metadata",
+      "blocked_by": "-",
+      "reason": "main inventory",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "q1-testflight",
+      "title": "TestFlight build for testers (repo: anita) (kind: ship) (fil…",
+      "blocked_by": "ghost-a",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "q2-privacy",
+      "title": "Privacy policy page (repo: anita) (kind: ship) (filed 2026-1…",
+      "blocked_by": "ghost-b",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "q3-mood",
+      "title": "Mood chart (repo: anita) (kind: ship) (filed 2026-10-11)",
+      "blocked_by": "ghost-c",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "q4-widgets",
+      "title": "Home widget (repo: anita) (kind: ship) (filed 2026-10-11)",
+      "blocked_by": "ghost-d",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "q5-share",
+      "title": "Share sheet (repo: anita) (kind: ship) (filed 2026-10-12)",
+      "blocked_by": "ghost-e",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "q6-phone320",
+      "title": "Release concern: layout overflows on 320px phone width (repo…",
+      "blocked_by": "-",
+      "reason": "-",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "h-dated",
+      "title": "Decide paid plan pricing (repo: anita) (kind: captain) (hold…",
+      "blocked_by": "-",
+      "reason": "until 2026-11-01: parked",
+      "owner": "(main)",
+      "filed": null
+    },
+    {
+      "id": "h-blocked",
+      "title": "Approve App Store listing (repo: anita) (kind: captain) (hol…",
+      "blocked_by": "q1-testflight",
+      "reason": "blocked-by q1-testflight: parked",
+      "owner": "(main)",
+      "filed": null
+    }
+  ],
+  "reports": [],
+  "recorded_prs": [],
+  "omitted": [
+    {
+      "surface": "backlog item bodies",
+      "reveal": "--fields bodies"
+    },
+    {
+      "surface": "task paths",
+      "reveal": "--fields paths"
+    },
+    {
+      "surface": "watch/steer actions",
+      "reveal": "--fields actions"
+    },
+    {
+      "surface": "healthy endpoint detail",
+      "reveal": "--fields endpoints"
+    },
+    {
+      "surface": "full scout-report inventory",
+      "reveal": "--all-reports"
+    },
+    {
+      "surface": "main in-flight backlog item(s) have no child metadata: 4",
+      "reveal": "inspect main data/backlog.md In flight vs state/*.meta"
+    },
+    {
+      "surface": "captain holds bucketed blocked, dated, or aged: 2",
+      "reveal": "--all-decisions"
+    },
+    {
+      "surface": "live PR discovery + checks",
+      "reveal": "--include-prs"
+    }
+  ]
+}
