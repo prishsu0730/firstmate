@@ -166,10 +166,12 @@ The `CONSTRAINT:` and `Recently landed:` lines belong to Outcome and are not par
 3. **Waiting** - queued or gated work, plus underway rows that are not progressing, each with what it waits on and its unblock condition: a blocker, a date, or `UNKNOWN`.
    Action-free fleet-integrity warnings render here too.
    A blocker id that the snapshot lists nowhere among `in_flight`, `gates`, `decisions_open`, or `landed` is `UNKNOWN`: render "blocker UNKNOWN (id not in snapshot)" and never present it as a live blocker, because the snapshot cannot tell a removed task from a finished or bounded-out one.
+   Match a blocker inside its gate's owner home: a gate whose `owner` is not `(main)` carries that home's local ids, so look for its blocker as the bare id among that owner's `gates` rows and as `<owner>/<id>` everywhere else.
+   When `omitted[]` shows the `gates`, `in_flight`, `decisions_open`, or `landed` bound was hit, an unmatched id may only be cut off by that bound, so say so beside the `UNKNOWN` instead of calling the task deleted.
    Show a waiting age only from a structured date such as `filed`; otherwise leave the age out or write `UNKNOWN`.
    Empty-state: "Nothing is queued."
 4. **Held** - one collapsed line: the count of captain holds the snapshot buckets `blocked`, `dated`, or `aged`, with that split, and where the hold records keep their reasons.
-   Never list held rows unless asked, and never count a held task as Active or Waiting.
+   Never list held rows unless asked, and never list a held row again under Waiting; a held task with a live worker still renders under Active.
    Say how many of them name a blocker that is `UNKNOWN` under the Waiting rule.
    Empty-state: "Nothing is held."
 5. **Needs Me** - ONLY unsuppressed items that need the captain's own action now: a decision to make, a PR to approve or merge, a credential or login to provide, or a blocker only the captain can clear.
@@ -216,10 +218,10 @@ The Outcome milestone, CONSTRAINT, and Next lines are chat-only composition from
 
 After the six parts, `flow` appends only what the snapshot's structured fields support, each item `UNKNOWN` where they do not:
 
-- **Age** - per item, time from its structured `filed` date, or a dated `until` gate, to the snapshot's `generated` time.
+- **Age** - per item, time from its structured `filed` date to the snapshot's `generated` time; a dated gate shows the time remaining until its `until` date instead.
 - **Critical path** - the steps to the milestone in order, each with its owner and whether the bottleneck is MEASURED or a HYPOTHESIS.
 - **Unplanned work** - items filed after the milestone's plan, with what they pushed aside, only when a filed date shows it.
-- **Conflicts** - duplicate questions, two items on the same file or device, and dependency chains ending in an `UNKNOWN` blocker.
+- **Conflicts** - duplicate questions, two items on the same file or device, and dependency chains ending in a blocker that is `UNKNOWN` under the Waiting rule.
 - **Neglected** - held and queued items by age, oldest first, each with its resume condition.
 - **Capacity** - live workers per tool and the per-project cap, only where the snapshot carries them; never a recommendation to spawn because a slot is free.
 
