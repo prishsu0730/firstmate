@@ -1,0 +1,45 @@
+### Scenario A/B: real doorbell line from bin/fm-task-inbox-lib.sh, typed into a fresh bash
+doorbell line (263 chars): : Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'demo.inbox' steering inbox, act on each in numeric order, then run "${FM_INBOX_ACK:-/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4WWNAS3FW7KVXX85YS0275T/bin/fm-inbox-ack.sh}" NNN.
+--- A: new launch, FM_INBOX_ACK exported (as fm-spawn does), FM_HOME separate from code
+doorbell line itself as shell no-op rc=0
+handled: 001
+rc=0
+--- B: old worker, FM_INBOX_ACK unset, home has no bin/:
+state
+handled: 002
+rc=0
+inbox now:
+<W>/home/state/demo.inbox/handled/001.msg
+<W>/home/state/demo.inbox/handled/002.msg
+
+### Scenario C: brief-style command with --inbox
+handled: 003
+rc=0
+already handled: 003
+re-run rc=0
+
+### Scenario D: adversarial - guard refuses and moves nothing
+$ fm-inbox-ack.sh --inbox <W>/other 001
+fm-inbox-ack: refusing <W>/other: not a <task>.inbox directory
+rc=2
+$ fm-inbox-ack.sh --inbox <W>/home/state/demo.inbox ../../other/x
+fm-inbox-ack: refusing '../../other/x': a message id is digits only, like 001
+rc=2
+$ fm-inbox-ack.sh --inbox <W>/home/state/demo.inbox 004;id
+fm-inbox-ack: refusing '004;id': a message id is digits only, like 001
+rc=2
+$ fm-inbox-ack.sh --inbox <W>/home/state/evil.inbox 005
+fm-inbox-ack: refusing <W>/home/state/evil.inbox/005.msg: a symlink
+rc=2
+$ fm-inbox-ack.sh --inbox <W>/home/state/demo.inbox 999
+fm-inbox-ack: no message 999 in <W>/home/state/demo.inbox
+rc=1
+fm-inbox-ack: no inbox: set FM_TASK_INBOX or pass --inbox <dir>
+no inbox rc=2
+after attacks:
+<W>/home/state/demo.inbox/004.msg
+<W>/home/state/demo.inbox/handled/001.msg
+<W>/home/state/demo.inbox/handled/002.msg
+<W>/home/state/demo.inbox/handled/003.msg
+<W>/home/state/evil.inbox/005.msg
+<W>/other/x.msg

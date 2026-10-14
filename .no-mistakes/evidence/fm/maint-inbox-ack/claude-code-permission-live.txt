@@ -1,0 +1,14 @@
+Live Claude Code 2.1.299, run with the machine's normal ~/.claude/settings.json (contains ask rule "Bash(mv * /*)"),
+`claude -p --permission-mode default --allowedTools Bash`, throwaway inbox /tmp/fmack.eiU0/home/state/demo.inbox.
+
+1) Bare mv (old doorbell/brief instruction):
+   mv <inbox>/010.msg <inbox>/handled/
+   -> permission_denials: [Bash mv ...]; 010.msg NOT moved. (ask beats --allowedTools Bash)
+2) New brief form:
+   <repo>/bin/fm-inbox-ack.sh --inbox <inbox> 011
+   -> permission_denials: []; output "handled: 011"; moved to handled/.
+3) Real doorbell line from fm_task_inbox_doorbell_line, FM_TASK_INBOX + FM_INBOX_ACK exported (new launch):
+   -> permission_denials: []; "handled: 012".
+4) Same doorbell, FM_INBOX_ACK unset (worker launched before this change), FM_HOME without bin/:
+   -> permission_denials: []; "handled: 013" via the lib-dir fallback path.
+Final inbox: 010.msg still pending (blocked mv); 011, 012, 013 in handled/.

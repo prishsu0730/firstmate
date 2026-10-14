@@ -1,0 +1,10 @@
+=== inbox section of generated brief.md (FM_HOME=<LAB>)
+27:   Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
+81:# Firstmate instruction inbox
+82:Firstmate steers you through durable message files in '<LAB>/state/demo-ack-01.inbox'.
+83:When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list '<LAB>/state/demo-ack-01.inbox'/*.msg, read and act on each message in numeric order, then acknowledge each handled message by running `'/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4WWNAS3FW7KVXX85YS0275T/bin/fm-inbox-ack.sh' --inbox '<LAB>/state/demo-ack-01.inbox' NNN` (the id of that message, such as 001) as its own command, never inside a compound command and never as a bare `mv`.
+84:The move that script makes IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+=== running the brief's command verbatim (NNN->001): '/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4WWNAS3FW7KVXX85YS0275T/bin/fm-inbox-ack.sh' --inbox '<LAB>/state/demo-ack-01.inbox' 001
+handled: 001
+rc=0
+<LAB>/state/demo-ack-01.inbox/handled/001.msg
