@@ -7,7 +7,8 @@
 # Moves <inbox>/<id>.msg into <inbox>/handled/ and nothing else. <id> is the
 # message's numeric sequence (001, or 001.msg). <inbox> defaults to
 # "$FM_TASK_INBOX", which bin/fm-spawn.sh exports into every launch; --inbox
-# names it explicitly for a worker launched before that export.
+# names it explicitly for a worker launched before that export. When both are
+# set, --inbox must resolve to the same directory as FM_TASK_INBOX (exit 2).
 #
 # It exists so a worker acknowledges a steer with one standalone command
 # instead of a bare `mv` with absolute paths, which a global `Bash(mv * /*)`
