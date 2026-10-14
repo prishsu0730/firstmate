@@ -1,0 +1,2 @@
+ok - ack: moves exactly the named messages into handled/
+not ok - --inbox must not override FM_TASK_INBOX: expected exit 2, got 0

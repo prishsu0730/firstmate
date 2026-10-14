@@ -1,0 +1,31 @@
+== S1 bound to A, stale --inbox B 001 (must refuse, exit 2, nothing moves)
+fm-inbox-ack: refusing $T/state/B.inbox: must match FM_TASK_INBOX
+exit=2
+state/A.inbox/001.msg
+state/B.inbox/001.msg
+== S2 bound to A, --inbox A spelled differently (B.inbox/../A.inbox/) 001 (must succeed)
+handled: 001
+exit=0
+state/A.inbox/handled/001.msg
+state/B.inbox/001.msg
+== S3 bound to A, --inbox is a symlink alias of A (later no-symlink guard must still refuse)
+fm-inbox-ack: refusing $T/alias.inbox: not a real directory
+exit=2
+state/A.inbox/002.msg
+state/A.inbox/handled/001.msg
+state/B.inbox/001.msg
+== S4 bound to A, --inbox points at a missing C.inbox (must refuse, exit 2)
+fm-inbox-ack: refusing $T/state/C.inbox: cannot resolve --inbox
+exit=2
+== S5 no FM_TASK_INBOX (worker launched before the export), --inbox B 001 (fallback must work)
+handled: 001
+exit=0
+state/A.inbox/002.msg
+state/A.inbox/handled/001.msg
+state/B.inbox/handled/001.msg
+== S6 env only (doorbell form), FM_TASK_INBOX=A 002 (must succeed)
+handled: 002
+exit=0
+state/A.inbox/handled/001.msg
+state/A.inbox/handled/002.msg
+state/B.inbox/handled/001.msg
