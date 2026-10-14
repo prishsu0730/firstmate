@@ -1,0 +1,9 @@
+relaunch rc=0
+13-First, check your instruction inbox: list <CASE>/home/state/rl2.inbox/*.msg, act on
+14-each message in numeric order, then acknowledge each handled one by
+15:running '/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4XB8FXDZ4VPDJQMGP931MA0/bin/fm-inbox-ack.sh' --inbox '<CASE>/home/state/rl2.inbox' NNN as its
+16-own command. A steer sent before the relaunch survives there.
+17-
+$ <relaunch-note command, NNN=001>
+handled: 001
+rc=0 handled=001.msg

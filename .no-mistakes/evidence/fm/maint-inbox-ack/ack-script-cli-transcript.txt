@@ -1,0 +1,36 @@
+$ <exact brief command with NNN=001>
+handled: 001
+rc=0 handled: 001.msg
+$ same again (re-run)
+already handled: 001
+rc=0
+$ id traversal ../../secret
+fm-inbox-ack: refusing '../../secret': a message id is digits only, like 001
+rc=2
+$ id 001/../x
+fm-inbox-ack: refusing '001/../x': a message id is digits only, like 001
+rc=2
+$ inbox not named .inbox (state dir)
+fm-inbox-ack: refusing <LAB>/my home/state: not a <task>.inbox directory
+rc=2
+$ inbox via .. trick ending in .inbox? (other.inbox/../t1-demo.inbox is fine; foo/.inbox)
+fm-inbox-ack: refusing <LAB>/.inbox: not a <task>.inbox directory
+rc=2
+$ symlinked inbox
+fm-inbox-ack: refusing <LAB>/my home/state/link.inbox: not a real directory
+rc=2
+$ symlinked message
+fm-inbox-ack: refusing <LAB>/my home/state/t1-demo.inbox/003.msg: a symlink
+rc=2
+secret still at origin: <LAB>/secret.msg
+$ no inbox at all
+fm-inbox-ack: no inbox: set FM_TASK_INBOX or pass --inbox <dir>
+rc=2
+$ missing message
+fm-inbox-ack: no message 009 in <LAB>/my home/state/t1-demo.inbox
+rc=1
+$ FM_TASK_INBOX env mode (doorbell path)
+handled: 004
+rc=0
+other.inbox untouched: 002.msg
+handled
