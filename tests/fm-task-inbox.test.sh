@@ -192,25 +192,28 @@ test_write_is_durable_and_exact() {
 
 # A worker launched before FM_INBOX_ACK was exported has only FM_TASK_INBOX.
 # Run the doorbell's own acknowledgement command text in that environment, from
-# an unrelated cwd, and assert the record still moves into handled/.
+# an unrelated cwd, and assert the record still moves into handled/. The second
+# home sits outside the repo with no bin/ at all, like an FM_HOME kept apart
+# from the code.
 test_doorbell_ack_without_ack_export() {
   local home rec doorbell ack
-  home="$TMP_ROOT/no-ack-export"
-  mkdir -p "$home/state"
-  ln -s "$ROOT/bin" "$home/bin"
-  rec=$(inbox_lib "$home/state" fm_task_inbox_write "$home/state" t1 "please continue") \
-    || fail "inbox write failed"
-  doorbell=$(inbox_lib "$home/state" fm_task_inbox_doorbell_line "$rec")
-  ack=${doorbell#*then run }
-  ack=${ack%.}
-  [ "$ack" != "$doorbell" ] || fail "the doorbell carries no acknowledgement command: $doorbell"
-  ack=${ack/NNN/001}
-  (cd / && env -u FM_INBOX_ACK FM_TASK_INBOX="$home/state/t1.inbox" bash -c "$ack") \
-    || fail "the doorbell's acknowledgement failed without FM_INBOX_ACK: $ack"
-  [ -f "$home/state/t1.inbox/handled/001.msg" ] \
-    || fail "without FM_INBOX_ACK the acknowledged record did not land in handled/"
-  [ ! -e "$rec" ] || fail "without FM_INBOX_ACK the record stayed unhandled"
-  pass "inbox: a worker launched without FM_INBOX_ACK still acknowledges through the doorbell"
+  for home in "$TMP_ROOT/no-ack-export" "$TMP_ROOT/separate-home/fm-home"; do
+    mkdir -p "$home/state"
+    [ "$home" = "$TMP_ROOT/no-ack-export" ] && ln -s "$ROOT/bin" "$home/bin"
+    rec=$(inbox_lib "$home/state" fm_task_inbox_write "$home/state" t1 "please continue") \
+      || fail "inbox write failed"
+    doorbell=$(inbox_lib "$home/state" fm_task_inbox_doorbell_line "$rec")
+    ack=${doorbell#*then run }
+    ack=${ack%.}
+    [ "$ack" != "$doorbell" ] || fail "the doorbell carries no acknowledgement command: $doorbell"
+    ack=${ack/NNN/001}
+    (cd / && env -u FM_INBOX_ACK FM_TASK_INBOX="$home/state/t1.inbox" bash -c "$ack") \
+      || fail "the doorbell's acknowledgement failed without FM_INBOX_ACK in $home: $ack"
+    [ -f "$home/state/t1.inbox/handled/001.msg" ] \
+      || fail "without FM_INBOX_ACK the acknowledged record did not land in handled/ in $home"
+    [ ! -e "$rec" ] || fail "without FM_INBOX_ACK the record stayed unhandled in $home"
+  done
+  pass "inbox: a worker launched without FM_INBOX_ACK still acknowledges through the doorbell, even with FM_HOME apart from the code"
 }
 
 # The doorbell may land in a pane whose agent has exited, where it is a shell

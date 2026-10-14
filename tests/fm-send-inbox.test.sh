@@ -143,7 +143,7 @@ test_text_steer_rides_inbox() {
 # what a composer read can prove, so a Herdr submit reports it never reached
 # the pane and every re-ring fails the same way.
 test_deep_home_doorbell_stays_short() {
-  local shallow deep home err rest typed shallow_typed found
+  local shallow deep home err rest typed short shallow_typed found
   shallow=$(setup_case shallow-home)
   run_send "$shallow" "$shallow/send.err" -- t1 "please continue" || fail "the shallow-home send failed"
   shallow_typed=$(cat "$shallow/send.log")
@@ -161,7 +161,9 @@ test_deep_home_doorbell_stays_short() {
   typed=$(cat "$deep/send.log")
   [ "$typed" = "$shallow_typed" ] ||
     fail "the doorbell should not depend on the home's depth:"$'\n'"shallow: $shallow_typed"$'\n'"deep:    $typed"
-  [ "${#typed}" -le 200 ] || fail "the doorbell should stay under 200 characters, got ${#typed}: $typed"
+  short=${typed/"$ROOT/bin/fm-inbox-ack.sh"/}
+  [ "$short" != "$typed" ] || fail "the doorbell should name this checkout's acknowledgement script: $typed"
+  [ "${#short}" -le 200 ] || fail "apart from the install path, the doorbell should stay under 200 characters, got ${#short}: $typed"
   case "$typed" in
   *"$deep"* | *"$TMP_ROOT"*) fail "the doorbell should not carry the home's absolute path: $typed" ;;
   esac
