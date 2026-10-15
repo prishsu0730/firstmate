@@ -102,7 +102,8 @@ An expired deferral therefore remains answerable.
 
 ### Recording a reviewed inventory (`complete`)
 
-While originating task metadata is live, the `complete` subcommand unions the reviewed captain-held task ids, called the reviewed inventory, into `decision_keys=` and appends `decisions_reviewed=1`.
+While originating task metadata is live, the `complete` subcommand unions the reviewed captain-held task ids, called the reviewed inventory, into `decision_keys=` and sets `decisions_reviewed=1`.
+It replaces any earlier copies of both lines and writes them before a recorded `pr=` block, because the merge poll accepts only PR fields after `pr=`.
 A post-teardown visual review can complete against the surviving report and durable tasks without recreating volatile task metadata.
 
 `complete` accepts `--none` as an explicit semantic inventory result.
