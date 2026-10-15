@@ -914,6 +914,46 @@ test_completion_keeps_pr_poll_metadata_terminal() {
   pass "completion keeps captain-call metadata before an armed PR poll identity"
 }
 
+test_completion_repairs_decision_metadata_after_pr_identity() {
+  local home id first second pr
+  home=$(make_home complete-pr-poll-repair)
+  id=sample-pr-repair-origin
+  first=sample-pr-repair-first
+  second=sample-pr-repair-second
+  pr=https://github.com/sample/sample/pull/55
+  tasks_in "$home" add "$id" "Ship the repair fixture" --kind ship --repo sample --start >/dev/null \
+    || fail "could not create the PR-repair origin"
+  write_origin_meta "$home" "$id" ship
+  run_captain "$home" hold "$first" --title "Choose the first route" \
+    --reason "first captain choice pending" --repo sample --origin "$id" >/dev/null \
+    || fail "could not create the first captain call"
+  run_captain "$home" hold "$second" --title "Choose the second route" \
+    --reason "second captain choice pending" --repo sample --origin "$id" >/dev/null \
+    || fail "could not create the second captain call"
+  printf 'pr=%s\npr_head=%s\n' "$pr" 1111111111111111111111111111111111111111 >> "$home/state/$id.meta"
+  fm_pr_poll_prepare "$home/state" "$id" github "$pr" github.com sample/sample 55 "$ROOT/bin/fm-pr-poll.sh" \
+    || fail "could not prepare the PR-repair fixture"
+  fm_pr_poll_publish_prepared || fail "could not publish the PR-repair fixture"
+  printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$first" >> "$home/state/$id.meta"
+  ! fm_pr_poll_artifacts_valid "$home/state" "$id" "$ROOT/bin/fm-pr-poll.sh" \
+    || fail "the PR-repair fixture did not reproduce the broken metadata order"
+
+  run_captain "$home" complete "$id" "$second" >/dev/null \
+    || fail "completion failed for the PR-repair origin"
+
+  [ "$(grep -c '^decision_keys=' "$home/state/$id.meta")" = 1 ] \
+    || fail "completion left a stale decision_keys line behind"
+  [ "$(grep -c '^decisions_reviewed=' "$home/state/$id.meta")" = 1 ] \
+    || fail "completion left a stale decisions_reviewed line behind"
+  case "$(grep '^decision_keys=' "$home/state/$id.meta")" in
+    *"$first"*"$second"*|*"$second"*"$first"*) ;;
+    *) fail "completion dropped a captain-call key from the inventory" ;;
+  esac
+  fm_pr_poll_artifacts_valid "$home/state" "$id" "$ROOT/bin/fm-pr-poll.sh" \
+    || fail "completion did not restore a valid PR poll identity block"
+  pass "completion replaces stale decision metadata left after a PR identity"
+}
+
 # --release lifts the hold instead of closing, preserving the work item's own
 # body under the record; a re-held task later accepts a new answer.
 test_release_frees_held_work() {
@@ -4793,6 +4833,7 @@ test_retained_body_keeps_its_utf8_bytes
 test_completion_gate_attests_and_transfers
 test_answer_records_and_closes
 test_completion_keeps_pr_poll_metadata_terminal
+test_completion_repairs_decision_metadata_after_pr_identity
 test_release_frees_held_work
 test_hold_quiets_a_live_task_until_it_is_released
 test_hold_stamp_precedes_hold_visibility

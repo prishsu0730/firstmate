@@ -1799,6 +1799,7 @@ record_completion_inventory() {  # <meta> <keys>
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       pr=*) in_pr=1 ;;
+      decisions_reviewed=*|decision_keys=*) continue ;;
     esac
     if [ "$in_pr" = 1 ]; then
       printf '%s\n' "$line" >> "$pr_tmp"
