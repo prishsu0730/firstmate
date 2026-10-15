@@ -1,0 +1,19 @@
+## Regression proof: same stale-TMUX spawn, OLD code (base d6ac5f2) vs NEW code (eba4eeb)
+## lab server alive; TMUX names a socket whose server died at 'reboot': $LAB/tmux/dead-preboot-sock,4242,0
+### OLD: <base checkout>/bin/fm-spawn.sh gamma $SMR/gamma --secondmate
+old exit=1
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+warning: secondmate gamma sync skipped before launch: primary default-branch commit cannot be resolved
+error connecting to $LAB/tmux/dead-preboot-sock (No such file or directory)
+### NEW: bin/fm-spawn.sh delta $SMR/delta --secondmate
+new exit=0
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+warning: secondmate delta sync skipped before launch: primary default-branch commit cannot be resolved
+spawned delta harness=claude kind=secondmate mode=secondmate yolo=off window=firstmate:fm-delta worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/delta
+### lab windows now:
+zsh cwd=/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4Z39MWRHKH2BX5WJM1GZHPC
+fm-alpha cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+fm-beta cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+fm-delta cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/delta

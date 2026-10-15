@@ -1,0 +1,13 @@
+error: src refspec fm/td-proxy does not match any
+error: failed to push some refs to '/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/td2/origin.git'
+origin heads:
+916050b refs/heads/fm/td-local
+43f2bfe refs/heads/main
+td-proxy HEAD=e309417 worker-view unpushed: e309417 td-proxy real work;
+td-local HEAD=4e244fe worker-view unpushed: 4e244fe td-local local-only commit;916050b td-local real work;
+# fix: push from the gate clone's remote-tracking ref
+origin heads:
+916050b refs/heads/fm/td-local
+e309417 refs/heads/fm/td-proxy
+43f2bfe refs/heads/main
+td-proxy worker-view unpushed (stale refs): e309417 td-proxy real work;

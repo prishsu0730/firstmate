@@ -1,0 +1,52 @@
+## Scenario: spawn secondmate alpha from a shell whose TMUX names a dead pre-reboot socket
+$ TMUX=$LAB/tmux/dead-preboot-sock,4242,0 FM_HOME=$LAB bin/fm-spawn.sh alpha $SMR/alpha --secondmate
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.7bntYQ
+warning: secondmate alpha sync skipped before launch: primary default-branch commit cannot be resolved
+spawned alpha harness=claude kind=secondmate mode=secondmate yolo=off window=firstmate:fm-alpha worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+exit=0
+$ TMUX=$LAB/tmux/dead-preboot-sock,4242,0 FM_HOME=$LAB bin/fm-spawn.sh beta $SMR/beta --secondmate
+fm-gate-refuse: gate agent lifecycle permitted only against lab home $LAB
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+warning: secondmate beta sync skipped before launch: primary default-branch commit cannot be resolved
+spawned beta harness=claude kind=secondmate mode=secondmate yolo=off window=firstmate:fm-beta worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+exit=0
+## lab tmux server (TMUX_TMPDIR=$LAB/tmux, no TMUX) after both spawns:
+firstmate:zsh cwd=/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4Z39MWRHKH2BX5WJM1GZHPC cmd=zsh
+firstmate:fm-alpha cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha cmd=2.1.300
+firstmate:fm-beta cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta cmd=2.1.300
+## state/alpha.meta
+window=firstmate:fm-alpha
+endpoint_task_id=alpha
+worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+project=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+harness=claude
+kind=secondmate
+mode=secondmate
+yolo=off
+tasktmp=/tmp/fm-alpha
+model=default
+effort=default
+spawn_gen=s1792047995.42600.18077
+home=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+projects=
+## state/beta.meta
+window=firstmate:fm-beta
+endpoint_task_id=beta
+worktree=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+project=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+harness=claude
+kind=secondmate
+mode=secondmate
+yolo=off
+tasktmp=/tmp/fm-beta
+model=default
+effort=default
+spawn_gen=s1792048007.53940.14857
+home=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+projects=

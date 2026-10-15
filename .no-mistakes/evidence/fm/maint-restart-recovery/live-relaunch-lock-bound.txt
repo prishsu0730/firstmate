@@ -1,0 +1,14 @@
+## Scenario: watcher-timed relaunch (timeout=4s) while another relaunch holds $STATE/.secondmate-relaunch.lock
+lock holder pid: 90325
+ledger before: [1792048053	attempt 1792048056	relaunched ]
+probe status=relaunchable state=dead
+relaunch rc=1 status=skipped waited=4s
+reason=relaunch lock $LAB/state/.secondmate-relaunch.lock still held by pid 90325 after 4s; endpoint left dead
+ledger after: [1792048053	attempt 1792048056	relaunched ]
+fm-alpha cmd=zsh
+## After the holder released the lock: same timed relaunch (timeout=60s)
+probe status=relaunchable state=dead
+relaunch rc=0 status=relaunchable
+ledger after: [1792048053	attempt 1792048056	relaunched 1792048263	attempt 1792048266	relaunched ]
+fm-alpha cmd=2.1.300 cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+ls: $LAB/state/.secondmate-relaunch.lock: No such file or directory

@@ -1,0 +1,85 @@
+## Scenario: after a simulated reboot (lab tmux server killed), session-start bootstrap runs with stale TMUX=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.7bntYQ/tmux/tmux-501/default,44000,0
+$ TMUX=<dead socket> FM_HOME=$LAB bin/fm-bootstrap.sh | grep -E 'SECONDMATE|secondmate'
+bootstrap exit=0
+SECONDMATE_SYNC: secondmate alpha: skipped: primary default-branch commit cannot be resolved
+SECONDMATE_SYNC: secondmate beta: skipped: primary default-branch commit cannot be resolved
+## lab tmux server after bootstrap:
+firstmate:zsh cwd=/Users/priscillahsu/.no-mistakes/worktrees/6548ae86a5f1/01M4Z39MWRHKH2BX5WJM1GZHPC cmd=zsh
+firstmate:fm-alpha cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha cmd=2.1.300
+firstmate:fm-beta cwd=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta cmd=2.1.300
+fm-alpha agent env:
+FM_HOME=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+PWD=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/alpha
+fm-beta agent env:
+FM_HOME=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+PWD=/private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab-sm.w80N3j/beta
+## state/.secondmate-relaunch-alpha
+1792048053	attempt
+1792048056	relaunched
+## state/.secondmate-relaunch-beta
+1792048056	attempt
+1792048060	relaunched
+home-summary-refresh alpha exit=0
+home-summary-refresh beta exit=0
+$ FM_HOME=$LAB bin/fm-bearings-snapshot.sh --all-unhealthy --json | jq secondmate-home endpoints
+jq: error (at <stdin>:85): Cannot iterate over null (null)
+home-summary-refresh alpha rc=0
+home-summary-refresh beta rc=0
+$ FM_HOME=$LAB bin/fm-bearings-snapshot.sh --all-unhealthy --json  (secondmates + secondmate-home unhealthy endpoints)
+{
+  "secondmates": [
+    {
+      "id": "alpha",
+      "state": "unknown",
+      "reason": "structured home state invalid: child current state unavailable: w-alpha"
+    },
+    {
+      "id": "beta",
+      "state": "unknown",
+      "reason": "structured home state invalid: child current state unavailable: w-beta"
+    }
+  ],
+  "unhealthy_worker_endpoints": []
+}
+$ FM_HOME=$LAB bin/fm-bearings-snapshot.sh --all-unhealthy  (human view)
+schema: fm-bearings.v1
+home: /fm-lab.7bntYQ
+generated: "2026-10-15T07:08:35Z"
+prs: "not_requested (run: /bearings include PRs)"
+contributions: 
+  scope: owned contributions per home
+  known: 0
+  checked: 0
+  counts: 
+    captain: 0
+    fleet: 0
+    maintainer: 0
+    nobody: 0
+  complete: false
+  proven_clear: false
+  unmeasured_homes: 0
+  unreadable_records: 1
+  unmeasured: 0
+  stale_verdicts: 0
+  missing_verdicts: 0
+  captain_omitted: 0
+  captain: []
+in_flight: []
+secondmates[2]{id,state,doing,provenance,freshness,age_seconds,contradiction,reason}:
+  alpha,unknown,"structured home state invalid: child current state unavailable: w-alpha",structured-home,fresh,3,false,"structured home state invalid: child current state unavailable: w-alpha"
+  beta,unknown,"structured home state invalid: child current state unavailable: w-beta",structured-home,fresh,2,false,"structured home state invalid: child current state unavailable: w-beta"
+secondmate_reconcile[2]{id,spawn_gen,host,kind,ids}:
+  alpha,s1792048054.5538.1888,null,child_current_unavailable,"[\"w-alpha\"]"
+  beta,s1792048058.9642.16332,null,child_current_unavailable,"[\"w-beta\"]"
+decisions_open: []
+landed: []
+gates: []
+reports: []
+recorded_prs: []
+omitted[6]{surface,reveal}:
+  backlog item bodies,"--fields bodies"
+  task paths,"--fields paths"
+  watch/steer actions,"--fields actions"
+  healthy endpoint detail,"--fields endpoints"
+  full scout-report inventory,"--all-reports"
+  live PR discovery + checks,"--include-prs"
