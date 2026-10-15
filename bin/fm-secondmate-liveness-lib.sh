@@ -262,8 +262,9 @@ fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
 # Acts on a `relaunchable` probe verdict for <id>: kills a confirmed-dead local
 # endpoint first (FM_SM_LIVE_KILL), records the attempt and its outcome in the
 # per-mate ledger, then runs the guarded secondmate spawn. A positive timeout
-# wraps the spawn in fm_run_timed so a watcher poll stays bounded; 124/137 mean
-# the bound fired. Returns the spawn exit status; combined spawn output is in
+# bounds both the wait for the home-wide relaunch lock and the spawn (through
+# fm_run_timed) so a watcher poll stays bounded; 124/137 mean the spawn bound
+# fired, and a lock still held past the bound becomes a skipped verdict. Returns the spawn exit status; combined spawn output is in
 # FM_SM_LIVE_OUT and the status in FM_SM_LIVE_RC. When the ledger cannot be
 # read or the attempt row cannot be appended, nothing is killed or spawned: the verdict becomes
 # FM_SM_LIVE_STATUS=skipped with FM_SM_LIVE_REASON set and this returns 1.
@@ -295,7 +296,17 @@ fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs]
   fi
   local rc=0
   fm_sm_live_require_locks || return 1
-  fm_lock_acquire_wait "$STATE/.secondmate-relaunch.lock"
+  if [ -n "$timeout" ]; then
+    if ! fm_lock_acquire_wait_bounded "$STATE/.secondmate-relaunch.lock" "$timeout"; then
+      FM_SM_LIVE_STATUS=skipped
+      FM_SM_LIVE_REASON="relaunch lock $STATE/.secondmate-relaunch.lock still held by pid ${FM_LOCK_HELD_PID:-unknown} after ${timeout}s; endpoint left $FM_SM_LIVE_STATE"
+      FM_SM_LIVE_RC=1
+      fm_secondmate_liveness_ledger_add "$id" failed || true
+      return 1
+    fi
+  else
+    fm_lock_acquire_wait "$STATE/.secondmate-relaunch.lock"
+  fi
   if [ -n "$timeout" ]; then
     FM_SM_LIVE_OUT=$(FM_SPAWN_NO_GUARD=1 fm_run_timed "$timeout" "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1) || rc=$?
   else

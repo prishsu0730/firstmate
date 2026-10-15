@@ -411,6 +411,49 @@ test_sweep_skips_mate_whose_liveness_lock_is_held() {
   pass "sweep: a mate mid-episode under the shared liveness lock is skipped entirely"
 }
 
+# A timed relaunch (the watcher's) must not wait past its bound on the home-wide
+# relaunch lock another relaunch still holds: it skips with the holder named and
+# never spawns.
+test_timed_relaunch_bounds_its_wait_on_the_relaunch_lock() {
+  local w fb tmuxfb log out holder i=0
+  w=$(new_world relaunch-lock-bounded)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  ( STATE="$w/home/state" bash -c \
+      '. "$1" && fm_lock_acquire_wait "$2" && sleep 30' \
+      _ "$ROOT/bin/fm-wake-lib.sh" "$w/home/state/.secondmate-relaunch.lock" ) &
+  holder=$!
+  while [ ! -d "$w/home/state/.secondmate-relaunch.lock" ] && [ "$i" -lt 100 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -d "$w/home/state/.secondmate-relaunch.lock" ] || fail "the fixture never acquired the relaunch lock"
+
+  out=$(PATH="$tmuxfb:$fb:$BASE_PATH" TMUX='' FM_BACKEND=tmux FM_HOME="$w/home" STATE="$w/home/state" FM_ROOT="$ROOT" \
+    FM_TEST_PANE_CMD=missing FM_TMUX_CALL_LOG="$log" \
+    bash -c '. "$1/bin/fm-secondmate-liveness-lib.sh"
+      FM_SM_LIVE_KILL=0 FM_SM_LIVE_STATE=missing
+      start=$SECONDS
+      if fm_secondmate_liveness_relaunch "$2" sm1 1; then rc=0; else rc=$?; fi
+      printf "%s|%s|%s|%s" "$rc" "$FM_SM_LIVE_STATUS" "$((SECONDS - start))" "$FM_SM_LIVE_REASON"' \
+      _ "$ROOT" "$w/home/state/sm1.meta" 2>&1)
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  case "$out" in
+    "1|skipped|"*"|relaunch lock $w/home/state/.secondmate-relaunch.lock still held by pid "*" after 1s; endpoint left missing") ;;
+    *) fail "a timed relaunch behind a held relaunch lock should skip with the holder named: $out" ;;
+  esac
+  out=${out#1|skipped|}
+  [ "${out%%|*}" -lt 10 ] || fail "a timed relaunch waited ${out%%|*}s on the relaunch lock, past its 1s bound"
+  assert_not_contains "$(cat "$log")" "new-window" "a timed relaunch that never got the relaunch lock must not spawn"
+  assert_grep 'failed' "$w/home/state/.secondmate-relaunch-sm1" \
+    "a relaunch skipped on the lock bound should record its failed outcome in the ledger"
+  pass "relaunch: a timed relaunch skips instead of waiting past its bound on a held relaunch lock"
+}
+
 test_sweep_refuses_relaunch_on_ledger_errors() {
   local w fb tmuxfb log out mode ledger word
   if [ "$(id -u)" -eq 0 ]; then
@@ -552,14 +595,27 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
 }
 
 # The 2026-10-14 restart: the primary's restored terminal still names a tmux
-# server that died with the reboot, and two secondmates' windows are gone. The
-# session-start sweep must bring each one back in its own home, or name each
-# one that cannot return and why.
+# server that died with the reboot, and two secondmates' windows are gone along
+# with one worker window in each secondmate home. The session-start sweep must
+# bring each secondmate back in its own home, or name each one that cannot
+# return and why; /bearings must name each still-dead worker under its own
+# secondmate home, never the other one.
 test_sweep_restart_recovers_two_secondmates_into_their_own_homes() {
-  local w fb tmuxfb log out id other id_real other_real launch
+  local w fb tmuxfb log out id other id_real other_real launch unhealthy
   w=$(new_world sweep-restart-two)
   add_sm_home "$w" alpha firstmate:fm-alpha
   add_sm_home "$w" beta firstmate:fm-beta
+  mkdir -p "$w/home/data"
+  for id in alpha beta; do
+    printf -- '- %s - restart fixture (home: %s; scope: restart; projects: firstmate; added 2026-10-14)\n' \
+      "$id" "$w/$id" >> "$w/home/data/secondmates.md"
+    printf '## In flight\n- [ ] w-%s - Restart fixture work (repo: firstmate) (kind: ship) (since 2026-10-14)\n\n## Queued\n\n## Done\n' \
+      "$id" > "$w/$id/data/backlog.md"
+    mkdir -p "$w/$id/projects/w-$id"
+    fm_write_meta "$w/$id/state/w-$id.meta" \
+      "window=firstmate:fm-w-$id" "worktree=$w/$id/projects/w-$id" "project=firstmate" \
+      "harness=claude" "kind=ship" "mode=no-mistakes"
+  done
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
@@ -577,13 +633,25 @@ test_sweep_restart_recovers_two_secondmates_into_their_own_homes() {
     assert_not_contains "$launch" "-c $other_real" "secondmate $id relaunched in $other's home: $launch"
   done
 
+  for id in alpha beta; do
+    PATH="$tmuxfb:$fb:$BASE_PATH" TMUX='' FM_TEST_PANE_CMD=missing FM_TMUX_CALL_LOG="$log" \
+      FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/$id" "$ROOT/bin/fm-home-summary-refresh.sh" >/dev/null 2>&1 \
+      || fail "secondmate $id home summary did not refresh after the restart"
+  done
+  unhealthy=$(PATH="$tmuxfb:$fb:$BASE_PATH" TMUX='' FM_TEST_PANE_CMD=missing FM_TMUX_CALL_LOG="$log" \
+    FM_HOME="$w/home" "$ROOT/bin/fm-bearings-snapshot.sh" --all-unhealthy --json 2>/dev/null \
+    | jq -c '[.unhealthy_endpoints[] | select(.backend == "secondmate-home") | {id, target, exists}] | sort_by(.id)') \
+    || fail "bearings could not report worker endpoints after the restart"
+  [ "$unhealthy" = '[{"id":"alpha/w-alpha","target":"firstmate:fm-w-alpha","exists":false},{"id":"beta/w-beta","target":"firstmate:fm-w-beta","exists":false}]' ] \
+    || fail "bearings should name each dead worker once under its own secondmate home: $unhealthy"
+
   : > "$log"
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" missing "$log" TMUX='/tmp/tmux-dead/default,1,0' FM_TEST_FAIL_NEW_WINDOW=1)
   for id in alpha beta; do
     assert_contains "$out" "SECONDMATE_LIVENESS: secondmate $id: respawn failed after recorded endpoint confidently missing" \
       "a secondmate that cannot return after a restart should be named with its reason: $out"
   done
-  pass "sweep: a restart with a stale tmux socket returns two secondmates to their own homes or names each failure"
+  pass "sweep: a restart with a stale tmux socket returns two secondmates to their own homes or names each failure, and bearings names each dead worker under its own home"
 }
 
 test_sweep_converges_no_retouch_once_alive() {
@@ -756,6 +824,7 @@ test_sweep_never_acts_on_transient_unreadability
 test_sweep_reports_missing_endpoint_relaunch_failure
 test_sweep_never_acts_on_unverified_harness_dead_reading
 test_sweep_restart_recovers_two_secondmates_into_their_own_homes
+test_timed_relaunch_bounds_its_wait_on_the_relaunch_lock
 test_sweep_converges_no_retouch_once_alive
 test_sweep_skipped_under_detect_only
 test_sweep_noop_with_no_secondmate_meta
