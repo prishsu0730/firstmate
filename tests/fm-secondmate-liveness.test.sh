@@ -265,7 +265,9 @@ SH
 
 # make_liveness_tmux <dir>: a controllable tmux stub. FM_TEST_PANE_CMD may be
 # a foreground command, `missing` (readable inventory omits the window), or
-# `unreadable` (both pane and inventory reads fail).
+# `unreadable` (both pane and inventory reads fail). A nonempty TMUX models a
+# terminal restored after a reboot: its socket's server is gone, so every call
+# that follows it fails the way tmux does.
 make_liveness_tmux() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -273,6 +275,10 @@ make_liveness_tmux() {
 #!/usr/bin/env bash
 set -u
 mode=${FM_TEST_PANE_CMD:-zsh}
+if [ -n "${TMUX:-}" ]; then
+  printf '%s\n' "no server running on ${TMUX%%,*}" >&2
+  exit 1
+fi
 case "${1:-}" in
   display-message)
     for a in "$@"; do
@@ -545,6 +551,41 @@ test_sweep_never_acts_on_unverified_harness_dead_reading() {
   pass "sweep: an unverified harness blocks recovery with a concrete diagnostic"
 }
 
+# The 2026-10-14 restart: the primary's restored terminal still names a tmux
+# server that died with the reboot, and two secondmates' windows are gone. The
+# session-start sweep must bring each one back in its own home, or name each
+# one that cannot return and why.
+test_sweep_restart_recovers_two_secondmates_into_their_own_homes() {
+  local w fb tmuxfb log out id other id_real other_real launch
+  w=$(new_world sweep-restart-two)
+  add_sm_home "$w" alpha firstmate:fm-alpha
+  add_sm_home "$w" beta firstmate:fm-beta
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" missing "$log" TMUX='/tmp/tmux-dead/default,1,0' TMUX_PANE='%1')
+
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" \
+    "both secondmates should return silently after a restart: $out"
+  for id in alpha beta; do
+    case "$id" in alpha) other=beta ;; *) other=alpha ;; esac
+    id_real=$(cd "$w/$id" && pwd -P)
+    other_real=$(cd "$w/$other" && pwd -P)
+    launch=$(grep -F -- "-n fm-$id " "$log") \
+      || fail "secondmate $id was not relaunched after the restart: $(cat "$log")"
+    assert_contains "$launch" "-c $id_real" "secondmate $id did not relaunch in its own home: $launch"
+    assert_not_contains "$launch" "-c $other_real" "secondmate $id relaunched in $other's home: $launch"
+  done
+
+  : > "$log"
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" missing "$log" TMUX='/tmp/tmux-dead/default,1,0' FM_TEST_FAIL_NEW_WINDOW=1)
+  for id in alpha beta; do
+    assert_contains "$out" "SECONDMATE_LIVENESS: secondmate $id: respawn failed after recorded endpoint confidently missing" \
+      "a secondmate that cannot return after a restart should be named with its reason: $out"
+  done
+  pass "sweep: a restart with a stale tmux socket returns two secondmates to their own homes or names each failure"
+}
+
 test_sweep_converges_no_retouch_once_alive() {
   local w fb tmuxfb log out1 out2
   w=$(new_world sweep-idempotent)
@@ -714,6 +755,7 @@ test_sweep_never_acts_on_ambiguous_existing_process
 test_sweep_never_acts_on_transient_unreadability
 test_sweep_reports_missing_endpoint_relaunch_failure
 test_sweep_never_acts_on_unverified_harness_dead_reading
+test_sweep_restart_recovers_two_secondmates_into_their_own_homes
 test_sweep_converges_no_retouch_once_alive
 test_sweep_skipped_under_detect_only
 test_sweep_noop_with_no_secondmate_meta

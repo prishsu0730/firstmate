@@ -71,20 +71,24 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # "firstmate" session exists. Mirrors fm-spawn.sh's container-ensure block;
 # prints the resolved session name.
 fm_backend_tmux_container_ensure() {
-  local session
   if [ -n "${TMUX:-}" ]; then
-    session=$(tmux display-message -p '#S' 2>/dev/null) || session=
-    if [ -n "$session" ]; then
-      printf '%s' "$session"
-      return 0
-    fi
-    # A terminal restored after a reboot can retain TMUX even though the server
-    # named by its socket no longer exists.  Do not let that stale client route
-    # the recovery session or its workers into another home's terminal.
-    unset TMUX
+    tmux display-message -p '#S'
+  else
+    tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
+    printf 'firstmate'
   fi
-  tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
-  printf 'firstmate'
+}
+
+# fm_backend_tmux_clear_stale_client_env: a terminal restored after a reboot
+# can retain TMUX even though the server named by its socket no longer exists,
+# and every later tmux call without -S/-L would follow it to that dead socket.
+# Drop the stale client variables so tmux falls back to the default socket.
+# Must run in the caller's own shell (never a command substitution), so the
+# unset reaches every later tmux call of that process.
+fm_backend_tmux_clear_stale_client_env() {
+  [ -n "${TMUX:-}" ] || return 0
+  [ -n "$(tmux display-message -p '#S' 2>/dev/null)" ] && return 0
+  unset TMUX TMUX_PANE
 }
 
 # fm_backend_tmux_create_task: create the task's window in <proj-abs>,

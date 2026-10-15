@@ -44,6 +44,10 @@
 # Concurrency: fm_secondmate_liveness_lock serializes probe+kill+relaunch per
 # task across the bootstrap sweep and the watcher tick, so a concurrent
 # relaunch can never be observed mid-flight as a dead endpoint and killed.
+# The spawn step itself also waits on one home-wide relaunch lock: each
+# relaunch is a fresh spawn, and fm-spawn refuses (never waits) while another
+# fresh spawn holds this home's task-set lock, so mates found dead together
+# after a restart must take turns instead of all but one being refused.
 # The attempt ledger (.secondmate-relaunch-<id>, one line per attempt plus one
 # per outcome) is both the durable relaunch record and the input to the
 # watcher's relaunch bound; teardown removes it.
@@ -290,11 +294,14 @@ fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs]
     [ -z "$target" ] || fm_backend_kill "$backend" "$target" 2>/dev/null || true
   fi
   local rc=0
+  fm_sm_live_require_locks || return 1
+  fm_lock_acquire_wait "$STATE/.secondmate-relaunch.lock"
   if [ -n "$timeout" ]; then
     FM_SM_LIVE_OUT=$(FM_SPAWN_NO_GUARD=1 fm_run_timed "$timeout" "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1) || rc=$?
   else
     FM_SM_LIVE_OUT=$(FM_SPAWN_NO_GUARD=1 "$FM_ROOT/bin/fm-spawn.sh" "$id" --secondmate 2>&1) || rc=$?
   fi
+  fm_lock_release "$STATE/.secondmate-relaunch.lock" 2>/dev/null || true
   FM_SM_LIVE_RC=$rc
   if [ "$rc" -eq 0 ]; then
     fm_secondmate_liveness_ledger_add "$id" relaunched || true
