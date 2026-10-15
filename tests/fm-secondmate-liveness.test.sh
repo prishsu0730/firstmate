@@ -434,7 +434,7 @@ test_timed_relaunch_bounds_its_wait_on_the_relaunch_lock() {
   out=$(PATH="$tmuxfb:$fb:$BASE_PATH" TMUX='' FM_BACKEND=tmux FM_HOME="$w/home" STATE="$w/home/state" FM_ROOT="$ROOT" \
     FM_TEST_PANE_CMD=missing FM_TMUX_CALL_LOG="$log" \
     bash -c '. "$1/bin/fm-secondmate-liveness-lib.sh"
-      FM_SM_LIVE_KILL=0 FM_SM_LIVE_STATE=missing
+      FM_SM_LIVE_KILL=1 FM_SM_LIVE_STATE=dead
       start=$SECONDS
       if fm_secondmate_liveness_relaunch "$2" sm1 1; then rc=0; else rc=$?; fi
       printf "%s|%s|%s|%s" "$rc" "$FM_SM_LIVE_STATUS" "$((SECONDS - start))" "$FM_SM_LIVE_REASON"' \
@@ -443,14 +443,15 @@ test_timed_relaunch_bounds_its_wait_on_the_relaunch_lock() {
   wait "$holder" 2>/dev/null || true
 
   case "$out" in
-    "1|skipped|"*"|relaunch lock $w/home/state/.secondmate-relaunch.lock still held by pid "*" after 1s; endpoint left missing") ;;
+    "1|skipped|"*"|relaunch lock $w/home/state/.secondmate-relaunch.lock still held by pid "*" after 1s; endpoint left dead") ;;
     *) fail "a timed relaunch behind a held relaunch lock should skip with the holder named: $out" ;;
   esac
   out=${out#1|skipped|}
   [ "${out%%|*}" -lt 10 ] || fail "a timed relaunch waited ${out%%|*}s on the relaunch lock, past its 1s bound"
   assert_not_contains "$(cat "$log")" "new-window" "a timed relaunch that never got the relaunch lock must not spawn"
-  assert_grep 'failed' "$w/home/state/.secondmate-relaunch-sm1" \
-    "a relaunch skipped on the lock bound should record its failed outcome in the ledger"
+  assert_not_contains "$(cat "$log")" "kill-window" "a timed relaunch that never got the relaunch lock must not kill"
+  [ ! -s "$w/home/state/.secondmate-relaunch-sm1" ] \
+    || fail "a relaunch skipped on the lock bound must not spend attempt budget: $(cat "$w/home/state/.secondmate-relaunch-sm1")"
   pass "relaunch: a timed relaunch skips instead of waiting past its bound on a held relaunch lock"
 }
 
