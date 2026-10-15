@@ -71,12 +71,20 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # "firstmate" session exists. Mirrors fm-spawn.sh's container-ensure block;
 # prints the resolved session name.
 fm_backend_tmux_container_ensure() {
+  local session
   if [ -n "${TMUX:-}" ]; then
-    tmux display-message -p '#S'
-  else
-    tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
-    printf 'firstmate'
+    session=$(tmux display-message -p '#S' 2>/dev/null) || session=
+    if [ -n "$session" ]; then
+      printf '%s' "$session"
+      return 0
+    fi
+    # A terminal restored after a reboot can retain TMUX even though the server
+    # named by its socket no longer exists.  Do not let that stale client route
+    # the recovery session or its workers into another home's terminal.
+    unset TMUX
   fi
+  tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
+  printf 'firstmate'
 }
 
 # fm_backend_tmux_create_task: create the task's window in <proj-abs>,
