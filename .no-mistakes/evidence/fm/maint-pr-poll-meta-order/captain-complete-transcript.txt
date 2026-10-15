@@ -1,0 +1,115 @@
+===== NEW (665b767) scenario=fresh
+--- before complete
+PR poll: VALID
+$ fm-captain-hold.sh complete demo-origin call-a
+complete: demo-origin captain-call inventory reviewed (call-a)
+exit=0
+--- meta after complete
+window=firstmate:fm-demo-origin
+worktree=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/new/home-fresh/projects/x
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/new/home-fresh/projects/sample
+harness=codex
+kind=ship
+mode=ship
+spawn_gen=fx
+decisions_reviewed=1
+decision_keys=call-a
+pr=https://github.com/sample/sample/pull/54
+pr_head=1111111111111111111111111111111111111111
+PR poll: VALID
+last decision_keys line (what meta_value reads): decision_keys=call-a
+===== OLD (d6ac5f2) scenario=fresh
+--- before complete
+PR poll: VALID
+$ fm-captain-hold.sh complete demo-origin call-a
+complete: demo-origin captain-call inventory reviewed (call-a)
+exit=0
+--- meta after complete
+window=firstmate:fm-demo-origin
+worktree=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/old/home-fresh/projects/x
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/old/home-fresh/projects/sample
+harness=codex
+kind=ship
+mode=ship
+spawn_gen=fx
+pr=https://github.com/sample/sample/pull/54
+pr_head=1111111111111111111111111111111111111111
+decisions_reviewed=1
+decision_keys=call-a
+PR poll: INVALID
+last decision_keys line (what meta_value reads): decision_keys=call-a
+===== NEW (665b767) scenario=repair
+--- before complete (meta already broken by the old bug)
+window=firstmate:fm-demo-origin
+worktree=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/new/home-repair/projects/x
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/new/home-repair/projects/sample
+harness=codex
+kind=ship
+mode=ship
+spawn_gen=fx
+pr=https://github.com/sample/sample/pull/54
+pr_head=1111111111111111111111111111111111111111
+decisions_reviewed=1
+decision_keys=call-a
+PR poll: INVALID
+$ fm-captain-hold.sh complete demo-origin call-b
+complete: demo-origin captain-call inventory reviewed (call-a,call-b)
+exit=0
+--- meta after complete
+window=firstmate:fm-demo-origin
+worktree=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/new/home-repair/projects/x
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/new/home-repair/projects/sample
+harness=codex
+kind=ship
+mode=ship
+spawn_gen=fx
+decisions_reviewed=1
+decision_keys=call-a,call-b
+pr=https://github.com/sample/sample/pull/54
+pr_head=1111111111111111111111111111111111111111
+PR poll: VALID
+last decision_keys line (what meta_value reads): decision_keys=call-a,call-b
+===== OLD (d6ac5f2) scenario=repair
+--- before complete (meta already broken by the old bug)
+window=firstmate:fm-demo-origin
+worktree=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/old/home-repair/projects/x
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/old/home-repair/projects/sample
+harness=codex
+kind=ship
+mode=ship
+spawn_gen=fx
+pr=https://github.com/sample/sample/pull/54
+pr_head=1111111111111111111111111111111111111111
+decisions_reviewed=1
+decision_keys=call-a
+PR poll: INVALID
+$ fm-captain-hold.sh complete demo-origin call-b
+complete: demo-origin captain-call inventory reviewed (call-a,call-b)
+exit=0
+--- meta after complete
+window=firstmate:fm-demo-origin
+worktree=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/old/home-repair/projects/x
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-test-cap.4t5iAe/old/home-repair/projects/sample
+harness=codex
+kind=ship
+mode=ship
+spawn_gen=fx
+pr=https://github.com/sample/sample/pull/54
+pr_head=1111111111111111111111111111111111111111
+decisions_reviewed=1
+decision_keys=call-a
+decisions_reviewed=1
+decision_keys=call-a,call-b
+PR poll: INVALID
+last decision_keys line (what meta_value reads): decision_keys=call-a,call-b
+===== NEW scenario=no-pr (two completions, no PR block)
+complete: o1 captain-call inventory reviewed (c1)
+complete: o1 captain-call inventory reviewed (c1,c2)
+--- meta
+window=firstmate:fm-o1
+kind=scout
+mode=scout
+spawn_gen=fx
+decisions_reviewed=1
+decision_keys=c1,c2
+leftover staging files: 0
