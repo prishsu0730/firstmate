@@ -1788,6 +1788,35 @@ reconcile_note() {
   printf 'still-open: %s\n' "$id"
 }
 
+record_completion_inventory() {  # <meta> <keys>
+  local meta=$1 keys=$2 tmp pr_tmp line in_pr=0
+  tmp=$(mktemp "$STATE/.fm-captain-complete-meta.XXXXXX") \
+    || fail "cannot stage captain-call inventory metadata"
+  pr_tmp=$(mktemp "$STATE/.fm-captain-complete-pr.XXXXXX") || {
+    rm -f -- "$tmp"
+    fail "cannot stage captain-call inventory metadata"
+  }
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      pr=*) in_pr=1 ;;
+    esac
+    if [ "$in_pr" = 1 ]; then
+      printf '%s\n' "$line" >> "$pr_tmp"
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$meta"
+  if ! {
+    printf 'decisions_reviewed=1\n'
+    printf 'decision_keys=%s\n' "$keys"
+    cat "$pr_tmp"
+  } >> "$tmp" || ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$meta"; then
+    rm -f -- "$tmp" "$pr_tmp"
+    fail "could not record captain-call inventory metadata"
+  fi
+  rm -f -- "$pr_tmp"
+}
+
 command_complete() {
   local origin=${1:-} meta previous='' supplied='' keys='' entry key status_file open has_meta=0 transfer_rc transfers=() resolved
   local resolved_how attested_by_prefix='' origin_state unrecorded_origin=''
@@ -1845,7 +1874,7 @@ EOF
 
   if [ "$has_meta" = 1 ]; then
     if [ "$(meta_value "$meta" decisions_reviewed)" != 1 ] || [ "$previous" != "$keys" ]; then
-      printf 'decisions_reviewed=1\ndecision_keys=%s\n' "$keys" >> "$meta"
+      record_completion_inventory "$meta" "$keys"
     fi
     fm_lock_release "$CAPTAIN_META_LOCK"
     CAPTAIN_META_LOCK_HELD=0
