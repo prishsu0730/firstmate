@@ -5543,7 +5543,7 @@ test_reliability_reconciles_status_and_activity() {
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" task)
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task busy --gen "$gen" --source claude-hook --event user-prompt-submit
   now=$(date +%s)
-  printf 'paused [at=%s]: finished\n' "$now" > "$d/state/task.status"
+  printf 'paused [at=%s]: finished\n' "$((now + 1))" > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)
   assert_contains "$out" 'state: done' 'saved scout report and finished declaration should survive a stale busy hook'
 
@@ -5576,6 +5576,9 @@ test_reliability_reconciles_status_and_activity() {
   assert_contains "$out" 'state: conflict' 'newer busy activity contradicts an older pause'
   assert_contains "$out" 'status' 'conflict names the status source'
   assert_contains "$out" 'pane' 'conflict names the activity source'
+  printf 'paused [at=%s]: finished\n' "$(date +%s)" > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: conflict' 'equal-second status and busy evidence cannot establish ordering'
   printf 'paused: time unavailable\n' > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)
   assert_contains "$out" 'state: conflict' 'unorderable status and busy signals remain a conflict'

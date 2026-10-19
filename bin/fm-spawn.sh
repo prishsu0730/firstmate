@@ -1670,7 +1670,7 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 spawn_refuse_if_away_spend_cap() {
-  local cap live meta task_id verdict inventory session window
+  local cap live meta task_id verdict
   [ "$RELAUNCH" -ne 1 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ -f "$STATE/.afk-contract" ] || return 0
@@ -1691,23 +1691,7 @@ spawn_refuse_if_away_spend_cap() {
       && fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1; then
       verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
     fi
-    case "$verdict" in
-      dead) continue ;;
-      missing)
-        # A failed server connection does not prove which tmux server held the
-        # task. Only a successful inventory omitting its exact window proves
-        # absence; every other backend or failed inventory stays unknown.
-        if [ "$FM_BACKEND_VALIDATED_BACKEND" = tmux ]; then
-          session=${FM_BACKEND_VALIDATED_TARGET%%:*}
-          window=${FM_BACKEND_VALIDATED_TARGET#*:}
-          if fm_backend_source tmux \
-            && inventory=$(fm_backend_tmux_window_inventory "$session") \
-            && ! printf '%s\n' "$inventory" | grep -Fxq -- "$window"; then
-            continue
-          fi
-        fi
-        ;;
-    esac
+    [ "$verdict" != dead ] || continue
     live=$((live + 1))
   done
   if [ "$live" -ge "$cap" ]; then

@@ -216,6 +216,21 @@ run() {  # <home> <fakebin> <args...>
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEARINGS_NOW=2026-07-11T18:00:00Z NET_LOG="$home/net.log" "$BEARINGS" "$@"
 }
 
+test_conflict_keeps_open_decision() {
+  local home fakebin json
+  home=$(make_home conflict-decision)
+  write_fixture "$home"
+  printf 'needs-decision [at=1, key=route]: choose the route\n' > "$home/state/ship-task.status"
+  fakebin=$(make_fakebin "$home")
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    .tasks[] | select(.id == "ship-task")
+    | .current_state.state == "conflict"
+      and (.hints.open_decisions | any(.key == "route" and .verb == "needs-decision"))
+  ' >/dev/null || fail "a worker conflict hid its unresolved decision: $json"
+  pass 'worker conflicts preserve their open captain decisions'
+}
+
 run_captain() {  # <home> <fakebin> <command args...>
   local home=$1 fakebin=$2
   shift 2
@@ -3542,6 +3557,7 @@ test_main_captain_readiness_matches_secondmate_projection
 test_held_child_states_survive_queued_hold_bound
 test_completed_scout_report_not_pending
 test_open_decision_surfaces_end_to_end
+test_conflict_keeps_open_decision
 test_report_pointers_surface
 test_queued_item_prose_never_hides_it
 test_include_prs_is_the_only_fetch_path

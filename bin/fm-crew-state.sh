@@ -1327,7 +1327,7 @@ if [ "$KIND" != secondmate ]; then
           if [ -z "$LOG_EPOCH" ] || [ -z "$BUSY_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); timestamp evidence unavailable"
           fi
-          if [ "$BUSY_EPOCH" -gt "$LOG_EPOCH" ]; then
+          if [ "$BUSY_EPOCH" -ge "$LOG_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }), activity newer than status"
           fi
           if scout_finished_evidence; then

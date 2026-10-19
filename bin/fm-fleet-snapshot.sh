@@ -821,6 +821,7 @@ task_json_lines() {
     open_decisions_tsv=$(status_open_decisions "$status_log" "$kind")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
+           && [ "$current_state" != conflict ] \
            && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
@@ -1074,10 +1075,11 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
            | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
               blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
               reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $child_holds
-    | ([ $owned_in_flight[] as $work
+    | ($child_holds + [ $owned_in_flight[] as $work
          | select($work.current_role == "held")
          | $tasks[]
          | select(.id == $work.id)
+         | select(.id as $id | [$child_holds[].id] | index($id) | not)
          | {id,title:((.backlog.title // .id) | trunc(90)),state:.current_state.state,kind,
             reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $held_workers
     | ($child_holds + [ $queued_all[]

@@ -1572,11 +1572,10 @@ FAKE
     out=$(PATH="$fakebin:$PATH" FM_TEST_ENDPOINT="$mode" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
       "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
     case "$mode" in
-      missing) assert_not_contains "$out" 'caps concurrent workers' 'proven absent workers must not consume capacity' ;;
-      live|unknown|no_server) assert_contains "$out" 'caps concurrent workers' "$mode workers must consume capacity" ;;
+      missing|live|unknown|no_server) assert_contains "$out" 'caps concurrent workers' "$mode workers without a dead verdict must consume capacity" ;;
     esac
   done
-  pass 'away capacity excludes absent endpoints and counts live and unknown endpoints'
+  pass 'away capacity counts endpoints unless their agent process is proven dead'
 }
 
 test_away_cap_counts_only_live_or_unknown_endpoints
