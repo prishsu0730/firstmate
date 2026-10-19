@@ -2065,7 +2065,7 @@ Whether a captured result is a routine no-op is adapter knowledge too, and the r
 
 **Lavish silence rules**
 
-- For Lavish that verdict covers two shapes - a session the adapter classifies `ended` that carries no queued content block at all, which is a review surface closed with nothing said, and `browser_disconnected` (classified `disconnected`), which carries no answer while the session remains open.
+- For Lavish that verdict covers an empty `ended` session, `browser_disconnected` (classified `disconnected`), and an exact `LISTENER_ACTIVE` error with no queued content, which indicates an already-running listener rather than a new review result.
 - Any recognized top-level `prompts` or `feedback` block counts as content regardless of its declared count, and a malformed header makes the result indeterminate rather than empty.
 - A `Send & End` close carrying the captain's answer arrives as `status: feedback` with `session_ended`, so it classifies `feedback` and is announced unchanged, as is any `ended` result that still carries content, and every `waiting`, `missing`, `unknown`, or unreadable result.
 
