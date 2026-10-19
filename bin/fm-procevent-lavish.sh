@@ -660,6 +660,18 @@ cmd_silent() {
   [ "$content_rc" -eq 1 ]
 }
 
+# Whether a result repeats the previous one with nothing the captain said. A
+# byte-identical repeat is only a duplicate when it queues no prompts or
+# feedback: each Lavish poll consumes its response, so identical captain text
+# is two separate sends and always notifies. Exit 0 only when the check
+# completed and proved the repeat carries no captain content.
+cmd_unchanged() {  # <previous-result> <result>
+  [ "$#" -eq 2 ] && [ -f "$1" ] && [ ! -L "$1" ] \
+    && [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2" || return 1
+  result_has_queued_content "$2"
+  [ "$?" -eq 1 ]
+}
+
 # Print `key<TAB>answer<TAB>label[<TAB>mode]` for each non-reconcile structured choice the
 # captain submitted in a captured result; the optional mode column relays the
 # card's declared close mode (`done` or `release`) to the keyed-answer intake. The published response frames queued feedback as
@@ -965,8 +977,7 @@ case "${1-}" in
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
-  unchanged) shift; [ "$#" -eq 2 ] && [ -f "$1" ] && [ ! -L "$1" ] \
-    && [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2" ;;
+  unchanged) shift; cmd_unchanged "$@" ;;
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;

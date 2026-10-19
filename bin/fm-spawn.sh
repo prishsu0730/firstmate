@@ -1687,7 +1687,11 @@ spawn_refuse_if_away_spend_cap() {
     [ "$kind" != secondmate ] || continue
     task_id=${meta##*/}
     task_id=${task_id%.meta}
-    fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1 || continue
+    if ! fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1; then
+      # An endpoint that cannot be validated has unknown liveness, which counts.
+      live=$((live + 1))
+      continue
+    fi
     verdict=unknown
     remote_host=$(fm_meta_get "$meta" remote_host)
     if [ -z "$remote_host" ]; then

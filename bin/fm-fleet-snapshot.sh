@@ -1075,13 +1075,14 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
            | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
               blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
               reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $child_holds
-    | ($child_holds + [ $owned_in_flight[] as $work
+    | ([ $owned_in_flight[] as $work
          | select($work.current_role == "held")
          | $tasks[]
-         | select(.id == $work.id)
-         | select(.id as $id | [$child_holds[].id] | index($id) | not)
+         | select(.id == $work.id and .current_state.state != "working")
          | {id,title:((.backlog.title // .id) | trunc(90)),state:.current_state.state,kind,
-            reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $held_workers
+            reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $held_role_workers
+    | ($held_role_workers + [ $child_holds[]
+         | select(.id as $id | [$held_role_workers[].id] | index($id) | not) ]) as $held_workers
     | ($child_holds + [ $queued_all[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
          | select(.state != "in_flight" or (.id as $id | [$child_holds[].id] | index($id) | not))
@@ -1904,7 +1905,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
            trust:(if $summary_valid then "complete" else "partial-structured" end),parent_event_role:"historical-only"},
          freshness:{status:$summary_freshness,observed_at:$observed,age_seconds:$summary_age},
          active_children:$summary.active_children,
-         decisions_open:$summary.decisions_open,holds:$summary.holds,queued:$summary.queued,
+         decisions_open:$summary.decisions_open,holds:$summary.holds,held_workers:($summary.held_workers // []),queued:$summary.queued,
          contributions:($summary.contributions // null),
          landed:$summary.landed,endpoints:$summary.endpoints,counts:$summary.counts,omitted:$summary.omitted,
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan,reconciliation:$reconciliation},
@@ -1937,7 +1938,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          reconcile_inventory:(if $summary_sampled then $summary.invalidity else null end),
          provenance:{selected:$provenance,structured_home:($home | if . == "" then null else . end),parent_event_role:"fallback-only-not-current"},
          freshness:{status:$freshness,observed_at:$observed,age_seconds:$observed_age},
-         active_children:[],decisions_open:[],holds:[],queued:[],landed:[],endpoints:[],counts:{active_children:0,decisions_open:0,holds:0,queued:0,landed:0,endpoints:0},omitted:[],
+         active_children:[],decisions_open:[],holds:[],held_workers:[],queued:[],landed:[],endpoints:[],counts:{active_children:0,decisions_open:0,holds:0,queued:0,landed:0,endpoints:0},omitted:[],
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan},
          terminal_evidence:$terminal,contradiction:false}' >> "$records_file" || return 1
     fi

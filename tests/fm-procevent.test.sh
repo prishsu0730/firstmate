@@ -246,16 +246,16 @@ test_repeated_lavish_results_are_quiet() {
   [ "$count" -eq 1 ] || fail "feedback should produce one wake, got $count"
   pe "$home" start repeat-src >/dev/null
   count=$(wake_payloads "$home" | grep -c 'procevent lavish repeat-src' || true)
-  [ "$count" -eq 1 ] || fail "identical feedback produced another wake: $count"
+  [ "$count" -eq 2 ] || fail "identical captain feedback must still notify, got: $count"
   pe_register "$home" lavish repeat-src -- cat "$payload" >/dev/null
   pe "$home" start repeat-src >/dev/null
   count=$(wake_payloads "$home" | grep -c 'procevent lavish repeat-src' || true)
-  [ "$count" -eq 2 ] || fail "a new registration must not suppress its first feedback: $count"
+  [ "$count" -eq 3 ] || fail "a new registration must not suppress its first feedback: $count"
   printf 'session:\n  status: feedback\nfeedback[1]{text}:\n  changed answer\n' > "$payload"
   pe "$home" start repeat-src >/dev/null
   count=$(wake_payloads "$home" | grep -c 'procevent lavish repeat-src' || true)
-  [ "$count" -eq 3 ] || fail "changed feedback was suppressed: $count"
-  pass 'listener-active and unchanged feedback are handled without repeat wakes'
+  [ "$count" -eq 4 ] || fail "changed feedback was suppressed: $count"
+  pass 'listener-active is handled without repeat wakes and captain feedback always notifies'
 }
 
 test_repeated_lavish_results_are_quiet

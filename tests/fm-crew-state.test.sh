@@ -2574,6 +2574,31 @@ test_no_run_grok_uses_isolated_fallback() {
   pass "grok still reads working through its isolated rendered-tail fallback"
 }
 
+# A harness whose busy verdict has no timestamped hook record (grok's rendered
+# tail) cannot order itself against a stamped declaration. A worker that follows
+# its instructions - append paused, then wait on a long command - must stay a
+# quiet declared pause, not a conflict that wakes firstmate.
+test_untimed_busy_pane_keeps_a_stamped_pause_quiet() {
+  reset_fakes
+  local d out; d=$(new_case busy-grok-paused)
+  make_repo_on_branch "$d/wt" fm/feat-h4
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-h4.meta" "window=fm:fm-feat-h4" "worktree=$d/wt" "kind=ship" "harness=grok"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=1
+  FM_FAKE_BUSY_TEXT='Ctrl+c:cancel'
+  export FM_FAKE_BUSY_TEXT
+  printf 'paused [at=%s]: waiting on CI\n' "$(date +%s)" > "$d/state/feat-h4.status"
+  out=$(run_crew_state "$d" feat-h4)
+  assert_contains "$out" "state: paused" "an untimed busy pane must not turn a stamped pause into a conflict"
+  assert_contains "$out" "no ordering evidence" "the pause names why the busy pane did not override it"
+  printf 'blocked [at=%s]: stuck\n' "$(date +%s)" > "$d/state/feat-h4.status"
+  out=$(run_crew_state "$d" feat-h4)
+  assert_contains "$out" "state: conflict" "an untimed busy pane still contradicts a blocked declaration"
+  pass "an untimed busy pane keeps a stamped pause quiet"
+}
+
 test_no_run_herdr_unknown_uses_backend_capture() {
   command -v jq >/dev/null 2>&1 || { pass "herdr pane fallback skipped without jq"; return; }
   reset_fakes
@@ -5677,6 +5702,7 @@ test_permission_prompt_reads_as_named_blocker
 test_no_run_launch_prompt_parked_is_not_working
 test_no_run_footer_text_alone_is_not_working
 test_no_run_grok_uses_isolated_fallback
+test_untimed_busy_pane_keeps_a_stamped_pause_quiet
 test_no_run_herdr_unknown_uses_backend_capture
 test_no_run_herdr_cli_failure_reads_unreachable_not_gone
 test_no_run_herdr_alive_with_failed_read_stays_live

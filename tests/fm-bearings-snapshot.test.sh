@@ -220,9 +220,9 @@ test_conflict_keeps_open_decision() {
   local home fakebin json
   home=$(make_home conflict-decision)
   write_fixture "$home"
-  printf 'needs-decision [at=1, key=route]: choose the route\n' > "$home/state/ship-task.status"
+  printf 'needs-decision [at=1] [key=route]: choose the route\n' > "$home/state/ship-task.status"
   fakebin=$(make_fakebin "$home")
-  json=$(run "$home" "$fakebin" --json)
+  json=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z "$ROOT/bin/fm-fleet-snapshot.sh" --json)
   printf '%s' "$json" | jq -e '
     .tasks[] | select(.id == "ship-task")
     | .current_state.state == "conflict"
@@ -3054,14 +3054,15 @@ EOF
   ' >/dev/null || fail "held working child lost its active row: $canonical"
   printf '%s' "$canonical" | jq -e '
     .secondmate_current.records[] | select(.id == "held-mate")
-    | ([.holds[0:3][] | select(.source == "child-state") | {id,state}]
+    | ([.held_workers[] | select(.id | startswith("held-")) | {id,state}]
        == [{id:"held-paused",state:"paused"},{id:"held-done",state:"done"},{id:"held-failed",state:"failed"}])
-      and .counts.holds == 24
-      and ([.holds[] | select(.id == "held-done" or .id == "held-failed")] | length) == 2
-  ' >/dev/null || fail "queued holds hid or duplicated held child states: $(printf '%s' "$canonical" | jq -c '.secondmate_current.records[] | select(.id == "held-mate") | {holds:[.holds[] | {id,state,source}],counts}')"
+      and ([.holds[] | select(.id == "held-paused" and .source == "child-state")] | length) == 1
+      and ([.holds[] | select(.source == "child-state" and .state != "paused")] | length) == 0
+      and .counts.holds == 44
+  ' >/dev/null || fail "queued holds hid or duplicated held child states: $(printf '%s' "$canonical" | jq -c '.secondmate_current.records[] | select(.id == "held-mate") | {held_workers:[.held_workers[] | {id,state}],holds:[.holds[] | {id,state,source}],counts}')"
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
-    [.in_flight[] | select(.id | startswith("held-mate/")) | {id,state}]
+    [.in_flight[] | select(.id | startswith("held-mate/held-")) | {id,state}]
       == [{id:"held-mate/held-working",state:"working"},
           {id:"held-mate/held-paused",state:"paused"},
           {id:"held-mate/held-done",state:"done"},
