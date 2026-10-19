@@ -14,21 +14,10 @@
 # records, never from conversation memory: the archived away-posture record
 # (bin/fm-afk-contract.sh), the supervision outcome store
 # (bin/fm-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
-# status logs. Its order is fixed: supervisor health across the away window
-# first, then the captain's away instructions - their words verbatim, including
-# superseded in-session mandates - followed by the away session's account of
-# every visible action it took under them (each non-silent outcome-store row
-# from the window whose summary opens with the "per your away instructions:"
-# marker the branch prompt in bin/fm-branch-prompt.sh requires), then what is
-# waiting on the captain,
-# then what was tried and failed or could not be fixed (a supervision-host
-# latch or engine errors inside the window lead it), then landed work whose
-# task record is still live (the recorded PR carries the
-# merge-notification marker bin/fm-pr-lib.sh owns, read from durable records
-# only, never the forge - finished work that owes an ordinary teardown, which
-# is fleet work and so waits for the gate rather than holding it), then what
-# the away session handled, then cost. The health snapshot is taken BEFORE the
-# daemon shutdown so the shutdown itself cannot read as a gap.
+# status logs. Its six parts follow the bearings chat shape: Outcome, Active,
+# Waiting, Held, Needs Me, and Next. File changes are unknown unless recorded
+# for the away window.
+# The health snapshot is taken BEFORE daemon shutdown so shutdown is not a gap.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
 # live task's open blocked event must be remediated and closed with
@@ -542,7 +531,7 @@ scan_landed_awaiting_cleanup() {  # -> <task>\t<url> rows
 
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-ok>
   local evidence=$1 blockers=$2 since=$3 drain_ok=$4 now record superseded superseded_at archive_dir stamp
-  local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url drained=0 pointer
+  local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url unknown_rows drained=0 pointer
   now=$(date +%s)
   # Where main processes outcomes through the drain's BRANCH OUTCOMES section
   # (the supervision host off Pi, docs/supervision-host.md "Captain outcomes"),
@@ -565,12 +554,12 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   fi
   printf ' ===\n'
 
-  # 1. health, first, always.
-  printf 'Supervisor health:\n'
+  # Outcome: retain the pre-shutdown health snapshot and away evidence.
+  printf 'Outcome: away session ended; catch-up follows.\n  CONSTRAINT: unknown (no ranking rule recorded)\n  Supervisor health:\n'
   awk -F '\t' '$1 == "evidence" && ($2 == "health" || ($2 == "lifecycle" && ($3 ~ /^outcome store unreadable/ || $3 ~ /^status file unreadable:/ || $3 ~ /^away-posture record (unreadable|missing):/ || $3 ~ /^archived away-posture record/ || $3 ~ /^superseded away-posture record/))) { print "  - " $3 }' "$evidence"
 
-  # 2. the captain's instructions, verbatim, then the session's account.
-  printf 'Your instructions:\n'
+  # The captain's instructions, verbatim, then the session's account.
+  printf '  Your instructions:\n'
   record=""
   MANDATE_COUNT=0
   [ -z "$since" ] || record=$("$CONTRACT" archived "$since" 2>/dev/null || true)
@@ -591,8 +580,94 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
     printf '  (no away-posture record for this window; legacy away flag only)\n'
   fi
 
-  # 3. waiting on the captain.
-  printf 'Waiting on you:\n'
+  # Landed, cleanup due: finished work whose task record is still live.
+  # Listing it keeps a landed task that remains live past the return from being
+  # overlooked. The cleanup itself is ordinary fleet work and waits for the gate.
+  printf '  Recently landed (cleanup due):\n'
+  count=0
+  while IFS="$(printf '\t')" read -r task url; do
+    [ -n "$task" ] || continue
+    count=$((count + 1))
+    printf '  - %s: %s is merged and the worker is still up; close it with bin/fm-teardown.sh %s once catch-up clears\n' "$task" "$url" "$task"
+  done <<EOF
+$(scan_landed_awaiting_cleanup)
+EOF
+  [ "$count" -gt 0 ] || printf '  (nothing)\n'
+
+  # Handled while away. Every outcome the away session recorded in the
+  # store during the window counts as handled. On Pi the supervision branch,
+  # and on a home that runs it the supervision host (docs/supervision-host.md), took
+  # every safe actionable wake it could while main was parked; wakes it
+  # declined still fell back to main. The captain rows are listed above.
+  printf '  Handled while away:\n'
+  routine=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" { n++ } END { print n + 0 }')
+  routine_visible=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { n++ } END { print n + 0 }')
+  captain=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" { n++ } END { print n + 0 }')
+  visible_outcomes=$((routine_visible + captain))
+  printf '  %s outcome(s) handled by the away session (%s routine, %s escalated above)\n' "$((routine + captain))" "$routine" "$captain"
+  if [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ] && [ "$drain_ok" -eq 1 ]; then
+    printf '  the drain'"'"'s BRANCH OUTCOMES section presents the visible outcomes: each task'"'"'s captain outcomes on one line until you acknowledge them, visible routine notes once, past its limit as a count\n'
+  elif [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ]; then
+    printf '  visible outcomes %s\n' "$pointer"
+  elif [ "$routine_visible" -gt 0 ]; then
+    printf '  %s routine outcome(s) recorded; the latest visible:\n' "$routine"
+    printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { printf "    - %s: %s\n", $2, $5 }' | tail -5
+  elif [ "$routine" -gt 0 ]; then
+    printf '  %s routine outcome(s) recorded; none were visible.\n' "$routine"
+  else
+    printf '  (no routine outcomes recorded in the store for this window)\n'
+  fi
+
+  # Cost.
+  live=0
+  for meta in "$STATE"/*.meta; do [ -f "$meta" ] && live=$((live + 1)); done
+  printf '  Cost: %s supervision outcome(s) recorded (%s routine, %s captain); %s task(s) live at return.\n' \
+    "$((routine + captain))" "$routine" "$captain" "$live"
+  printf '  Files changed: unknown (away-window file changes are not recorded)\n'
+
+  printf 'Active:\n  Still running:\n'
+  count=0
+  unknown_rows=''
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    task=$(basename "$meta"); task=${task%.meta}
+    status=$(FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>/dev/null) || status='state: unknown'
+    case "$status" in
+      'state: working '*) printf '  - %s: %s\n' "$task" "$(printf '%s' "$status" | clean_field)"; count=$((count + 1)) ;;
+      'state: unknown'*) unknown_rows="${unknown_rows}  - $task: current state unknown"$'\n' ;;
+    esac
+  done
+  [ "$count" -gt 0 ] || printf '  (none confirmed)\n'
+
+  # Waiting: tried and failed, or could not be fixed.
+  printf 'Waiting:\n'
+  [ -z "$unknown_rows" ] || printf '%s' "$unknown_rows"
+  printf '  Tried and failed, or could not be fixed:\n'
+  count=0
+  while IFS="$(printf '\t')" read -r tag kind text; do
+    [ "$tag" = evidence ] && [ "$kind" = engine ] || continue
+    count=$((count + 1))
+    printf '  - %s\n' "$text"
+  done < "$evidence"
+  while IFS="$(printf '\t')" read -r tag task key summary; do
+    [ "$tag" = blocker ] || continue
+    count=$((count + 1))
+    printf '  - %s [key=%s] still blocked, firstmate remediates before ordinary work: %s\n' "$task" "$key" "$summary"
+  done < "$blockers"
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    task=$(basename "$meta"); task=${task%.meta}
+    status="$STATE/$task.status"
+    status_path_readable "$status" || continue
+    last=$(last_status_line "$status")
+    [ "$(status_line_verb "$last")" = failed ] || continue
+    count=$((count + 1))
+    printf '  - %s: %s\n' "$task" "$(printf '%s' "$last" | clean_field)"
+  done
+  [ "$count" -gt 0 ] || printf '  (nothing)\n'
+
+  # Held work and decisions.
+  printf 'Held:\n'
   count=0
   HELD_READ_FAILED=0
   HELD_READ_PATH=$(fm_backlog_file "$DATA" 2>/dev/null || printf '%s/backlog.md' "$DATA")
@@ -611,6 +686,10 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
     HELD_READ_FAILED=1
     printf '  held listing unavailable: %s: %s; catch-up stays gated\n' "$HELD_READ_PATH" "$held_err"
   fi
+  [ "$count" -gt 0 ] || printf '  (nothing)\n'
+
+  printf 'Needs Me:\n'
+  count=0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
@@ -636,74 +715,15 @@ EOF
   fi
   [ "$count" -gt 0 ] || printf '  (nothing)\n'
 
-  # 4. tried and failed, or could not be fixed.
-  printf 'Tried and failed, or could not be fixed:\n'
-  count=0
-  while IFS="$(printf '\t')" read -r tag kind text; do
-    [ "$tag" = evidence ] && [ "$kind" = engine ] || continue
-    count=$((count + 1))
-    printf '  - %s\n' "$text"
-  done < "$evidence"
-  while IFS="$(printf '\t')" read -r tag task key summary; do
-    [ "$tag" = blocker ] || continue
-    count=$((count + 1))
-    printf '  - %s [key=%s] still blocked, firstmate remediates before ordinary work: %s\n' "$task" "$key" "$summary"
-  done < "$blockers"
-  for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] || continue
-    task=$(basename "$meta"); task=${task%.meta}
-    status="$STATE/$task.status"
-    status_path_readable "$status" || continue
-    last=$(last_status_line "$status")
-    [ "$(status_line_verb "$last")" = failed ] || continue
-    count=$((count + 1))
-    printf '  - %s: %s\n' "$task" "$(printf '%s' "$last" | clean_field)"
-  done
-  [ "$count" -gt 0 ] || printf '  (nothing)\n'
-
-  # 5. landed, cleanup due: finished work whose task record is still live.
-  # Listing it keeps a landed task that remains live past the return from being
-  # overlooked. The cleanup itself is ordinary fleet work and waits for the gate.
-  printf 'Landed, cleanup due:\n'
-  count=0
-  while IFS="$(printf '\t')" read -r task url; do
-    [ -n "$task" ] || continue
-    count=$((count + 1))
-    printf '  - %s: %s is merged and the worker is still up; close it with bin/fm-teardown.sh %s once catch-up clears\n' "$task" "$url" "$task"
-  done <<EOF
-$(scan_landed_awaiting_cleanup)
-EOF
-  [ "$count" -gt 0 ] || printf '  (nothing)\n'
-
-  # 6. handled while away. Every outcome the away session recorded in the
-  # store during the window counts as handled. On Pi the supervision branch,
-  # and on a home that runs it the supervision host (docs/supervision-host.md), took
-  # every safe actionable wake it could while main was parked; wakes it
-  # declined still fell back to main. The captain rows are listed above.
-  printf 'Handled while away:\n'
-  routine=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" { n++ } END { print n + 0 }')
-  routine_visible=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { n++ } END { print n + 0 }')
-  captain=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" { n++ } END { print n + 0 }')
-  visible_outcomes=$((routine_visible + captain))
-  printf '  %s outcome(s) handled by the away session (%s routine, %s escalated above)\n' "$((routine + captain))" "$routine" "$captain"
-  if [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ] && [ "$drain_ok" -eq 1 ]; then
-    printf '  the drain'"'"'s BRANCH OUTCOMES section presents the visible outcomes: each task'"'"'s captain outcomes on one line until you acknowledge them, visible routine notes once, past its limit as a count\n'
-  elif [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ]; then
-    printf '  visible outcomes %s\n' "$pointer"
-  elif [ "$routine_visible" -gt 0 ]; then
-    printf '  %s routine outcome(s) recorded; the latest visible:\n' "$routine"
-    printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { printf "    - %s: %s\n", $2, $5 }' | tail -5
-  elif [ "$routine" -gt 0 ]; then
-    printf '  %s routine outcome(s) recorded; none were visible.\n' "$routine"
+  if grep -q "^blocker$(printf '\t')" "$blockers"; then
+    task=$(awk -F '\t' '$1 == "blocker" { print $2; exit }' "$blockers")
+    printf 'Next: firstmate resolves the catch-up blocker for %s.\n' "$task"
+  elif [ "$HELD_READ_FAILED" -eq 1 ] || [ "$drain_ok" -ne 1 ] || grep -q "^evidence$(printf '\t')lifecycle$(printf '\t')" "$evidence"; then
+    printf 'Next: firstmate resolves the listed catch-up issue.\n'
   else
-    printf '  (no routine outcomes recorded in the store for this window)\n'
+    printf 'Next: unknown (no ranking rule recorded).\n'
   fi
 
-  # 7. cost.
-  live=0
-  for meta in "$STATE"/*.meta; do [ -f "$meta" ] && live=$((live + 1)); done
-  printf 'Cost: %s supervision outcome(s) recorded (%s routine, %s captain); %s task(s) live at return.\n' \
-    "$((routine + captain))" "$routine" "$captain" "$live"
 }
 
 return_reconcile() {
