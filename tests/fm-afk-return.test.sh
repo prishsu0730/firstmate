@@ -1378,6 +1378,7 @@ test_guarded_blocker_resolution() {
   dir="$TMP_ROOT/resolve"
   install_runner "$dir"
   seed_live_blocker "$dir" tmux repair-key
+  printf 'blocked [key=repair-key]: firstmate can refresh the synthetic token\n' > "$dir/home/state/repair-task.status"
   sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
@@ -1404,6 +1405,41 @@ test_guarded_blocker_resolution() {
   out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" check ignored-extra-argument 2>&1) || fail "check with an extra argument kept the gate: $out"
   assert_contains "$out" 'catch-up clear' "gate did not clear"
   pass "guarded resolution validates, records reason, and clears catch-up"
+}
+
+test_resolution_refuses_changed_unstamped_blocker() {
+  local dir out rc before status
+  dir="$TMP_ROOT/resolve-unstamped-reopened"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=repair-key]: first issue\n' > "$status"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "unstamped blocker did not open catch-up: $out"
+  printf 'resolved [key=repair-key]: first issue handled\nblocked [key=repair-key]: new issue\n' >> "$status"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'old issue handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "stale unstamped gate row closed a new blocker"
+  assert_contains "$out" 'rerun begin/check' "unstamped stale gate refusal omitted refresh instruction"
+  [ "$(cat "$status")" = "$before" ] || fail "stale unstamped gate row appended a resolution"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "new unstamped blocker did not retain catch-up: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'new issue handled' 2>&1) || fail "refreshed unstamped blocker did not resolve: $out"
+  out=$(run_return "$dir" check) || fail "refreshed unstamped resolution did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "refreshed unstamped resolution left gate closed"
+  pass "unstamped blockers bind to their saved status line"
 }
 
 test_resolution_refuses_reopened_blocker() {
@@ -1467,6 +1503,7 @@ test_resolution_routes_pending_reply_to_owner() {
 }
 
 test_guarded_blocker_resolution
+test_resolution_refuses_changed_unstamped_blocker
 test_resolution_refuses_reopened_blocker
 test_resolution_routes_pending_reply_to_owner
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings

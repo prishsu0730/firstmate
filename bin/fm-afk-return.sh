@@ -181,14 +181,18 @@ status_path_readable() {
   [ -f "$1" ] && [ -r "$1" ] && [ ! -L "$1" ]
 }
 
-blocker_open_at() {  # <status-file> <key>
-  local status=$1 key=$2 origins origin_key number line
+blocker_open_identity() {  # <status-file> <key>
+  local status=$1 key=$2 origins origin_key number line stamp
   origins=$(_fm_status_open_decision_origins "$status") || return 1
   while IFS=$'\t' read -r origin_key number; do
     [ "$origin_key" = "$key" ] || continue
     line=$(sed -n "${number}p" "$status") || return 1
     [ "$(status_line_verb "$line")" = blocked ] || return 1
-    status_line_at_epoch "$line"
+    if stamp=$(status_line_at_epoch "$line"); then
+      printf '%s' "$stamp"
+    else
+      printf 'line:%s' "$(printf '%s' "$line" | LC_ALL=C od -An -tx1 | tr -d '[:space:]')"
+    fi
     return
   done <<EOF
 $origins
@@ -224,7 +228,7 @@ scan_open_blockers() {  # -> tab-separated blocker rows
     while IFS="$(printf '\t')" read -r key verb summary; do
       [ "$verb" = blocked ] || continue
       clean_summary=$(printf '%s' "$summary" | clean_field)
-      stamp=$(blocker_open_at "$status" "$key") || stamp=unknown
+      stamp=$(blocker_open_identity "$status" "$key") || { STATUS_SCAN_ERROR=$status; return 1; }
       printf 'blocker\t%s\t%s\t%s\t%s\n' "$id" "$key" "$stamp" "$clean_summary"
     done <<EOF
 $open
@@ -933,7 +937,7 @@ EOF
 }
 
 resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
-  local key=$1 reason=$2 tag id row_key stamp summary matches=0 target='' saved_at='' current_at open verb line rc
+  local key=$1 reason=$2 tag id row_key stamp summary matches=0 target='' saved_identity='' current_identity open verb line rc
   _fm_decision_slug_ok "$key" || { printf 'fm-afk-return: invalid key\n' >&2; return 2; }
   case "$reason" in *[![:space:]]*) ;; *) printf 'fm-afk-return: reason must not be empty\n' >&2; return 2 ;; esac
   case "$reason" in *$'\n'*|*$'\r'*) printf 'fm-afk-return: reason must be one line\n' >&2; return 2 ;; esac
@@ -942,7 +946,7 @@ resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
     [ "$tag" = blocker ] && [ "$row_key" = "$key" ] || continue
     matches=$((matches + 1))
     target=$id
-    saved_at=$stamp
+    saved_identity=$stamp
   done < "$GATE"
   [ "$matches" -eq 1 ] || { printf 'fm-afk-return: key is unknown or ambiguous in the catch-up gate: %s\n' "$key" >&2; return 1; }
   case "$key" in pending-reply-*) printf 'fm-afk-return: %s belongs to bin/fm-pending-reply-lib.sh / fm-send resend path\n' "$key" >&2; return 1 ;; esac
@@ -960,8 +964,8 @@ resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
     printf 'fm-afk-return: key is not currently an open blocker: %s\n' "$key" >&2
     return 1
   fi
-  current_at=$(blocker_open_at "$target" "$key") || current_at=unknown
-  [ "$saved_at" != unknown ] && [ "$current_at" = "$saved_at" ] || {
+  current_identity=$(blocker_open_identity "$target" "$key") || current_identity=
+  [ -n "$saved_identity" ] && [ "$current_identity" = "$saved_identity" ] || {
     printf 'fm-afk-return: blocker changed; rerun begin/check before resolving %s\n' "$key" >&2
     return 1
   }
