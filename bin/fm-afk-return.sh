@@ -281,9 +281,11 @@ print_evidence() {  # <file>
 }
 
 print_blockers() {  # <file>
-  local file=$1 tag id key stamp summary
-  while IFS="$(printf '\t')" read -r tag id key stamp summary; do
+  local file=$1 row tag id key stamp summary
+  while IFS= read -r row; do
+    IFS=$'\t' read -r tag id key stamp summary <<< "$row"
     [ "$tag" = blocker ] || continue
+    case "$row" in *$'\t'*$'\t'*$'\t'*$'\t'*) ;; *) summary=$stamp ;; esac
     printf 'firstmate-actionable blocker: %s [key=%s] %s\n' "$id" "$key" "$summary"
   done < "$file"
 }
@@ -937,23 +939,28 @@ EOF
 }
 
 resolve_blocker() {
-  local key=$1 task=$2 reason=$3 tag id row_key stamp summary matches=0 target='' saved_identity='' current_identity open verb line rc close_verb
+  local key=$1 task=$2 reason=$3 row tag id row_key stamp summary matches=0 target='' saved_identity='' current_identity open verb line rc close_verb
   _fm_decision_slug_ok "$key" || { printf 'fm-afk-return: invalid key\n' >&2; return 2; }
   case "$task" in .|..|*[!a-zA-Z0-9._-]*) printf 'fm-afk-return: invalid task id\n' >&2; return 2 ;; esac
   case "$reason" in *[![:space:]]*) ;; *) printf 'fm-afk-return: reason must not be empty\n' >&2; return 2 ;; esac
   case "$reason" in *$'\n'*|*$'\r'*) printf 'fm-afk-return: reason must be one line\n' >&2; return 2 ;; esac
   [ -f "$GATE" ] && [ ! -L "$GATE" ] && [ -r "$GATE" ] || { printf 'fm-afk-return: no readable catch-up gate\n' >&2; return 1; }
-  while IFS="$(printf '\t')" read -r tag id row_key stamp summary; do
+  while IFS= read -r row; do
+    IFS=$'\t' read -r tag id row_key stamp summary <<< "$row"
     [ "$tag" = blocker ] && [ "$row_key" = "$key" ] || continue
     [ -z "$task" ] || [ "$id" = "$task" ] || continue
     matches=$((matches + 1))
     target=$id
-    saved_identity=$stamp
+    case "$row" in *$'\t'*$'\t'*$'\t'*$'\t'*) saved_identity=$stamp ;; *) saved_identity= ;; esac
   done < "$GATE"
   [ "$matches" -eq 1 ] || { printf 'fm-afk-return: key is unknown or ambiguous in the catch-up gate: %s; use --task <id> for duplicate keys\n' "$key" >&2; return 1; }
   case "$key" in pending-reply-*) printf 'fm-afk-return: %s belongs to bin/fm-pending-reply-lib.sh / fm-send resend path\n' "$key" >&2; return 1 ;; esac
   # The id comes from the gate, but must still name a single local status file.
   case "$target" in ''|.|..|*[!a-zA-Z0-9._-]*) printf 'fm-afk-return: invalid task id in gate\n' >&2; return 1 ;; esac
+  [ -n "$saved_identity" ] || {
+    printf 'fm-afk-return: legacy blocker row; run bin/fm-afk-return.sh check before resolving %s\n' "$key" >&2
+    return 1
+  }
   target="$STATE/$target.status"
   status_path_readable "$target" || { printf 'fm-afk-return: status is unreadable: %s\n' "$target" >&2; return 1; }
   open=$(status_open_decisions "$target") || return 1
@@ -968,7 +975,7 @@ resolve_blocker() {
     return 1
   fi
   current_identity=$(blocker_open_identity "$target" "$key") || current_identity=
-  [ -n "$saved_identity" ] && [ "$current_identity" = "$saved_identity" ] || {
+  [ "$current_identity" = "$saved_identity" ] || {
     printf 'fm-afk-return: blocker changed; rerun begin/check before resolving %s\n' "$key" >&2
     return 1
   }

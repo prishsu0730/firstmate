@@ -1407,6 +1407,49 @@ test_guarded_blocker_resolution() {
   pass "guarded resolution validates, records reason, and clears catch-up"
 }
 
+test_legacy_gate_blocker_row() {
+  local dir out rc status gate before
+  dir="$TMP_ROOT/resolve-legacy-gate"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  gate="$dir/home/state/.afk-return-catchup"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "legacy gate fixture did not open catch-up: $out"
+  awk -F '\t' 'BEGIN { OFS="\t" } $1 == "blocker" { print $1, $2, $3, $5; next } { print }' "$gate" > "$gate.old"
+  mv "$gate.old" "$gate"
+  set +e
+  out=$(run_return "$dir" guard)
+  rc=$?
+  set -e
+  [ "$rc" -eq 4 ] || fail "guard did not retain the legacy gate: $out"
+  assert_contains "$out" 'firstmate-actionable blocker: repair-task [key=repair-key] firstmate can refresh the synthetic token' "guard lost the legacy blocker summary"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "resolve accepted a legacy row without refreshing its identity"
+  assert_contains "$out" 'run bin/fm-afk-return.sh check' "legacy row refusal did not direct a refresh"
+  [ "$(cat "$status")" = "$before" ] || fail "legacy row resolution changed status"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "check did not retain the open blocker: $out"
+  assert_contains "$out" 'still blocked, firstmate remediates before ordinary work: firstmate can refresh the synthetic token' "refreshed brief lost the blocker summary"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1) || fail "refreshed legacy blocker did not resolve: $out"
+  out=$(run_return "$dir" check) || fail "resolved legacy blocker did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "resolved legacy blocker left catch-up gated"
+  pass "legacy gate rows remain readable and require identity refresh before resolution"
+}
+
 test_resolution_refuses_changed_unstamped_blocker() {
   local dir out rc before status
   dir="$TMP_ROOT/resolve-unstamped-reopened"
@@ -1569,6 +1612,7 @@ test_resolution_uses_configured_close_verb() {
 }
 
 test_guarded_blocker_resolution
+test_legacy_gate_blocker_row
 test_resolution_selects_task_for_duplicate_keys
 test_resolution_uses_configured_close_verb
 test_resolution_refuses_changed_unstamped_blocker
