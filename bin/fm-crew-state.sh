@@ -1333,7 +1333,7 @@ if [ "$KIND" != secondmate ]; then
           if scout_finished_evidence; then
             emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; busy hook no newer than status"
           fi
-          emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); no corroborating completion evidence"
+          emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}busy hook older than status"
           ;;
       esac
       emit working pane "harness busy (${BUSY_VERDICT#* })"

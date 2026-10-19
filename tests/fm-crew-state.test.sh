@@ -5583,6 +5583,11 @@ test_reliability_reconciles_status_and_activity() {
   out=$(FM_HOME="$d" run_crew_state "$d" task)
   assert_contains "$out" 'state: conflict' 'unorderable status and busy signals remain a conflict'
   assert_contains "$out" 'timestamp' 'unorderable conflict names missing timing evidence'
+
+  printf 'paused [at=%s]: waiting for review\n' "$(($(date +%s) + 30))" > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: paused' 'a newer stamped pause is not contradicted by older busy activity'
+  assert_contains "$out" 'source: status-log' 'the newer pause remains the authoritative state'
   pass 'status reconciliation respects evidence, identity, and newer activity'
 }
 
