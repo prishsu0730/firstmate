@@ -177,7 +177,7 @@ The host counts the wake handled only when all three hold:
 ### Where a handled wake's outcome goes
 
 Away, a handled wake never reaches main, whether its outcome was routine or captain.
-Captain outcomes wait in the outcome store, and after the return the drain's `BRANCH OUTCOMES` section presents them; the return brief (`bin/fm-afk-return.sh`) counts them and points there.
+Captain outcomes wait in the outcome store, and after the return the drain's `BRANCH OUTCOMES` section presents them; the six-part return brief (`bin/fm-afk-return.sh`) also lists visible outcomes recorded during the away window, while the drain remains the owner of their read cursor and acknowledgement.
 Attended, see [Captain outcomes](#captain-outcomes).
 
 ### A captain who returns during a turn
