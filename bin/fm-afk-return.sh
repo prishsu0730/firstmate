@@ -6,7 +6,7 @@
 #   fm-afk-return.sh          Stop away mode, render the return brief, and open/check the gate.
 #   fm-afk-return.sh begin    Same as the default command.
 #   fm-afk-return.sh check    Re-render the brief and close the gate only after blockers resolve.
-#   fm-afk-return.sh resolve <key> [--task <id>] --reason <text>  Close one listed open blocker with its reason.
+#   fm-afk-return.sh resolve <key> [--task <id>] --reason <text>  Close one listed open blocker with its reason; run check first for a legacy gate row.
 #   fm-afk-return.sh guard    Read-only consult: exit 3 while away mode is still
 #                            active, exit 4 while return catch-up is pending.
 #   fm-afk-return.sh catchup-summary  Read-only catch-up projection for a reporting surface.
@@ -34,7 +34,8 @@
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
 # live task's open blocked event must be remediated or reclassified and closed
 # with a durable reason before an ordinary captain request may proceed.
-# Use `fm-afk-return.sh resolve <key> [--task <id>] --reason <text>` for a listed blocker.
+# Use `fm-afk-return.sh resolve <key> [--task <id>] --reason <text>` for a listed blocker;
+# run `fm-afk-return.sh check` first if the command reports a legacy gate row.
 # `needs-decision:` is deliberately not part of this blocker gate. The gate
 # keeps every open blocker until that blocker's own resolution is proven.
 # Captain-verdict outcomes are listed under "waiting on you", but cannot exempt
@@ -333,7 +334,7 @@ return_guard() {
   fi
   if [ -e "$GATE" ]; then
     if gate_has_blockers "$GATE"; then
-      printf 'fm-afk-return: return catch-up is pending; handle every listed blocker, run bin/fm-afk-return.sh resolve <key> [--task <id>] --reason <text>, then run bin/fm-afk-return.sh check\n' >&2
+      printf 'fm-afk-return: return catch-up is pending; handle every listed blocker, run bin/fm-afk-return.sh resolve <key> [--task <id>] --reason <text>, then run bin/fm-afk-return.sh check; legacy gate rows require check before resolve\n' >&2
       print_blockers "$GATE" >&2
     else
       # No blocker row exists, so naming "every listed blocker" would ask for
@@ -903,7 +904,7 @@ EOF
     printf 'fm-afk-return: catch-up must finish before the captain request\n' >&2
     print_evidence "$GATE" >&2
     print_blockers "$GATE" >&2
-    printf 'fm-afk-return: handle each blocker, then run bin/fm-afk-return.sh resolve <key> [--task <id>] --reason <text> and bin/fm-afk-return.sh check\n' >&2
+    printf 'fm-afk-return: handle each blocker, then run bin/fm-afk-return.sh resolve <key> [--task <id>] --reason <text> and bin/fm-afk-return.sh check; legacy gate rows require check before resolve\n' >&2
     rm -f "$evidence" "$blockers" "$drain_err" "$presentation"
     return 3
   fi
