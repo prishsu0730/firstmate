@@ -6,6 +6,7 @@
 #   fm-procevent-lavish.sh classify <result-file>
 #   fm-procevent-lavish.sh terminal <result-file>
 #   fm-procevent-lavish.sh silent <result-file>
+#   fm-procevent-lavish.sh unchanged <previous-result> <result-file>
 #   fm-procevent-lavish.sh answers <result-file>
 #   fm-procevent-lavish.sh reconciles <result-file>
 #   fm-procevent-lavish.sh read <result-file>
@@ -56,15 +57,16 @@
 #            only place Lavish's notion of "nothing was said" is decided.
 #            Task-owned terminal rounds bypass generic silence so their owner
 #            receives the stop-and-conclude instruction.
+# unchanged  Exit 0 only for byte-identical consecutive results in one source
+#            registration. The runner checks registration and owner identity.
 #
 # AN EMPTY BOARD CLOSE IS NOT NEWS, and that is what `silent` exists to say.
 # Closing a review surface that carried nothing is the single most common Lavish
 # result: the captain reads a board, says nothing, and closes it. Announcing that
 # put a wake in front of the handler whose entire content was that nothing
-# happened. `silent` therefore holds two narrow, positively-determined shapes -
-# a session this adapter classifies `ended` that carries no queued content block
-# at all, or `browser_disconnected`, which carries no answer while the session
-# remains open - and every other result stays announced.
+# happened. `silent` accepts an empty ended session, browser_disconnected, and
+# an exact LISTENER_ACTIVE error that carries no queued content block.
+# Every other result stays announced.
 #
 # Deliberately narrow, in both directions. A `Send & End` close carrying the
 # captain's actual answer arrives as `status: feedback` with `session_ended`, so
@@ -72,7 +74,7 @@
 # is any `ended` result that still carries a `prompts` or `feedback` block, which
 # the published poll is not expected to produce but which must never be dropped
 # on that expectation. A `waiting` session, a `missing` one, an `unknown` or
-# unreadable result, and any error all stay announced, because none of them
+# unreadable result, and other errors stay announced, because none of them
 # positively proves nothing was said. Silence is only ever an absence this
 # adapter can see in the result, never an absence it assumes.
 #
@@ -639,6 +641,15 @@ cmd_silent() {
   local file=${1-} content_rc
   [ -n "$file" ] || usage
   [ -f "$file" ] && [ ! -L "$file" ] || die "result file does not exist: $file"
+  # Only the top-level error shape can certify this listener is a duplicate.
+  if awk 'NR == 1 { if ($0 !~ /^error:[[:space:]]*/) exit 1; next }
+    NR == 2 { if ($0 ~ /^code:[[:space:]]*LISTENER_ACTIVE[[:space:]]*$/) exit 0; exit 1 }
+    END { if (NR < 2) exit 1 }' "$file"; then
+    result_has_queued_content "$file"
+    content_rc=$?
+    [ "$content_rc" -eq 1 ] && return 0
+    return 1
+  fi
   [ "$(cmd_classify "$file")" = disconnected ] && return 0
   [ "$(cmd_classify "$file")" = ended ] || return 1
   result_has_queued_content "$file"
@@ -954,6 +965,8 @@ case "${1-}" in
   classify)  shift; cmd_classify "$@" ;;
   terminal)  shift; cmd_terminal "$@" ;;
   silent)    shift; cmd_silent "$@" ;;
+  unchanged) shift; [ "$#" -eq 2 ] && [ -f "$1" ] && [ ! -L "$1" ] \
+    && [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2" ;;
   answers)   shift; cmd_answers "$@" ;;
   reconciles) shift; cmd_reconciles "$@" ;;
   read)      shift; cmd_read "$@" ;;
