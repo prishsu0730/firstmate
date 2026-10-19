@@ -544,16 +544,31 @@ scan_review_ready_prs() {  # -> <task>\t<url> rows
   done
 }
 
-task_has_window_outcome() {  # <task>
-  printf '%s\n' "$STORE_ROWS" | awk -F '\t' -v task="$1" \
-    '$2 == task && $6 != "true" { found = 1; exit } END { exit !found }'
+pr_has_window_status_event() {  # <task> <url> <merged|ready> <since> <until>
+  local status="$STATE/$1.status" url=$2 kind=$3 since=$4 until=$5 line epoch note verb after
+  case "$since:$until" in *[!0-9:]*|:*|*:) return 1 ;; esac
+  status_path_readable "$status" || return 1
+  while IFS= read -r line; do
+    epoch=$(status_line_at_epoch "$line") || continue
+    [ "$epoch" -ge "$since" ] && [ "$epoch" -le "$until" ] || continue
+    verb=$(status_line_verb "$line")
+    [ "$verb" = done ] || continue
+    note=$(status_line_note "$line")
+    case "$note" in *"$url"*) after=${note#*"$url"} ;; *) continue ;; esac
+    case "$after" in ''|' '*|','*|')'*|'.'*|';'*) ;; *) continue ;; esac
+    case "$kind:$note" in
+      merged:*merged*|ready:*'ready for review'*|ready:*'checks green'*) return 0 ;;
+    esac
+  done < "$status"
+  return 1
 }
 
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-ok>
   local evidence=$1 blockers=$2 since=$3 drain_ok=$4 now record superseded superseded_at archive_dir stamp
   local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url unknown_rows drained=0 pointer
-  local landed_rows review_rows file_rows landed_task review_task review_url decision_task decision_key
+  local landed_rows review_rows file_rows landed_task review_task review_url decision_task decision_key window_end
   now=$(date +%s)
+  window_end=$(awk -F '\t' '$1 == "started" { print $2; exit }' "$GATE" 2>/dev/null || true)
   # Where main processes outcomes through the drain's BRANCH OUTCOMES section
   # (the supervision host off Pi, docs/supervision-host.md "Captain outcomes"),
   # the drain alone presents the window's visible notes and owns their read
@@ -652,7 +667,7 @@ EOF
     "$((routine + captain))" "$routine" "$captain" "$live"
   file_rows=
   while IFS="$(printf '\t')" read -r task url; do
-    [ -n "$task" ] && task_has_window_outcome "$task" || continue
+    [ -n "$task" ] && pr_has_window_status_event "$task" "$url" merged "$since" "$window_end" || continue
     file_rows="${file_rows}    - $task: $url (merged)"$'\n'
   done <<EOF
 $landed_rows
@@ -660,13 +675,13 @@ EOF
   while IFS="$(printf '\t')" read -r task url; do
     [ -n "$task" ] || continue
     [ -n "$review_task" ] || { review_task=$task; review_url=$url; }
-    task_has_window_outcome "$task" || continue
+    pr_has_window_status_event "$task" "$url" ready "$since" "$window_end" || continue
     file_rows="${file_rows}    - $task: $url (ready for review)"$'\n'
   done <<EOF
 $review_rows
 EOF
   if [ -n "$file_rows" ]; then
-    printf '  Files changed: PRs with away-window outcomes (individual paths unavailable)\n%s' "$file_rows"
+    printf '  Files changed: PRs with timestamped away-window status (individual paths unavailable)\n%s' "$file_rows"
   else
     printf '  Files changed: none recorded\n'
   fi
@@ -753,9 +768,6 @@ $(status_open_decisions "$status")
 EOF
   done
   rows=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" && $6 != "true" { printf "  - %s: %s\n", $2, $5 }')
-  if [ -n "$rows" ] && [ -z "$decision_task" ]; then
-    decision_task=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" && $6 != "true" { print $2; exit }')
-  fi
   if [ -n "$rows" ] && [ "$drained" -eq 1 ]; then
     count=$((count + 1))
     printf '  %s captain outcome(s) escalated by the away session, %s\n' \
@@ -773,11 +785,7 @@ EOF
   elif [ "$HELD_READ_FAILED" -eq 1 ] || [ "$drain_ok" -ne 1 ] || grep -q "^evidence$(printf '\t')lifecycle$(printf '\t')" "$evidence"; then
     printf 'Next: firstmate resolves the listed catch-up issue.\n'
   elif [ -n "$decision_task" ]; then
-    if [ -n "$decision_key" ]; then
-      printf 'Next: captain decides for %s [key=%s].\n' "$decision_task" "$decision_key"
-    else
-      printf 'Next: captain reviews the waiting outcome for %s.\n' "$decision_task"
-    fi
+    printf 'Next: captain decides for %s [key=%s].\n' "$decision_task" "$decision_key"
   elif [ -n "$landed_task" ]; then
     printf 'Next: firstmate closes landed task %s with bin/fm-teardown.sh %s.\n' "$landed_task" "$landed_task"
   elif [ -n "$review_task" ]; then
