@@ -1066,22 +1066,22 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     | ($captain_holds_all
        + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
             | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
-    | ([ $queued_all[]
+    | ([ $owned_in_flight[] as $work
+           | $tasks[]
+           | select(.id == $work.id and .current_state.state != "working"
+               and ($work.current_role == "held" or (.current_state.state as $state
+                 | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null))
+           | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
+              blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
+              reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $child_holds
+    | ($child_holds + [ $queued_all[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
-         | select(.state != "in_flight" or (.id as $id
-             | any($tasks[]; .id == $id and (.current_state.state as $state
-               | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null) | not))
+         | select(.state != "in_flight" or (.id as $id | [$child_holds[].id] | index($id) | not))
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),
             blocked_by:((.unresolved_blocker_ids | join(",")) | if . == "" then null else trunc(120) end),
             blocked_by_ids:(.blocked_by_ids | map(trunc(120))),
             unresolved_blocker_ids:(.unresolved_blocker_ids | map(trunc(120))),
-            reason:((.hold_reason // .blocked_reason // "blocked") | trunc(120)),source:"backlog"} ]
-       + [ $owned_in_flight[] as $work
-           | $tasks[]
-           | select(.id == $work.id and (.current_state.state as $state | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null)
-           | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
-              blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
-              reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $holds_all
+            reason:((.hold_reason // .blocked_reason // "blocked") | trunc(120)),source:"backlog"} ]) as $holds_all
     | ($backlog.present == true
        and ($unstructured_current | length) == 0
        and ($unknown_children | length) == 0
@@ -1683,6 +1683,7 @@ parent_evidence_reconciliation_json() {  # <summary-json-file> <activities-json>
                "active_children")
          elif $e.verb == "paused" then
            ([ $summary.holds[]
+              | select(.source != "child-state" or .state == "paused")
               | select(if ($e.key | keyed) then .id == $e.key or .blocked_by == $e.key else true end)
               | {surface:"holds",id,key:(.blocked_by // null),verb:"paused"}]) as $matches
            | result($e; $matches;
@@ -1706,6 +1707,7 @@ parent_evidence_reconciliation_json() {  # <summary-json-file> <activities-json>
                 | select(if ($e.key | keyed) then .key == $e.key or .id == $e.key else true end)
                 | {surface:"decisions_open",id,key,verb}]
               + [ $summary.holds[]
+                  | select(.source != "child-state" or .state == "blocked")
                   | select(if ($e.key | keyed) then .id == $e.key or .blocked_by == $e.key else true end)
                   | {surface:"holds",id,key:(.blocked_by // null),verb:"blocked"}]) as $matches
              | result($e; $matches;
