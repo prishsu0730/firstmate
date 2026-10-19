@@ -671,6 +671,84 @@ test_return_brief_lists_landed_work_awaiting_cleanup() {
   pass "the return brief lists landed work whose worker is still up, from the durable merge marker only, without gating on it and never offering a secondmate for teardown"
 }
 
+test_return_brief_files_and_next_action_precedence() {
+  local scenario dir out next_line expected
+  for scenario in blocker decision captain-outcome landed review unrecorded none; do
+    dir="$TMP_ROOT/brief-next-$scenario"
+    install_runner "$dir"
+    cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  ready) printf 'state: done · checks green: PR ready for review\n' ;;
+  *) printf 'state: unknown\n' ;;
+esac
+SH
+    chmod +x "$dir/bin/fm-crew-state.sh"
+    if [ "$scenario" != none ]; then
+      printf 'window=synthetic:fm-ready\nbackend=tmux\nkind=ship\npr=https://github.com/example/ready/pull/9\n' > "$dir/home/state/ready.meta"
+      printf 'done: PR https://github.com/example/ready/pull/9 checks green\n' > "$dir/home/state/ready.status"
+    fi
+    case "$scenario" in
+      blocker|decision|captain-outcome|landed|unrecorded)
+        printf 'window=synthetic:fm-landed\nbackend=tmux\nkind=ship\npr=https://github.com/example/landed/pull/7\n' > "$dir/home/state/landed.meta"
+        printf 'done: PR https://github.com/example/landed/pull/7 merged\n' > "$dir/home/state/landed.status"
+        (
+          # shellcheck source=bin/fm-pr-lib.sh
+          . "$ROOT/bin/fm-pr-lib.sh"
+          fm_pr_poll_merge_mark_notified "$dir/home/state" landed github github.com example/landed 7
+        ) || fail "could not record the landed PR for $scenario"
+        ;;
+    esac
+    case "$scenario" in
+      blocker|decision)
+        printf 'window=synthetic:fm-choice\nbackend=tmux\nkind=ship\n' > "$dir/home/state/choice.meta"
+        printf 'needs-decision [key=target]: choose the target\n' > "$dir/home/state/choice.status"
+        ;;
+      captain-outcome)
+        outcome_in "$dir" append --task choice --verdict captain --summary 'choose the target' >/dev/null \
+          || fail "could not record the captain outcome"
+        ;;
+    esac
+    if [ "$scenario" = blocker ]; then
+      seed_live_blocker "$dir" tmux dependency
+    fi
+    if [ "$scenario" != none ] && [ "$scenario" != unrecorded ]; then
+      outcome_in "$dir" append --task ready --verdict routine --summary 'PR ready for review' >/dev/null \
+        || fail "could not record the review-ready outcome for $scenario"
+      case "$scenario" in
+        blocker|decision|captain-outcome|landed)
+          outcome_in "$dir" append --task landed --verdict routine --summary 'merged PR' >/dev/null \
+            || fail "could not record the merged outcome for $scenario" ;;
+      esac
+    fi
+    touch "$dir/home/state/.last-watcher-beat"
+    : > "$dir/home/state/.fake-drain"
+    out=$(run_return "$dir" begin) || [ "$scenario" = blocker ] || fail "return failed for $scenario: $out"
+    next_line=$(printf '%s\n' "$out" | grep '^Next:' || true)
+    case "$scenario" in
+      blocker) expected='Next: firstmate resolves the catch-up blocker for repair-task.' ;;
+      decision) expected='Next: captain decides for choice [key=target].' ;;
+      captain-outcome) expected='Next: captain reviews the waiting outcome for choice.' ;;
+      landed) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      review) expected='Next: captain reviews https://github.com/example/ready/pull/9 for ready.' ;;
+      unrecorded) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      none) expected='Next: none.' ;;
+    esac
+    [ "$next_line" = "$expected" ] || fail "$scenario selected the wrong next action: $next_line"
+    if [ "$scenario" = none ] || [ "$scenario" = unrecorded ]; then
+      assert_contains "$out" 'Files changed: none recorded' "empty records did not say no changes were recorded"
+    else
+      assert_contains "$out" 'Files changed: PRs with away-window outcomes (individual paths unavailable)' "$scenario did not show recorded PR changes"
+      assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review)' "$scenario omitted the review-ready PR"
+      case "$scenario" in
+        blocker|decision|captain-outcome|landed)
+          assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged)' "$scenario omitted the landed PR" ;;
+      esac
+    fi
+  done
+  pass "the return brief shows recorded PR changes and selects one next action by precedence"
+}
+
 test_return_brief_keeps_refresh_history() {
   local dir out first_epoch
   dir="$TMP_ROOT/brief-refresh"
@@ -1406,6 +1484,7 @@ test_unreadable_superseded_archive_keeps_return_gated
 test_missing_final_archive_keeps_retained_contract_gated
 test_return_brief_composes_from_record_store_and_held_set
 test_return_brief_lists_landed_work_awaiting_cleanup
+test_return_brief_files_and_next_action_precedence
 test_return_brief_points_at_the_drain_on_a_host_home_only
 test_return_brief_all_silent_window_does_not_point_at_drain
 test_return_keeps_catchup_gated_when_the_drain_cannot_record_outcomes

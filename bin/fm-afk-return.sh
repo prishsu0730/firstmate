@@ -15,8 +15,8 @@
 # (bin/fm-afk-contract.sh), the supervision outcome store
 # (bin/fm-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
 # status logs. Its six parts follow the bearings chat shape: Outcome, Active,
-# Waiting, Held, Needs Me, and Next. File changes are unknown unless recorded
-# for the away window.
+# Waiting, Held, Needs Me, and Next. The files line names recorded PRs, not
+# individual paths.
 # The health snapshot is taken BEFORE daemon shutdown so shutdown is not a gap.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
@@ -529,9 +529,30 @@ scan_landed_awaiting_cleanup() {  # -> <task>\t<url> rows
   done
 }
 
+scan_review_ready_prs() {  # -> <task>\t<url> rows
+  local meta task status
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    task=$(basename "$meta"); task=${task%.meta}
+    status=$(FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>/dev/null) || continue
+    case "$status" in 'state: done '*'PR ready for review'*) ;; *) continue ;; esac
+    fm_pr_metadata_identity_parse "$meta" || continue
+    fm_pr_poll_merge_already_notified "$STATE" "$task" \
+      "$FM_PR_META_PROVIDER" "$FM_PR_META_HOST" "$FM_PR_META_PATH" "$FM_PR_META_NUMBER" \
+      && continue
+    printf '%s\t%s\n' "$task" "$FM_PR_META_URL"
+  done
+}
+
+task_has_window_outcome() {  # <task>
+  printf '%s\n' "$STORE_ROWS" | awk -F '\t' -v task="$1" \
+    '$2 == task && $6 != "true" { found = 1; exit } END { exit !found }'
+}
+
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-ok>
   local evidence=$1 blockers=$2 since=$3 drain_ok=$4 now record superseded superseded_at archive_dir stamp
   local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url unknown_rows drained=0 pointer
+  local landed_rows review_rows file_rows landed_task review_task review_url decision_task decision_key
   now=$(date +%s)
   # Where main processes outcomes through the drain's BRANCH OUTCOMES section
   # (the supervision host off Pi, docs/supervision-host.md "Captain outcomes"),
@@ -583,14 +604,20 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   # Landed, cleanup due: finished work whose task record is still live.
   # Listing it keeps a landed task that remains live past the return from being
   # overlooked. The cleanup itself is ordinary fleet work and waits for the gate.
+  landed_rows=$(scan_landed_awaiting_cleanup)
+  review_rows=$(scan_review_ready_prs)
+  landed_task=
+  review_task=
+  review_url=
   printf '  Recently landed (cleanup due):\n'
   count=0
   while IFS="$(printf '\t')" read -r task url; do
     [ -n "$task" ] || continue
+    [ -n "$landed_task" ] || landed_task=$task
     count=$((count + 1))
     printf '  - %s: %s is merged and the worker is still up; close it with bin/fm-teardown.sh %s once catch-up clears\n' "$task" "$url" "$task"
   done <<EOF
-$(scan_landed_awaiting_cleanup)
+$landed_rows
 EOF
   [ "$count" -gt 0 ] || printf '  (nothing)\n'
 
@@ -623,7 +650,26 @@ EOF
   for meta in "$STATE"/*.meta; do [ -f "$meta" ] && live=$((live + 1)); done
   printf '  Cost: %s supervision outcome(s) recorded (%s routine, %s captain); %s task(s) live at return.\n' \
     "$((routine + captain))" "$routine" "$captain" "$live"
-  printf '  Files changed: unknown (away-window file changes are not recorded)\n'
+  file_rows=
+  while IFS="$(printf '\t')" read -r task url; do
+    [ -n "$task" ] && task_has_window_outcome "$task" || continue
+    file_rows="${file_rows}    - $task: $url (merged)"$'\n'
+  done <<EOF
+$landed_rows
+EOF
+  while IFS="$(printf '\t')" read -r task url; do
+    [ -n "$task" ] || continue
+    [ -n "$review_task" ] || { review_task=$task; review_url=$url; }
+    task_has_window_outcome "$task" || continue
+    file_rows="${file_rows}    - $task: $url (ready for review)"$'\n'
+  done <<EOF
+$review_rows
+EOF
+  if [ -n "$file_rows" ]; then
+    printf '  Files changed: PRs with away-window outcomes (individual paths unavailable)\n%s' "$file_rows"
+  else
+    printf '  Files changed: none recorded\n'
+  fi
 
   printf 'Active:\n  Still running:\n'
   count=0
@@ -690,6 +736,8 @@ EOF
 
   printf 'Needs Me:\n'
   count=0
+  decision_task=
+  decision_key=
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
@@ -697,6 +745,7 @@ EOF
     status_path_readable "$status" || continue
     while IFS="$(printf '\t')" read -r key verb summary; do
       [ "$verb" = needs-decision ] || continue
+      [ -n "$decision_task" ] || { decision_task=$task; decision_key=$key; }
       count=$((count + 1))
       printf '  - %s [key=%s] needs your decision: %s\n' "$task" "$key" "$(printf '%s' "$summary" | clean_field)"
     done <<EOF
@@ -704,6 +753,9 @@ $(status_open_decisions "$status")
 EOF
   done
   rows=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" && $6 != "true" { printf "  - %s: %s\n", $2, $5 }')
+  if [ -n "$rows" ] && [ -z "$decision_task" ]; then
+    decision_task=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" && $6 != "true" { print $2; exit }')
+  fi
   if [ -n "$rows" ] && [ "$drained" -eq 1 ]; then
     count=$((count + 1))
     printf '  %s captain outcome(s) escalated by the away session, %s\n' \
@@ -720,8 +772,18 @@ EOF
     printf 'Next: firstmate resolves the catch-up blocker for %s.\n' "$task"
   elif [ "$HELD_READ_FAILED" -eq 1 ] || [ "$drain_ok" -ne 1 ] || grep -q "^evidence$(printf '\t')lifecycle$(printf '\t')" "$evidence"; then
     printf 'Next: firstmate resolves the listed catch-up issue.\n'
+  elif [ -n "$decision_task" ]; then
+    if [ -n "$decision_key" ]; then
+      printf 'Next: captain decides for %s [key=%s].\n' "$decision_task" "$decision_key"
+    else
+      printf 'Next: captain reviews the waiting outcome for %s.\n' "$decision_task"
+    fi
+  elif [ -n "$landed_task" ]; then
+    printf 'Next: firstmate closes landed task %s with bin/fm-teardown.sh %s.\n' "$landed_task" "$landed_task"
+  elif [ -n "$review_task" ]; then
+    printf 'Next: captain reviews %s for %s.\n' "$review_url" "$review_task"
   else
-    printf 'Next: unknown (no ranking rule recorded).\n'
+    printf 'Next: none.\n'
   fi
 
 }
