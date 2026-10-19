@@ -98,7 +98,7 @@ window=$target
 backend=$backend
 kind=ship
 EOF
-  printf 'blocked [key=%s]: firstmate can refresh the synthetic token\n' "$key" > "$dir/home/state/repair-task.status"
+  printf 'blocked [key=%s] [at=1700000000]: firstmate can refresh the synthetic token\n' "$key" > "$dir/home/state/repair-task.status"
 }
 
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings() {
@@ -1406,7 +1406,69 @@ test_guarded_blocker_resolution() {
   pass "guarded resolution validates, records reason, and clears catch-up"
 }
 
+test_resolution_refuses_reopened_blocker() {
+  local dir out rc before status
+  dir="$TMP_ROOT/resolve-reopened"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "reopened-blocker fixture did not open catch-up: $out"
+  status="$dir/home/state/repair-task.status"
+  printf 'resolved [key=repair-key] [at=1700000001]: first issue handled\nblocked [key=repair-key] [at=1700000002]: new issue\n' >> "$status"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'old issue handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "stale gate row closed a new blocker"
+  assert_contains "$out" 'rerun begin/check' "stale gate refusal omitted refresh instruction"
+  [ "$(cat "$status")" = "$before" ] || fail "stale gate row appended a resolution"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "new blocker did not retain catch-up: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'new issue handled' 2>&1) || fail "refreshed blocker did not resolve: $out"
+  out=$(run_return "$dir" check) || fail "refreshed resolution did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "refreshed resolution left gate closed"
+  pass "resolution binds the listed blocker to its opening event"
+}
+
+test_resolution_routes_pending_reply_to_owner() {
+  local dir out rc before status
+  dir="$TMP_ROOT/resolve-pending-reply"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux pending-reply-fixture
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=pending-reply-fixture] [at=1700000000]: pending-reply-missed: fixture\n' > "$status"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "pending-reply fixture did not open catch-up: $out"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve pending-reply-fixture --reason 'handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "pending-reply blocker accepted general resolution"
+  assert_contains "$out" 'bin/fm-pending-reply-lib.sh / fm-send resend path' "pending-reply refusal omitted owner workflow"
+  [ "$(cat "$status")" = "$before" ] || fail "pending-reply refusal wrote status"
+  pass "pending-reply resolution stays with its owner workflow"
+}
+
 test_guarded_blocker_resolution
+test_resolution_refuses_reopened_blocker
+test_resolution_routes_pending_reply_to_owner
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings
 test_explicit_reclassification_requires_durable_reason
 test_captain_decision_does_not_masquerade_as_firstmate_blocker

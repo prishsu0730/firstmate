@@ -181,8 +181,23 @@ status_path_readable() {
   [ -f "$1" ] && [ -r "$1" ] && [ ! -L "$1" ]
 }
 
+blocker_open_at() {  # <status-file> <key>
+  local status=$1 key=$2 origins origin_key number line
+  origins=$(_fm_status_open_decision_origins "$status") || return 1
+  while IFS=$'\t' read -r origin_key number; do
+    [ "$origin_key" = "$key" ] || continue
+    line=$(sed -n "${number}p" "$status") || return 1
+    [ "$(status_line_verb "$line")" = blocked ] || return 1
+    status_line_at_epoch "$line"
+    return
+  done <<EOF
+$origins
+EOF
+  return 1
+}
+
 scan_open_blockers() {  # -> tab-separated blocker rows
-  local meta id status key verb summary clean_summary open
+  local meta id status key verb summary clean_summary open stamp
   STATUS_SCAN_ERROR=
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -209,7 +224,8 @@ scan_open_blockers() {  # -> tab-separated blocker rows
     while IFS="$(printf '\t')" read -r key verb summary; do
       [ "$verb" = blocked ] || continue
       clean_summary=$(printf '%s' "$summary" | clean_field)
-      printf 'blocker\t%s\t%s\t%s\n' "$id" "$key" "$clean_summary"
+      stamp=$(blocker_open_at "$status" "$key") || stamp=unknown
+      printf 'blocker\t%s\t%s\t%s\t%s\n' "$id" "$key" "$stamp" "$clean_summary"
     done <<EOF
 $open
 EOF
@@ -261,8 +277,8 @@ print_evidence() {  # <file>
 }
 
 print_blockers() {  # <file>
-  local file=$1 tag id key summary
-  while IFS="$(printf '\t')" read -r tag id key summary; do
+  local file=$1 tag id key stamp summary
+  while IFS="$(printf '\t')" read -r tag id key stamp summary; do
     [ "$tag" = blocker ] || continue
     printf 'firstmate-actionable blocker: %s [key=%s] %s\n' "$id" "$key" "$summary"
   done < "$file"
@@ -645,7 +661,7 @@ EOF
     count=$((count + 1))
     printf '  - %s\n' "$text"
   done < "$evidence"
-  while IFS="$(printf '\t')" read -r tag task key summary; do
+  while IFS="$(printf '\t')" read -r tag task key stamp summary; do
     [ "$tag" = blocker ] || continue
     count=$((count + 1))
     printf '  - %s [key=%s] still blocked, firstmate remediates before ordinary work: %s\n' "$task" "$key" "$summary"
@@ -917,17 +933,19 @@ EOF
 }
 
 resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
-  local key=$1 reason=$2 tag id row_key summary matches=0 target='' open verb line rc
+  local key=$1 reason=$2 tag id row_key stamp summary matches=0 target='' saved_at='' current_at open verb line rc
   _fm_decision_slug_ok "$key" || { printf 'fm-afk-return: invalid key\n' >&2; return 2; }
   case "$reason" in *[![:space:]]*) ;; *) printf 'fm-afk-return: reason must not be empty\n' >&2; return 2 ;; esac
   case "$reason" in *$'\n'*|*$'\r'*) printf 'fm-afk-return: reason must be one line\n' >&2; return 2 ;; esac
   [ -f "$GATE" ] && [ ! -L "$GATE" ] && [ -r "$GATE" ] || { printf 'fm-afk-return: no readable catch-up gate\n' >&2; return 1; }
-  while IFS="$(printf '\t')" read -r tag id row_key summary; do
+  while IFS="$(printf '\t')" read -r tag id row_key stamp summary; do
     [ "$tag" = blocker ] && [ "$row_key" = "$key" ] || continue
     matches=$((matches + 1))
     target=$id
+    saved_at=$stamp
   done < "$GATE"
   [ "$matches" -eq 1 ] || { printf 'fm-afk-return: key is unknown or ambiguous in the catch-up gate: %s\n' "$key" >&2; return 1; }
+  case "$key" in pending-reply-*) printf 'fm-afk-return: %s belongs to bin/fm-pending-reply-lib.sh / fm-send resend path\n' "$key" >&2; return 1 ;; esac
   # The id comes from the gate, but must still name a single local status file.
   case "$target" in ''|.|..|*[!a-zA-Z0-9._-]*) printf 'fm-afk-return: invalid task id in gate\n' >&2; return 1 ;; esac
   target="$STATE/$target.status"
@@ -942,6 +960,11 @@ resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
     printf 'fm-afk-return: key is not currently an open blocker: %s\n' "$key" >&2
     return 1
   fi
+  current_at=$(blocker_open_at "$target" "$key") || current_at=unknown
+  [ "$saved_at" != unknown ] && [ "$current_at" = "$saved_at" ] || {
+    printf 'fm-afk-return: blocker changed; rerun begin/check before resolving %s\n' "$key" >&2
+    return 1
+  }
   line="resolved [key=$key]: $reason"
   _fm_decision_key_transition_allowed "$key" "$reason" || { printf 'fm-afk-return: key requires its owner-specific resolution: %s\n' "$key" >&2; return 1; }
   rc=0
