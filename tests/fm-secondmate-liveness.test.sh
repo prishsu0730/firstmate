@@ -702,11 +702,32 @@ test_remote_poll_probe_unreachable_preserves_route() {
   pass "poll probe: unreachable or inconclusive remote reads preserve the route"
 }
 
+test_sweep_respects_stop_and_window_bound() {
+  local w fb tmuxfb log out now
+  w=$(new_world sweep-stopped)
+  add_sm_home "$w" sm1 firstmate:fm-sm1
+  fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
+  log="$w/calls.log"; : > "$log"
+  printf 'deliberate stop\n' > "$w/home/state/.secondmate-stopped-sm1"
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+  assert_contains "$out" "deliberately stopped" "startup must respect the deliberate stop"
+  [ ! -e "$w/home/state/.secondmate-relaunch-sm1" ] || fail "startup attempted a stopped mate"
+  rm -f "$w/home/state/.secondmate-stopped-sm1"
+  now=$(date +%s)
+  printf '%s\tattempt\n%s\tattempt\n%s\tattempt\n%s\trearmed\n' "$now" "$now" "$now" "$now" > "$w/home/state/.secondmate-relaunch-sm1"
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
+  assert_contains "$out" "auto-relaunch paused after 3 attempts" "startup must enforce the same rolling limit"
+  [ "$(awk -F '\t' '$2 == "attempt" { n++ } END { print n+0 }' "$w/home/state/.secondmate-relaunch-sm1")" -eq 3 ] || fail "startup exceeded the bound"
+  [ ! -s "$log" ] || fail "startup touched the bounded endpoint"
+  pass "sweep: deliberate stops and the rolling attempt bound survive startup"
+}
+
 test_tmux_agent_state_classifies
 test_tmux_agent_state_rejects_malformed_targets_before_probe
 test_herdr_agent_state_preserves_husk_classifier
 test_agent_state_dispatcher_and_compatibility
 test_sweep_respawns_confirmed_dead_secondmate
+test_sweep_respects_stop_and_window_bound
 test_sweep_leaves_alive_secondmate_untouched
 test_sweep_respawns_authoritatively_missing_pi_secondmate
 test_sweep_respawns_authoritatively_missing_pi_signed_secondmate

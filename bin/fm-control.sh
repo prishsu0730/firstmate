@@ -36,7 +36,9 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent). An endpoint that reads
+#              Already-stopped is success (idempotent). For a local secondmate,
+#              the deliberate-stop marker suppresses automatic recovery until
+#              a successful explicit relaunch clears it. An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
 #              proof (fm_control_endpoint_absence_verdict) before anything is
 #              claimed about it, because `missing` also covers an endpoint that
@@ -196,6 +198,8 @@ die() {  # <message>
 
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
+LIVENESS_LOCK_HELD=0
+STOP_MARKER_NEW=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
 
@@ -209,6 +213,12 @@ control_cleanup() {
   # the next lifecycle command for this task writes the same path.
   if [ -n "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     rm -f "$FM_COMPOSER_DIALOG_SINK"
+  fi
+  if [ "$STOP_MARKER_NEW" = 1 ]; then
+    rm -f "$STATE/.secondmate-stopped-$ID" || true
+  fi
+  if [ "$LIVENESS_LOCK_HELD" = 1 ]; then
+    fm_secondmate_liveness_unlock "$ID"
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -361,6 +371,13 @@ RECORDED_HARNESS=$(fm_meta_get "$META" harness)
 KIND=$(fm_meta_get "$META" kind)
 WT=$(fm_meta_get "$META" worktree)
 [ -n "$KIND" ] || KIND=ship
+if [ "$KIND" = secondmate ] && { [ "$VERB" = exit ] || [ "$VERB" = relaunch ]; }; then
+  # Serialize deliberate control against watcher and startup recovery.
+  # shellcheck source=bin/fm-secondmate-liveness-lib.sh
+  . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
+  fm_secondmate_liveness_lock "$ID" || die "secondmate $ID has a liveness check in progress; retry control"
+  LIVENESS_LOCK_HELD=1
+fi
 
 HARNESS=$(fm_control_harness_family "$RECORDED_HARNESS") \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
@@ -1154,6 +1171,9 @@ do_relaunch() {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
   RELAUNCH_AGENT_CONFIRMED=1
+  if [ "$KIND" = secondmate ]; then
+    rm -f "$STATE/.secondmate-stopped-$ID" || die "secondmate $ID relaunched but its stop marker could not be cleared"
+  fi
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
@@ -1180,7 +1200,14 @@ case "$VERB" in
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)
+    if [ "$KIND" = secondmate ]; then
+      if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
+        printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
+        STOP_MARKER_NEW=1
+      fi
+    fi
     result=$(do_exit)
+    STOP_MARKER_NEW=0
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)

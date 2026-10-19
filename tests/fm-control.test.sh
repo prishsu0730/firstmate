@@ -1101,6 +1101,7 @@ test_secondmate_control_command_carries_no_marker() {
   alive_as "$dir" claude
   out=$(run_control "$dir" domain exit); rc=$?
   expect_code 0 "$rc" "exiting a secondmate's agent should succeed"$'\n'"$out"
+  [ -f "$home/state/.secondmate-stopped-domain" ] || fail "deliberate secondmate exit must persist a stop marker"
   typed=$(literals "$dir")
   [ "$typed" = "/exit" ] \
     || fail "a secondmate control command must be the bare exit command, got: $typed"
