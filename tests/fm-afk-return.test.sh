@@ -449,19 +449,19 @@ SH
   local headings
   headings=$(printf '%s\n' "$out" | grep -E '^(Outcome:|Active:|Waiting:|Held:|Needs Me:|Next:)')
   [ "$(printf '%s\n' "$headings" | sed 's/:.*/:/')" = "$(printf 'Outcome:\nActive:\nWaiting:\nHeld:\nNeeds Me:\nNext:')" ] || fail "the six return parts are missing or out of order: $headings"
-  assert_contains "$out" 'supervision ran through the away window with no detected gap' "health did not report the clean window"
-  health_line=$(line_of "$out" '  Supervisor health:')
-  words_line=$(line_of "$out" '  Your instructions:')
+  assert_contains "$out" 'Health: supervision ran through the away window with no detected gap' "health summary did not report the clean window"
+  assert_contains "$out" 'Away instructions: retained in the posture archive.' "the instruction summary is missing"
+  assert_contains "$out" 'Handled while away: 6 outcomes.' "the handled-outcome summary is wrong"
+  assert_contains "$out" 'Details: state/.afk-return-catchup, state/afk-contracts, and state/branch-outcomes.jsonl' "the durable details pointer is missing"
+  health_line=$(line_of "$out" '  Health:')
+  words_line=$(line_of "$out" '  Away instructions:')
   waiting_line=$(line_of "$out" 'Needs Me:')
   failed_line=$(line_of "$out" '  Tried and failed, or could not be fixed:')
   [ -n "$health_line" ] && [ -n "$words_line" ] && [ -n "$waiting_line" ] && [ -n "$failed_line" ] \
     || fail "the brief is missing a section: $out"
   [ "$health_line" -lt "$words_line" ] && [ "$words_line" -lt "$failed_line" ] && [ "$failed_line" -lt "$waiting_line" ] \
     || fail "the brief sections are out of order (health $health_line, instructions $words_line, waiting $waiting_line, failed $failed_line)"
-  assert_contains "$out" $'  your words at entry:\n    merge the windows fix when green, then cut a prerelease\n    if the install deadlocks abort the competing run\n' "the captain's verbatim words were not carried into the brief"
-  assert_contains "$out" $'  the away session acted on them:\n    - fix-windows: per your away instructions: merged the windows fix PR once checks went green\n    - prerelease: per your away instructions: filed and dispatched the prerelease cut; it needs your review\n' "the session's account listed something other than exactly the two actions taken under the words"
-  assert_not_contains "$out" $'acted on them:\n    - other:' "an outcome that did not cite the words was listed as an action under them"
-  assert_not_contains "$out" $'acted on them:\n    - held-note:' "a summary opening with the marker's words but no colon was listed as an action under them"
+  assert_contains "$out" 'state/afk-contracts' "the archived instructions are not pointed to"
   assert_not_contains "$out" 'still building' "the return brief rendered a silent routine outcome"
   assert_not_contains "$out" 'not executed' "the brief still calls the words inert"
   assert_not_contains "$out" 'clause' "the brief still speaks of clauses"
@@ -472,9 +472,7 @@ SH
   assert_contains "$out" 'fix-windows [key=token] still blocked, firstmate remediates before ordinary work' "the blocker sharing a task with a captain outcome was exempted"
   assert_contains "$out" 'other [key=dep] still blocked, firstmate remediates before ordinary work' "the unreached blocker was not listed as could-not-fix"
   assert_contains "$out" 'dead: failed: the reproduction never compiled' "the failed task was not listed"
-  assert_contains "$out" '4 routine outcome(s) recorded' "the routine outcome count was not reported"
-  assert_contains "$out" 'other: resent the steer; worker resumed' "the routine outcome was not listed"
-  assert_contains "$out" 'Cost: 6 supervision outcome(s) recorded (4 routine, 2 captain); 3 task(s) live at return.' "the cost line is wrong"
+  assert_contains "$out" 'Cost: 6 supervision outcome(s); 3 task(s) live at return.' "the cost line is wrong"
   assert_contains "$out" 'firstmate-actionable blocker: other [key=dep]' "the unreached blocker did not gate"
   assert_contains "$out" 'firstmate-actionable blocker: fix-windows [key=token]' "a captain outcome incorrectly exempted an open blocker"
   grep -F "$(printf 'contract\t')" "$gate" >/dev/null || fail "the gate did not retain the posture-record window"
@@ -485,9 +483,8 @@ SH
   printf 'resolved [key=dep]: the upstream dependency landed\n' >> "$dir/home/state/other.status"
   printf 'resolved [key=token]: the token was refreshed\n' >> "$dir/home/state/fix-windows.status"
   second=$(run_return "$dir" check) || fail "the remediated return did not clear: $second"
-  assert_contains "$second" $'  your words at entry:\n    merge the windows fix when green, then cut a prerelease' "check did not re-render the words from the archived record"
-  assert_contains "$second" 'fix-windows: per your away instructions: merged the windows fix PR' "check did not re-render the session account"
-  assert_contains "$second" 'supervision ran through the away window with no detected gap' "check lost the health snapshot taken at begin"
+  assert_contains "$second" 'Away instructions: retained in the posture archive.' "check lost the instruction summary"
+  assert_contains "$second" 'Health: supervision ran through the away window with no detected gap' "check lost the health snapshot taken at begin"
   assert_contains "$second" 'catch-up clear' "check did not clear the gate"
   [ ! -e "$gate" ] || fail "the cleared check left the gate behind"
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" guard \
@@ -522,7 +519,7 @@ test_return_brief_points_at_the_drain_on_a_host_home_only() {
     # shellcheck disable=SC2016 # the single-quoted script expands in the harness shell
     out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
       "$fakebin/$harness" -c '"$0" begin 2>&1' "$dir/bin/fm-afk-return.sh") || fail "$harness: the return did not clear: $out"
-    assert_contains "$out" '7 outcome(s) handled by the away session (6 routine, 1 escalated above)' "$harness: the brief must count the window's outcomes"
+    assert_contains "$out" 'Handled while away: 7 outcomes.' "$harness: the brief must count the window's outcomes"
     if [ "$harness" = claude ]; then
       assert_contains "$out" "  1 captain outcome(s) escalated by the away session, presented in the drain's BRANCH OUTCOMES section" \
         "a host home's brief must point at the drain for its captain outcomes"
@@ -557,10 +554,10 @@ test_return_brief_all_silent_window_does_not_point_at_drain() {
   # shellcheck disable=SC2016 # the single-quoted script expands in the harness shell
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$fakebin/claude" -c '"$0" begin 2>&1' "$dir/bin/fm-afk-return.sh") || fail "the all-silent return did not clear: $out"
-  assert_contains "$out" '1 outcome(s) handled by the away session (1 routine, 0 escalated above)' \
+  assert_contains "$out" 'Handled while away: 1 outcomes.' \
     "the all-silent window's stored outcome count was lost"
-  assert_contains "$out" '1 routine outcome(s) recorded; none were visible.' \
-    "the all-silent window should report no visible routine notes"
+  assert_contains "$out" 'Details: state/.afk-return-catchup, state/afk-contracts, and state/branch-outcomes.jsonl' \
+    "the all-silent window did not point to durable outcome detail"
   assert_not_contains "$out" 'still building' "the return brief rendered the silent routine note"
   assert_not_contains "$out" 'BRANCH OUTCOMES section' "the all-silent brief pointed at a drain section that does not exist"
   [ ! -e "$dir/home/state/.branch-outcomes-cursor" ] || fail "the return moved the outcome store's read cursor"
@@ -851,11 +848,9 @@ test_return_brief_keeps_refresh_history() {
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
   out=$(run_return "$dir" begin) || fail "refreshed posture return did not clear: $out"
-  assert_contains "$out" $'  your words superseded at ' "the superseded words were omitted"
-  assert_contains "$out" '    first mandate: merge task first PR when green' "the superseded words were not rendered verbatim"
-  assert_contains "$out" $'  your words at entry:\n    replacement mandate' "the final words were omitted"
-  assert_contains "$out" 'first: completed before the mandate refresh' "the pre-refresh outcome was omitted"
-  assert_contains "$out" $'    replacement mandate\n    \n  the away session took no action under them.\n  Recently landed (cleanup due):' "the return brief dropped a trailing blank line from the final words or lost the empty account"
+  assert_contains "$out" 'Away instructions: retained in the posture archive.' "the brief omitted the instruction summary"
+  assert_contains "$out" 'Details: state/.afk-return-catchup, state/afk-contracts, and state/branch-outcomes.jsonl' "the brief omitted the details pointer"
+  assert_contains "$out" 'first: completed before the mandate refresh' "the pre-refresh outcome was not retained in its durable store"
   [ -f "$dir/home/state/afk-contracts/$first_epoch.afk-contract" ] || fail "return did not archive the final session record at the canonical path"
   pass "a refreshed posture keeps its original window, superseded mandate, and earlier outcomes"
 }
@@ -916,7 +911,7 @@ test_missing_epoch_record_stays_required_after_disappearing() {
   cp "$backup" "$record"
   out=$(run_return "$dir" check) || fail "check did not clear after the retained record was restored valid: $out"
   assert_contains "$out" "=== Return brief (away $entered ->" "the restored record did not recover its away window"
-  assert_contains "$out" $'  your words at entry:\n    captain words survive' "the restored words were omitted from the brief"
+  assert_contains "$out" 'Away instructions: retained in the posture archive.' "the restored instruction summary was omitted"
   assert_contains "$out" 'captain words survive' "the restored captain words were omitted from the brief"
   [ -f "$dir/home/state/afk-contracts/$epoch.afk-contract" ] || fail "the restored record was not archived under its recovered epoch"
   assert_contains "$out" 'catch-up clear' "the restored valid record did not clear catch-up"
@@ -1113,13 +1108,9 @@ test_return_brief_health_leads_with_a_gap() {
   else touch -m -d "@$(( $(date +%s) - 900 ))" "$dir/home/state/.last-watcher-beat"; fi
   : > "$dir/home/state/.fake-drain"
   out=$(run_return "$dir" begin) || fail "a clean fleet with a supervision gap should still clear the gate: $out"
-  assert_contains "$out" 'GAP: watcher downtime was detected during the away window' "the downtime marker was not reported as a gap"
-  assert_contains "$out" 'GAP: the watcher beat was ' "the stale beacon was not reported as a gap"
+  assert_contains "$out" 'Health: GAP: watcher downtime was detected during the away window' "the downtime marker was not summarized as a gap"
   assert_not_contains "$out" 'no detected gap' "a gap window was reported as clean"
-  gap_line=$(line_of "$out" 'GAP: watcher downtime')
-  clean_line=$(line_of "$out" '  Your instructions:')
-  [ "$gap_line" -lt "$clean_line" ] || fail "the gap was not reported before the instructions"
-  pass "the return brief leads with supervisor health and names every detected gap"
+  pass "the return brief summarizes supervisor health and points to retained details"
 }
 
 test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
@@ -1134,8 +1125,8 @@ test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
   out=$(run_return "$dir" begin) || fail "a clean fleet with only a handled marker should clear the gate: $out"
-  assert_not_contains "$out" 'GAP: watcher downtime was detected' "an acked recovery marker was reported as an open gap"
-  assert_contains "$out" 'no detected gap' "a fully acked window was not reported as clean"
+  assert_not_contains "$out" 'Health: GAP: watcher downtime was detected' "an acked recovery marker was reported as an open gap"
+  assert_contains "$out" 'Health: supervision ran through the away window with no detected gap' "a fully acked window was not reported as clean"
   pass "the return brief does not report an already-acked watcher-down marker as an open gap"
 }
 
@@ -1155,10 +1146,9 @@ test_return_brief_reports_only_an_open_downtime_episode_as_a_gap() {
     case "$token" in
       *:handling)
         assert_not_contains "$out" 'GAP:' "$token: a wake mid-handling was reported as a gap"
-        assert_contains "$out" 'no detected gap' "$token: a wake mid-handling hid the clean health line"
-        assert_contains "$out" "a wake was being handled at return (recovery marker $token); not a gap" "$token: the handling state was not reported as information" ;;
+        assert_contains "$out" 'Health: supervision ran through the away window with no detected gap' "$token: a wake mid-handling hid the clean health summary" ;;
       *)
-        assert_contains "$out" 'GAP: watcher downtime was detected during the away window (recovery marker present)' "$token: an open downtime episode was not reported as a gap"
+        assert_contains "$out" 'Health: GAP: watcher downtime was detected during the away window (recovery marker present)' "$token: an open downtime episode was not reported as a gap"
         assert_not_contains "$out" 'no detected gap' "$token: an open downtime episode was reported as clean" ;;
     esac
   done
