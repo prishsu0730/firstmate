@@ -1069,11 +1069,17 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     | ([ $owned_in_flight[] as $work
            | $tasks[]
            | select(.id == $work.id and .current_state.state != "working"
-               and ($work.current_role == "held" or (.current_state.state as $state
-                 | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null))
+               and (.current_state.state as $state
+                 | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null)
            | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
               blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
               reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $child_holds
+    | ([ $owned_in_flight[] as $work
+         | select($work.current_role == "held")
+         | $tasks[]
+         | select(.id == $work.id)
+         | {id,title:((.backlog.title // .id) | trunc(90)),state:.current_state.state,kind,
+            reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $held_workers
     | ($child_holds + [ $queued_all[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
          | select(.state != "in_flight" or (.id as $id | [$child_holds[].id] | index($id) | not))
@@ -1118,6 +1124,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
         active_children:$active_all[:$child_n],
         decisions_open:$decisions_all[:$decisions_n],
         holds:$holds_all[:$queued_n],
+        held_workers:$held_workers,
         queued:([$queued_all[] | {id:(.id | trunc(120)),title:(.title | trunc(120)),
           blocked_by:((.blocked_by // null) | if . == null then null else trunc(120) end),
           blocked_by_ids:((.blocked_by_ids // []) | map(trunc(120))),

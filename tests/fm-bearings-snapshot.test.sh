@@ -2988,8 +2988,13 @@ test_held_child_states_survive_queued_hold_bound() {
 - [ ] held-done - Finished observation (repo: sample) (kind: scout) (hold: watch) (hold-kind: external)
 - [ ] held-failed - Failed observation (repo: sample) (kind: scout) (hold: watch) (hold-kind: external)
 
-## Queued
 EOF
+  i=1
+  while [ "$i" -le 20 ]; do
+    printf -- '- [ ] ordinary-%02d - Ordinary paused (repo: sample) (kind: scout)\n' "$i" >> "$mate/data/backlog.md"
+    i=$((i + 1))
+  done
+  printf '\n## Queued\n' >> "$mate/data/backlog.md"
   i=1
   while [ "$i" -le 21 ]; do
     printf -- '- [ ] gate-%02d - Queued hold (repo: sample) (kind: scout) (hold: waiting) (hold-kind: external)\n' \
@@ -3012,6 +3017,17 @@ EOF
   printf 'finished report\n' > "$mate/data/held-done/report.md"
   printf 'done: report ready\n' > "$mate/state/held-done.status"
   printf 'failed: observation failed\n' > "$mate/state/held-failed.status"
+  i=1
+  while [ "$i" -le 20 ]; do
+    id=$(printf 'ordinary-%02d' "$i")
+    mkdir -p "$mate/projects/$id"
+    fm_write_meta "$mate/state/$id.meta" \
+      "window=firstmate:fm-$id" "worktree=$mate/projects/$id" "project=sample" \
+      "harness=claude" "kind=scout" "mode=scout"
+    record_claude_state "$mate/state" "$id" idle
+    printf 'paused: ordinary wait\n' > "$mate/state/$id.status"
+    i=$((i + 1))
+  done
 
   fakebin=$(make_fakebin "$home")
   refresh_local_secondmate_ledgers "$home"
