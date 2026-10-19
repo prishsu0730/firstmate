@@ -1373,6 +1373,36 @@ test_missing_final_archive_keeps_retained_contract_gated() {
   pass "the retained contract epoch requires its final archive on every check"
 }
 
+test_guarded_blocker_resolution() {
+  local dir out rc before
+  dir="$TMP_ROOT/resolve"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  run_return "$dir" begin >/dev/null || :
+  before=$(cat "$dir/home/state/repair-task.status")
+  for args in 'unknown|a reason' 'repair-key|   '; do
+    set +e
+    out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve "${args%%|*}" --reason "${args#*|}" 2>&1)
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "invalid resolution accepted: $args"
+    [ "$(cat "$dir/home/state/repair-task.status")" = "$before" ] || fail "invalid resolution wrote status"
+  done
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1) || fail "resolution failed: $out"
+  assert_contains "$(cat "$dir/home/state/repair-task.status")" 'repaired the cause' "reason missing from status"
+  before=$(cat "$dir/home/state/repair-task.status")
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'another reason' 2>&1) || fail "repeat resolution failed: $out"
+  assert_contains "$out" 'already resolved' "repeat did not explain no-op"
+  [ "$(cat "$dir/home/state/repair-task.status")" = "$before" ] || fail "repeat appended duplicate"
+  out=$(run_return "$dir" check) || fail "resolved blocker kept gate: $out"
+  assert_contains "$out" 'catch-up clear' "gate did not clear"
+  pass "guarded resolution validates, records reason, and clears catch-up"
+}
+
+test_guarded_blocker_resolution
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings
 test_explicit_reclassification_requires_durable_reason
 test_captain_decision_does_not_masquerade_as_firstmate_blocker

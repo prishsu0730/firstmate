@@ -6,6 +6,7 @@
 #   fm-afk-return.sh          Stop away mode, render the return brief, and open/check the gate.
 #   fm-afk-return.sh begin    Same as the default command.
 #   fm-afk-return.sh check    Re-render the brief and close the gate only after blockers resolve.
+#   fm-afk-return.sh resolve <key> --reason <text>  Close one listed open blocker with its reason.
 #   fm-afk-return.sh guard    Read-only consult: exit 3 while away mode is still
 #                            active, exit 4 while return catch-up is pending.
 #   fm-afk-return.sh catchup-summary  Read-only catch-up projection for a reporting surface.
@@ -31,9 +32,9 @@
 # daemon shutdown so the shutdown itself cannot read as a gap.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
-# live task's open blocked event must be remediated and closed with
-# `resolved [key=...]`, or explicitly reclassified in the status stream with a
-# durable reason, before an ordinary captain request may proceed.
+# live task's open blocked event must be remediated or reclassified and closed
+# with a durable reason before an ordinary captain request may proceed.
+# Use `fm-afk-return.sh resolve <key> --reason <text>` for a listed blocker.
 # `needs-decision:` is deliberately not part of this blocker gate. The gate
 # keeps every open blocker until that blocker's own resolution is proven.
 # Captain-verdict outcomes are listed under "waiting on you", but cannot exempt
@@ -76,7 +77,7 @@ CONTRACT="$SCRIPT_DIR/fm-afk-contract.sh"
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
 
 usage() {
-  sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 clean_field() {
@@ -310,7 +311,7 @@ return_guard() {
   fi
   if [ -e "$GATE" ]; then
     if gate_has_blockers "$GATE"; then
-      printf 'fm-afk-return: return catch-up is pending; remediate or durably reclassify every listed blocker, then run bin/fm-afk-return.sh check\n' >&2
+      printf 'fm-afk-return: return catch-up is pending; handle every listed blocker, run bin/fm-afk-return.sh resolve <key> --reason <text>, then run bin/fm-afk-return.sh check\n' >&2
       print_blockers "$GATE" >&2
     else
       # No blocker row exists, so naming "every listed blocker" would ask for
@@ -880,7 +881,7 @@ EOF
     printf 'fm-afk-return: catch-up must finish before the captain request\n' >&2
     print_evidence "$GATE" >&2
     print_blockers "$GATE" >&2
-    printf 'fm-afk-return: handle each blocker now, or close it with resolved [key=...] and append a durable reclassification reason, then run bin/fm-afk-return.sh check\n' >&2
+    printf 'fm-afk-return: handle each blocker, then run bin/fm-afk-return.sh resolve <key> --reason <text> and bin/fm-afk-return.sh check\n' >&2
     rm -f "$evidence" "$blockers" "$drain_err" "$presentation"
     return 3
   fi
@@ -915,10 +916,45 @@ EOF
   return 0
 }
 
+resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
+  local key=$1 reason=$2 tag id row_key summary matches=0 target='' open verb line rc
+  _fm_decision_slug_ok "$key" || { printf 'fm-afk-return: invalid key\n' >&2; return 2; }
+  case "$reason" in *[![:space:]]*) ;; *) printf 'fm-afk-return: reason must not be empty\n' >&2; return 2 ;; esac
+  case "$reason" in *$'\n'*|*$'\r'*) printf 'fm-afk-return: reason must be one line\n' >&2; return 2 ;; esac
+  [ -f "$GATE" ] && [ ! -L "$GATE" ] && [ -r "$GATE" ] || { printf 'fm-afk-return: no readable catch-up gate\n' >&2; return 1; }
+  while IFS="$(printf '\t')" read -r tag id row_key summary; do
+    [ "$tag" = blocker ] && [ "$row_key" = "$key" ] || continue
+    matches=$((matches + 1))
+    target=$id
+  done < "$GATE"
+  [ "$matches" -eq 1 ] || { printf 'fm-afk-return: key is unknown or ambiguous in the catch-up gate: %s\n' "$key" >&2; return 1; }
+  # The id comes from the gate, but must still name a single local status file.
+  case "$target" in ''|.|..|*[!a-zA-Z0-9._-]*) printf 'fm-afk-return: invalid task id in gate\n' >&2; return 1 ;; esac
+  target="$STATE/$target.status"
+  status_path_readable "$target" || { printf 'fm-afk-return: status is unreadable: %s\n' "$target" >&2; return 1; }
+  open=$(status_open_decisions "$target") || return 1
+  verb=$(_fm_open_set_verb "$open" "$key")
+  if [ "$verb" != blocked ]; then
+    if [ -z "$verb" ] && [ "$(status_key_closing_verb "$target" "$key")" = resolved ]; then
+      printf 'fm-afk-return: %s already resolved\n' "$key"
+      return 0
+    fi
+    printf 'fm-afk-return: key is not currently an open blocker: %s\n' "$key" >&2
+    return 1
+  fi
+  line="resolved [key=$key]: $reason"
+  _fm_decision_key_transition_allowed "$key" "$reason" || { printf 'fm-afk-return: key requires its owner-specific resolution: %s\n' "$key" >&2; return 1; }
+  rc=0
+  fm_wake_status_append_self_announced "$STATE" "$target" "$line" || rc=$?
+  [ "$rc" -ne 2 ] || { printf 'fm-afk-return: status append failed\n' >&2; return 1; }
+  printf 'fm-afk-return: resolved %s\n' "$key"
+}
+
 main() {
   local mode=${1:-begin} rc window_epoch contract_epoch
   case "$mode" in
-    begin|check) ;;
+    begin|check) [ "$#" -le 1 ] || { usage >&2; return 2; } ;;
+    resolve) [ "$#" -eq 4 ] && [ "$3" = --reason ] || { usage >&2; return 2; } ;;
     guard) return_guard; return ;;
     catchup-summary) catchup_summary; return ;;
     -h|--help|help) usage; return 0 ;;
@@ -941,6 +977,13 @@ main() {
   mkdir -p "$STATE" || return 1
   fm_lock_acquire_wait "$LOCK"
   trap 'fm_lock_release "$LOCK"' EXIT
+  if [ "$mode" = resolve ]; then
+    resolve_blocker "$2" "$4"
+    rc=$?
+    fm_lock_release "$LOCK"
+    trap - EXIT
+    return "$rc"
+  fi
   window_epoch=$(window_start_epoch)
   contract_epoch=$(gate_contract_epoch)
   if [ -z "$contract_epoch" ] && fm_afk_contract_present "$STATE"; then
