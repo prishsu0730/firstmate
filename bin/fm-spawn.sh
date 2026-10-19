@@ -1670,7 +1670,7 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 spawn_refuse_if_away_spend_cap() {
-  local cap live meta
+  local cap live meta task_id verdict inventory session window
   [ "$RELAUNCH" -ne 1 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ -f "$STATE/.afk-contract" ] || return 0
@@ -1684,19 +1684,42 @@ spawn_refuse_if_away_spend_cap() {
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
+    task_id=${meta##*/}
+    task_id=${task_id%.meta}
+    verdict=unknown
+    if [ -z "$(fm_meta_get "$meta" remote_host)" ] \
+      && fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1; then
+      verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
+    fi
+    case "$verdict" in
+      dead) continue ;;
+      missing)
+        # A failed server connection does not prove which tmux server held the
+        # task. Only a successful inventory omitting its exact window proves
+        # absence; every other backend or failed inventory stays unknown.
+        if [ "$FM_BACKEND_VALIDATED_BACKEND" = tmux ]; then
+          session=${FM_BACKEND_VALIDATED_TARGET%%:*}
+          window=${FM_BACKEND_VALIDATED_TARGET#*:}
+          if fm_backend_source tmux \
+            && inventory=$(fm_backend_tmux_window_inventory "$session") \
+            && ! printf '%s\n' "$inventory" | grep -Fxq -- "$window"; then
+            continue
+          fi
+        fi
+        ;;
+    esac
     live=$((live + 1))
   done
   if [ "$live" -ge "$cap" ]; then
-    echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
+    echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live or have unknown liveness in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
     exit 1
   fi
 }
 # Spend cap (bin/fm-afk-contract.sh's spend_max_concurrent_workers): while an
 # away record exists (never a quiet-mode one, whose captain is present and
 # spends as attended: bin/fm-afk-contract.sh mode), a fresh ordinary spawn
-# refuses for BOTH actors once this home already holds that many ordinary task
-# records, counted the same way the return brief counts tasks live at return
-# (every state/*.meta whose kind is not secondmate). A relaunch replaces a
+# refuses for BOTH actors once this home holds that many ordinary workers
+# whose endpoints are live or whose liveness cannot be proven absent. A relaunch replaces a
 # worker that already counts, and a secondmate is a persistent home rather than
 # spend, so both are exempt. Checked before any endpoint, worktree, or record
 # exists, so a refusal costs nothing to unwind; rechecked after the task-set
