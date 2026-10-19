@@ -63,6 +63,10 @@ CONTRACT="$SCRIPT_DIR/fm-afk-contract.sh"
 # Functions only: decodes the stored hold reasons the catch-up listing shows.
 # shellcheck source=bin/fm-hold-reason-lib.sh
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
+# shellcheck source=bin/fm-lock-lib.sh
+. "$SCRIPT_DIR/fm-lock-lib.sh"
+# shellcheck source=bin/fm-pr-lib.sh
+. "$SCRIPT_DIR/fm-pr-lib.sh"
 
 usage() {
   sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -529,18 +533,45 @@ scan_landed_awaiting_cleanup() {  # -> <task>\t<url> rows
   done
 }
 
+pr_url_in_text() {  # <text> -> validated PR URL
+  local candidate
+  while IFS= read -r candidate; do
+    if fm_pr_url_parse "$candidate"; then
+      printf '%s' "$FM_PR_URL"
+      return 0
+    fi
+  done < <(printf '%s\n' "$1" | grep -oE 'https://[A-Za-z0-9._/+~-]+' || true)
+  return 1
+}
+
 scan_review_ready_prs() {  # -> <task>\t<url> rows
-  local meta task status
+  local meta task status line note url
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
     status=$(FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>/dev/null) || continue
-    case "$status" in 'state: done '*'PR ready for review'*) ;; *) continue ;; esac
-    fm_pr_metadata_identity_parse "$meta" || continue
+    case "$status" in 'state: done '*) ;; *) continue ;; esac
+    line=
+    if status_path_readable "$STATE/$task.status"; then
+      line=$(last_status_line "$STATE/$task.status")
+    fi
+    note=$(status_line_note "$line")
+    case "$status" in
+      *'PR ready for review'*) url=$(pr_url_in_text "$status" || true) ;;
+      *)
+        [ "$(status_line_verb "$line")" = done ] || continue
+        case "$note" in *'checks green'*|*'published for review'*|*'ready for review'*) ;; *) continue ;; esac
+        url= ;;
+    esac
+    if [ -z "$url" ] && fm_pr_metadata_identity_parse "$meta"; then
+      url=$FM_PR_META_URL
+    fi
+    [ -n "$url" ] || url=$(pr_url_in_text "$note" || true)
+    [ -n "$url" ] && fm_pr_url_parse "$url" || continue
     fm_pr_poll_merge_already_notified "$STATE" "$task" \
-      "$FM_PR_META_PROVIDER" "$FM_PR_META_HOST" "$FM_PR_META_PATH" "$FM_PR_META_NUMBER" \
+      "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" \
       && continue
-    printf '%s\t%s\n' "$task" "$FM_PR_META_URL"
+    printf '%s\t%s\n' "$task" "$FM_PR_URL"
   done
 }
 
@@ -557,7 +588,7 @@ pr_has_window_status_event() {  # <task> <url> <merged|ready> <since> <until>
     case "$note" in *"$url"*) after=${note#*"$url"} ;; *) continue ;; esac
     case "$after" in ''|' '*|','*|')'*|'.'*|';'*) ;; *) continue ;; esac
     case "$kind:$note" in
-      merged:*merged*|ready:*'ready for review'*|ready:*'checks green'*) return 0 ;;
+      merged:*merged*|ready:*'ready for review'*|ready:*'checks green'*|ready:*'published for review'*) return 0 ;;
     esac
   done < "$status"
   return 1
@@ -566,7 +597,7 @@ pr_has_window_status_event() {  # <task> <url> <merged|ready> <since> <until>
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-ok>
   local evidence=$1 blockers=$2 since=$3 drain_ok=$4 now record superseded superseded_at archive_dir stamp
   local tag task key summary count routine routine_visible captain visible_outcomes live held_err last verb rows status url unknown_rows drained=0 pointer
-  local landed_rows review_rows file_rows landed_task review_task review_url decision_task decision_key window_end
+  local landed_rows review_rows file_rows landed_task review_task review_url decision_task decision_key window_end marker_epoch waiting_rows needs_rows
   now=$(date +%s)
   window_end=$(awk -F '\t' '$1 == "started" { print $2; exit }' "$GATE" 2>/dev/null || true)
   # Where main processes outcomes through the drain's BRANCH OUTCOMES section
@@ -667,7 +698,13 @@ EOF
     "$((routine + captain))" "$routine" "$captain" "$live"
   file_rows=
   while IFS="$(printf '\t')" read -r task url; do
-    [ -n "$task" ] && pr_has_window_status_event "$task" "$url" merged "$since" "$window_end" || continue
+    [ -n "$task" ] || continue
+    if ! pr_has_window_status_event "$task" "$url" merged "$since" "$window_end"; then
+      marker_epoch=$(fm_lock_path_mtime "$STATE/$task.pr-poll-merge-notified" 2>/dev/null) || continue
+      [ -n "$since" ] && [ -n "$window_end" ] && [ -n "$marker_epoch" ] || continue
+      case "$since:$window_end:$marker_epoch" in *[!0-9:]*) continue ;; esac
+      [ "$marker_epoch" -ge "$since" ] && [ "$marker_epoch" -le "$window_end" ] || continue
+    fi
     file_rows="${file_rows}    - $task: $url (merged)"$'\n'
   done <<EOF
 $landed_rows
@@ -681,7 +718,7 @@ EOF
 $review_rows
 EOF
   if [ -n "$file_rows" ]; then
-    printf '  Files changed: PRs with timestamped away-window status (individual paths unavailable)\n%s' "$file_rows"
+    printf '  Files changed: PRs with away-window merge or ready evidence (individual paths unavailable)\n%s' "$file_rows"
   else
     printf '  Files changed: none recorded\n'
   fi
@@ -689,12 +726,16 @@ EOF
   printf 'Active:\n  Still running:\n'
   count=0
   unknown_rows=''
+  waiting_rows=''
+  needs_rows=''
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     task=$(basename "$meta"); task=${task%.meta}
     status=$(FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>/dev/null) || status='state: unknown'
     case "$status" in
       'state: working '*) printf '  - %s: %s\n' "$task" "$(printf '%s' "$status" | clean_field)"; count=$((count + 1)) ;;
+      'state: parked '*) needs_rows="${needs_rows}  - $task: $(printf '%s' "$status" | clean_field)"$'\n' ;;
+      'state: blocked '*|'state: paused '*|'state: failed '*|'state: done '*) waiting_rows="${waiting_rows}  - $task: $(printf '%s' "$status" | clean_field)"$'\n' ;;
       'state: unknown'*) unknown_rows="${unknown_rows}  - $task: current state unknown"$'\n' ;;
     esac
   done
@@ -703,6 +744,7 @@ EOF
   # Waiting: tried and failed, or could not be fixed.
   printf 'Waiting:\n'
   [ -z "$unknown_rows" ] || printf '%s' "$unknown_rows"
+  [ -z "$waiting_rows" ] || printf '%s' "$waiting_rows"
   printf '  Tried and failed, or could not be fixed:\n'
   count=0
   while IFS="$(printf '\t')" read -r tag kind text; do
@@ -751,6 +793,10 @@ EOF
 
   printf 'Needs Me:\n'
   count=0
+  if [ -n "$needs_rows" ]; then
+    printf '%s' "$needs_rows"
+    count=$((count + 1))
+  fi
   decision_task=
   decision_key=
   for meta in "$STATE"/*.meta; do

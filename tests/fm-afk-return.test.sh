@@ -17,7 +17,8 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TMP_ROOT=$(fm_test_tmproot fm-afk-return-tests)
+TMP_ROOT=$(fm_test_tmproot fm-afk-return-tests) || exit 1
+case "$TMP_ROOT" in ''|"$ROOT"|"$ROOT"/*) printf 'unsafe test root: %s\n' "$TMP_ROOT" >&2; exit 1 ;; esac
 
 install_runner() {  # <case-dir>
   local dir=$1
@@ -749,7 +750,7 @@ SH
     if [ "$scenario" = none ] || [ "$scenario" = unrecorded ]; then
       assert_contains "$out" 'Files changed: none recorded' "empty records did not say no changes were recorded"
     else
-      assert_contains "$out" 'Files changed: PRs with timestamped away-window status (individual paths unavailable)' "$scenario did not show recorded PR changes"
+      assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence (individual paths unavailable)' "$scenario did not show recorded PR changes"
       assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review)' "$scenario omitted the review-ready PR"
       case "$scenario" in
         blocker|decision|captain-outcome|landed)
@@ -770,6 +771,7 @@ test_return_brief_excludes_pr_merged_before_away() {
     . "$ROOT/bin/fm-pr-lib.sh"
     fm_pr_poll_merge_mark_notified "$dir/home/state" old github github.com example/old 3
   ) || fail "could not record the pre-away merge"
+  touch -t 202001010000 "$dir/home/state/old.pr-poll-merge-notified"
   contract_in "$dir" enter --words 'continue ordinary cleanup' >/dev/null 2>&1 \
     || fail "could not enter the later away window"
   outcome_in "$dir" append --task old --verdict routine --summary 'checked cleanup status' >/dev/null \
@@ -781,6 +783,58 @@ test_return_brief_excludes_pr_merged_before_away() {
   assert_contains "$out" 'Next: firstmate closes landed task old with bin/fm-teardown.sh old.' \
     "old landed work was lost from cleanup precedence"
   pass "a later routine outcome does not make a pre-away merge an away-window change"
+}
+
+test_return_brief_reconciles_all_states_and_pr_records() {
+  local dir out active waiting needs files task
+  dir="$TMP_ROOT/brief-record-forms"
+  install_runner "$dir"
+  contract_in "$dir" enter --words 'review ready work and close landed work' >/dev/null 2>&1 \
+    || fail "could not enter the away window"
+  cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  green|published|status-only) printf 'state: done · source: run-step · run completed\n' ;;
+  run-only) printf 'state: done · source: run-step · checks green: PR ready for review: https://github.com/example/run/pull/12\n' ;;
+  parked|blocked|paused|failed|done|working) printf 'state: %s · source: run-step · current task\n' "$1" ;;
+  *) printf 'state: unknown · source: none\n' ;;
+esac
+SH
+  chmod +x "$dir/bin/fm-crew-state.sh"
+  for task in green published status-only run-only parked blocked paused failed done working merged; do
+    printf 'window=synthetic:fm-%s\nbackend=tmux\nkind=ship\n' "$task" > "$dir/home/state/$task.meta"
+    : > "$dir/home/state/$task.status"
+  done
+  printf 'pr=https://github.com/example/green/pull/9\n' >> "$dir/home/state/green.meta"
+  printf 'done [at=%s]: PR https://github.com/example/green/pull/9 checks green\n' "$(date +%s)" > "$dir/home/state/green.status"
+  printf 'pr=https://gerrit.example.com/c/team/app/+/11\n' >> "$dir/home/state/published.meta"
+  printf 'done [at=%s]: PR https://gerrit.example.com/c/team/app/+/11 published for review\n' "$(date +%s)" > "$dir/home/state/published.status"
+  printf 'done [at=%s]: PR https://github.com/example/status/pull/10 checks green\n' "$(date +%s)" > "$dir/home/state/status-only.status"
+  printf 'pr=https://github.com/example/landed/pull/7\n' >> "$dir/home/state/merged.meta"
+  (
+    . "$ROOT/bin/fm-pr-lib.sh"
+    fm_pr_poll_merge_mark_notified "$dir/home/state" merged github github.com example/landed 7
+  ) || fail "could not record the merged PR"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "return did not reconcile the record forms: $out"
+  active=$(printf '%s\n' "$out" | sed -n '/^Active:$/,/^Waiting:$/p')
+  waiting=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
+  needs=$(printf '%s\n' "$out" | sed -n '/^Needs Me:$/,/^Next:/p')
+  files=$(printf '%s\n' "$out" | sed -n '/^  Files changed:/,/^Active:$/p')
+  assert_contains "$active" 'working: state: working' "running work vanished"
+  assert_contains "$needs" 'parked: state: parked' "a validation gate vanished"
+  for task in blocked paused failed done; do
+    assert_contains "$waiting" "$task: state: $task" "$task vanished from waiting"
+  done
+  assert_contains "$out" 'green: https://github.com/example/green/pull/9 (ready for review)' "the checks-green record vanished"
+  assert_contains "$out" 'published: https://gerrit.example.com/c/team/app/+/11 (ready for review)' "the published Gerrit change vanished"
+  assert_contains "$out" 'status-only: https://github.com/example/status/pull/10 (ready for review)' "the status URL without metadata vanished"
+  assert_contains "$out" 'run-only: state: done' "the run-only ready state vanished"
+  assert_contains "$out" 'merged: https://github.com/example/landed/pull/7 (merged)' "the main-home merge marker lacked an away-window time"
+  assert_not_contains "$files" 'run-only:' "an untimed ready run was called an away-window file change"
+  assert_contains "$out" 'Next: firstmate closes landed task merged with bin/fm-teardown.sh merged.' "cleanup lost precedence over review"
+  pass "return brief reconciles crew states and normal PR records with away-window proof"
 }
 
 test_return_brief_keeps_refresh_history() {
@@ -1520,6 +1574,7 @@ test_return_brief_composes_from_record_store_and_held_set
 test_return_brief_lists_landed_work_awaiting_cleanup
 test_return_brief_files_and_next_action_precedence
 test_return_brief_excludes_pr_merged_before_away
+test_return_brief_reconciles_all_states_and_pr_records
 test_return_brief_points_at_the_drain_on_a_host_home_only
 test_return_brief_all_silent_window_does_not_point_at_drain
 test_return_keeps_catchup_gated_when_the_drain_cannot_record_outcomes

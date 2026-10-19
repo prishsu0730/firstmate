@@ -199,7 +199,6 @@ die() {  # <message>
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
 LIVENESS_LOCK_HELD=0
-STOP_MARKER_NEW=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
 
@@ -213,9 +212,6 @@ control_cleanup() {
   # the next lifecycle command for this task writes the same path.
   if [ -n "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     rm -f "$FM_COMPOSER_DIALOG_SINK"
-  fi
-  if [ "$STOP_MARKER_NEW" = 1 ]; then
-    rm -f "$STATE/.secondmate-stopped-$ID" || true
   fi
   if [ "$LIVENESS_LOCK_HELD" = 1 ]; then
     fm_secondmate_liveness_unlock "$ID"
@@ -649,6 +645,13 @@ retire_busy_incarnation() {
   fi
 }
 
+mark_deliberate_stop() {
+  [ "$KIND" = secondmate ] && [ "$VERB" = exit ] || return 0
+  if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
+    printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
+  fi
+}
+
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
@@ -657,6 +660,7 @@ do_exit() {
   state=$(agent_state)
   case "$state" in
     dead)
+      mark_deliberate_stop
       printf 'already-stopped'
       return 0
       ;;
@@ -669,6 +673,7 @@ do_exit() {
       absence=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T")
       case "${absence%%$'\t'*}" in
         gone)
+          mark_deliberate_stop
           # Proven gone, so the agent that lived in it went with it: exit's
           # postcondition already holds and there is nothing to send. Its own
           # outcome rather than `already-stopped`, because the endpoint this
@@ -679,6 +684,7 @@ do_exit() {
           return 0
           ;;
         dead)
+          mark_deliberate_stop
           # The endpoint was only unreachable and is there after all, holding
           # no agent - a herdr pane whose session server was merely stopped is
           # the common case. Nothing is gone, so this is the ordinary
@@ -704,6 +710,7 @@ do_exit() {
       state=$(agent_state)
       case "$state" in
         dead)
+          mark_deliberate_stop
           retire_busy_incarnation
           printf 'stopped'
           return 0
@@ -744,6 +751,7 @@ do_exit() {
   # authoritative proof is the agent-state wait below. The retried Enter still
   # matters, because a slash command opens a completion popup on some TUIs that
   # swallows the first Enter.
+  mark_deliberate_stop
   verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
@@ -1200,14 +1208,7 @@ case "$VERB" in
     echo "interrupt-delivered $ID harness=$HARNESS backend=$BACKEND verified=$proof"
     ;;
   exit)
-    if [ "$KIND" = secondmate ]; then
-      if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
-        printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
-        STOP_MARKER_NEW=1
-      fi
-    fi
     result=$(do_exit)
-    STOP_MARKER_NEW=0
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
