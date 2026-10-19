@@ -87,6 +87,19 @@ ack_return() {  # <case-dir> <return-output>
     "$dir/bin/fm-wake-drain.sh" --ack-through "$sequence" --recovery-generation "$generation"
 }
 
+count_fold_calls() {  # <case-dir>  Counts runs of the origins fold in this case's copied library.
+  local dir=$1
+  cat >> "$dir/bin/fm-classify-lib.sh" <<SH
+
+eval "\$(declare -f _fm_status_open_decision_origins | sed '1s/.*/_fm_counted_origins ()/')"
+_fm_status_open_decision_origins() {
+  printf 'x\\n' >> '$dir/fold-calls'
+  _fm_counted_origins "\$@"
+}
+SH
+  : > "$dir/fold-calls"
+}
+
 seed_live_blocker() {  # <case-dir> <backend> <key>
   local dir=$1 backend=$2 key=$3 target
   case "$backend" in
@@ -1485,6 +1498,83 @@ test_resolution_refuses_changed_unstamped_blocker() {
   pass "unstamped blockers bind to their saved status line"
 }
 
+test_resolution_refuses_identically_reopened_blocker() {
+  local dir out rc before status stamped
+  for stamped in 0 1; do
+    dir="$TMP_ROOT/resolve-identical-reopen-$stamped"
+    install_runner "$dir"
+    seed_live_blocker "$dir" tmux repair-key
+    sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+    touch "$dir/home/state/.last-watcher-beat"
+    : > "$dir/home/state/.fake-drain"
+    status="$dir/home/state/repair-task.status"
+    if [ "$stamped" -eq 1 ]; then
+      printf 'blocked [key=repair-key] [at=1700000000]: token expired\n' > "$status"
+    else
+      printf 'blocked [key=repair-key]: token expired\n' > "$status"
+    fi
+    set +e
+    out=$(run_return "$dir" begin)
+    rc=$?
+    set -e
+    [ "$rc" -eq 3 ] || fail "blocker did not open catch-up (stamped=$stamped): $out"
+    out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'token refreshed' 2>&1) || fail "first resolve failed (stamped=$stamped): $out"
+    if [ "$stamped" -eq 1 ]; then
+      printf 'blocked [key=repair-key] [at=1700000000]: token expired\n' >> "$status"
+    else
+      printf 'blocked [key=repair-key]: token expired\n' >> "$status"
+    fi
+    before=$(cat "$status")
+    set +e
+    out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'token refreshed' 2>&1)
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "identical reopened blocker was closed with the old reason (stamped=$stamped): $out"
+    [ "$(cat "$status")" = "$before" ] || fail "identical reopened blocker got a resolution appended (stamped=$stamped)"
+    set +e
+    out=$(run_return "$dir" check)
+    rc=$?
+    set -e
+    [ "$rc" -eq 3 ] || fail "identical reopened blocker did not retain catch-up (stamped=$stamped): $out"
+  done
+  pass "identically reopened blockers are not treated as resolved"
+}
+
+test_blocker_scan_folds_each_status_file_once() {
+  local dir out rc status count_one count_three
+  dir="$TMP_ROOT/scan-fold-once-one"
+  install_runner "$dir"
+  count_fold_calls "$dir"
+  seed_live_blocker "$dir" tmux key-a
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "one blocker did not open catch-up: $out"
+  count_one=$(wc -l < "$dir/fold-calls" | tr -d ' ')
+  dir="$TMP_ROOT/scan-fold-once-three"
+  install_runner "$dir"
+  count_fold_calls "$dir"
+  seed_live_blocker "$dir" tmux key-a
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=key-b] [at=1700000001]: second\nblocked [key=key-c] [at=1700000002]: third\n' >> "$status"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "three blockers did not open catch-up: $out"
+  count_three=$(wc -l < "$dir/fold-calls" | tr -d ' ')
+  [ "$count_one" -ge 1 ] || fail "origins fold counter never ran; the shim is vacuous"
+  [ "$count_three" -eq "$count_one" ] || fail "origins fold ran $count_three times for three blockers but $count_one for one"
+  pass "blocker scan folds each status file once"
+}
+
 test_resolution_refuses_reopened_blocker() {
   local dir out rc before status
   dir="$TMP_ROOT/resolve-reopened"
@@ -1616,6 +1706,8 @@ test_legacy_gate_blocker_row
 test_resolution_selects_task_for_duplicate_keys
 test_resolution_uses_configured_close_verb
 test_resolution_refuses_changed_unstamped_blocker
+test_resolution_refuses_identically_reopened_blocker
+test_blocker_scan_folds_each_status_file_once
 test_resolution_refuses_reopened_blocker
 test_resolution_routes_pending_reply_to_owner
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings

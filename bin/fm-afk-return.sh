@@ -182,17 +182,18 @@ status_path_readable() {
   [ -f "$1" ] && [ -r "$1" ] && [ ! -L "$1" ]
 }
 
-blocker_open_identity() {  # <status-file> <key>
-  local status=$1 key=$2 origins origin_key number line stamp
-  origins=$(_fm_status_open_decision_origins "$status") || return 1
+blocker_open_identity() {  # <status-file> <key> <origins>  Origins come from one fold of that file.
+  local status=$1 key=$2 origins=$3 origin_key number line stamp
   while IFS=$'\t' read -r origin_key number; do
     [ "$origin_key" = "$key" ] || continue
     line=$(sed -n "${number}p" "$status") || return 1
     [ "$(status_line_verb "$line")" = blocked ] || return 1
+    # The origin line number keeps a blocker reopened later with the same text
+    # or in the same second a different episode; status files are append-only.
     if stamp=$(status_line_at_epoch "$line"); then
-      printf '%s' "$stamp"
+      printf '%s:%s' "$number" "$stamp"
     else
-      printf 'line:%s' "$(printf '%s' "$line" | LC_ALL=C od -An -tx1 | tr -d '[:space:]')"
+      printf 'line:%s:%s' "$number" "$(printf '%s' "$line" | LC_ALL=C od -An -tx1 | tr -d '[:space:]')"
     fi
     return
   done <<EOF
@@ -202,7 +203,7 @@ EOF
 }
 
 scan_open_blockers() {  # -> tab-separated blocker rows
-  local meta id status key verb summary clean_summary open stamp
+  local meta id status key verb summary clean_summary open stamp origins
   STATUS_SCAN_ERROR=
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
@@ -226,10 +227,14 @@ scan_open_blockers() {  # -> tab-separated blocker rows
       STATUS_SCAN_ERROR=$status
       return 1
     fi
+    origins=
     while IFS="$(printf '\t')" read -r key verb summary; do
       [ "$verb" = blocked ] || continue
       clean_summary=$(printf '%s' "$summary" | clean_field)
-      stamp=$(blocker_open_identity "$status" "$key") || { STATUS_SCAN_ERROR=$status; return 1; }
+      if [ -z "$origins" ]; then
+        origins=$(_fm_status_open_decision_origins "$status") || { STATUS_SCAN_ERROR=$status; return 1; }
+      fi
+      stamp=$(blocker_open_identity "$status" "$key" "$origins") || { STATUS_SCAN_ERROR=$status; return 1; }
       printf 'blocker\t%s\t%s\t%s\t%s\n' "$id" "$key" "$stamp" "$clean_summary"
     done <<EOF
 $open
@@ -940,7 +945,7 @@ EOF
 }
 
 resolve_blocker() {
-  local key=$1 task=$2 reason=$3 row tag id row_key stamp summary matches=0 target='' saved_identity='' current_identity open verb line rc close_verb
+  local key=$1 task=$2 reason=$3 row tag id row_key stamp summary matches=0 target='' saved_identity='' current_identity origins open verb line rc close_verb
   _fm_decision_slug_ok "$key" || { printf 'fm-afk-return: invalid key\n' >&2; return 2; }
   case "$task" in .|..|*[!a-zA-Z0-9._-]*) printf 'fm-afk-return: invalid task id\n' >&2; return 2 ;; esac
   case "$reason" in *[![:space:]]*) ;; *) printf 'fm-afk-return: reason must not be empty\n' >&2; return 2 ;; esac
@@ -975,7 +980,8 @@ resolve_blocker() {
     printf 'fm-afk-return: key is not currently an open blocker: %s\n' "$key" >&2
     return 1
   fi
-  current_identity=$(blocker_open_identity "$target" "$key") || current_identity=
+  origins=$(_fm_status_open_decision_origins "$target") || origins=
+  current_identity=$(blocker_open_identity "$target" "$key" "$origins") || current_identity=
   [ "$current_identity" = "$saved_identity" ] || {
     printf 'fm-afk-return: blocker changed; rerun begin/check before resolving %s\n' "$key" >&2
     return 1
