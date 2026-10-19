@@ -953,7 +953,7 @@ resolve_blocker() {  # <key> <reason>; caller holds the catch-up lock
 main() {
   local mode=${1:-begin} rc window_epoch contract_epoch
   case "$mode" in
-    begin|check) [ "$#" -le 1 ] || { usage >&2; return 2; } ;;
+    begin|check) ;;
     resolve) [ "$#" -eq 4 ] && [ "$3" = --reason ] || { usage >&2; return 2; } ;;
     guard) return_guard; return ;;
     catchup-summary) catchup_summary; return ;;

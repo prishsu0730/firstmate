@@ -1381,7 +1381,11 @@ test_guarded_blocker_resolution() {
   sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
-  run_return "$dir" begin >/dev/null || :
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" begin ignored-extra-argument 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "begin with an extra argument did not retain the blocker gate (rc=$rc): $out"
   before=$(cat "$dir/home/state/repair-task.status")
   for args in 'unknown|a reason' 'repair-key|   '; do
     set +e
@@ -1397,7 +1401,7 @@ test_guarded_blocker_resolution() {
   out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'another reason' 2>&1) || fail "repeat resolution failed: $out"
   assert_contains "$out" 'already resolved' "repeat did not explain no-op"
   [ "$(cat "$dir/home/state/repair-task.status")" = "$before" ] || fail "repeat appended duplicate"
-  out=$(run_return "$dir" check) || fail "resolved blocker kept gate: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" check ignored-extra-argument 2>&1) || fail "check with an extra argument kept the gate: $out"
   assert_contains "$out" 'catch-up clear' "gate did not clear"
   pass "guarded resolution validates, records reason, and clears catch-up"
 }
