@@ -798,7 +798,7 @@ case "$1" in
 esac
 SH
   chmod +x "$dir/bin/fm-crew-state.sh"
-  for task in green published status-only run-only parked blocked paused failed done working merged; do
+  for task in green published status-only run-only parked blocked paused failed "done" working merged; do
     printf 'window=synthetic:fm-%s\nbackend=tmux\nkind=ship\n' "$task" > "$dir/home/state/$task.meta"
     : > "$dir/home/state/$task.status"
   done
@@ -821,7 +821,7 @@ SH
   files=$(printf '%s\n' "$out" | sed -n '/^  Files changed:/,/^Active:$/p')
   assert_contains "$active" 'working: state: working' "running work vanished"
   assert_contains "$needs" 'parked: state: parked' "a validation gate vanished"
-  for task in blocked paused failed done; do
+  for task in blocked paused failed "done"; do
     assert_contains "$waiting" "$task: state: $task" "$task vanished from waiting"
   done
   assert_contains "$out" 'green: https://github.com/example/green/pull/9 (ready for review)' "the checks-green record vanished"

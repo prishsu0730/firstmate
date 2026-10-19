@@ -523,7 +523,7 @@ scan_review_ready_prs() {  # -> <task>\t<url> rows
     case "$status" in
       *'PR ready for review'*) url=$(pr_url_in_text "$status" || true) ;;
       *)
-        [ "$(status_line_verb "$line")" = done ] || continue
+        [ "$(status_line_verb "$line")" = "done" ] || continue
         case "$note" in *'checks green'*|*'published for review'*|*'ready for review'*) ;; *) continue ;; esac
         url= ;;
     esac
@@ -531,7 +531,7 @@ scan_review_ready_prs() {  # -> <task>\t<url> rows
       url=$FM_PR_META_URL
     fi
     [ -n "$url" ] || url=$(pr_url_in_text "$note" || true)
-    [ -n "$url" ] && fm_pr_url_parse "$url" || continue
+    if [ -z "$url" ] || ! fm_pr_url_parse "$url"; then continue; fi
     fm_pr_poll_merge_already_notified "$STATE" "$task" \
       "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER" \
       && continue
@@ -547,7 +547,7 @@ pr_has_window_status_event() {  # <task> <url> <merged|ready> <since> <until>
     epoch=$(status_line_at_epoch "$line") || continue
     [ "$epoch" -ge "$since" ] && [ "$epoch" -le "$until" ] || continue
     verb=$(status_line_verb "$line")
-    [ "$verb" = done ] || continue
+    [ "$verb" = "done" ] || continue
     note=$(status_line_note "$line")
     case "$note" in *"$url"*) after=${note#*"$url"} ;; *) continue ;; esac
     case "$after" in ''|' '*|','*|')'*|'.'*|';'*) ;; *) continue ;; esac
