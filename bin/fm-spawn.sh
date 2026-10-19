@@ -1670,7 +1670,7 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 spawn_refuse_if_away_spend_cap() {
-  local cap live meta task_id verdict
+  local cap live meta task_id verdict kind remote_host
   [ "$RELAUNCH" -ne 1 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ -f "$STATE/.afk-contract" ] || return 0
@@ -1683,12 +1683,14 @@ spawn_refuse_if_away_spend_cap() {
   live=0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
-    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
+    kind=$(fm_meta_get "$meta" kind)
+    [ "$kind" != secondmate ] || continue
     task_id=${meta##*/}
     task_id=${task_id%.meta}
+    fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1 || continue
     verdict=unknown
-    if [ -z "$(fm_meta_get "$meta" remote_host)" ] \
-      && fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1; then
+    remote_host=$(fm_meta_get "$meta" remote_host)
+    if [ -z "$remote_host" ]; then
       verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
     fi
     [ "$verdict" != dead ] || continue

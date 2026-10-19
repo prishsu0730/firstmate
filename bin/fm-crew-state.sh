@@ -1335,8 +1335,8 @@ if [ "$KIND" != secondmate ]; then
           fi
           emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}busy hook older than status"
           ;;
+        *) emit working pane "harness busy (${BUSY_VERDICT#* })" ;;
       esac
-      emit working pane "harness busy (${BUSY_VERDICT#* })"
       ;;
     idle)
       if scout_finished_evidence; then
