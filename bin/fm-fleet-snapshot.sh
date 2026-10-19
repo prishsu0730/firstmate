@@ -1068,6 +1068,9 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
     | ([ $queued_all[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
+         | select(.state != "in_flight" or (.id as $id
+             | any($tasks[]; .id == $id and (.current_state.state as $state
+               | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null) | not))
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),
             blocked_by:((.unresolved_blocker_ids | join(",")) | if . == "" then null else trunc(120) end),
             blocked_by_ids:(.blocked_by_ids | map(trunc(120))),
@@ -1076,7 +1079,6 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
        + [ $owned_in_flight[] as $work
            | $tasks[]
            | select(.id == $work.id and (.current_state.state as $state | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null)
-           | select(($work.hold_reason != null and $work.hold_kind != null) | not)
            | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
               blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
               reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $holds_all

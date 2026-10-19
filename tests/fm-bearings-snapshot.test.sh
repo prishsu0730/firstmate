@@ -2732,12 +2732,12 @@ EOF
           and .provenance.trust == "partial-structured"
           and .invalidity == {kind:"child_current_unavailable",ids:["unreadable-child"]}
           and [.decisions_open[].id] == ["reviewer-decision"]
-          and [.holds[].id] == ["reviewer-decision"]
+          and [.holds[].id] == ["reviewer-decision", "unreadable-child"]
           and [.queued[].id] == ["reviewer-decision"]
           and [.landed[].id] == ["prior-release"]
           and [.endpoints[].id] == ["unreadable-child"]
           and .counts.decisions_open == 1
-          and .counts.holds == 1
+          and .counts.holds == 2
           and .counts.queued == 1
           and .counts.landed == 1
           and .counts.endpoints == 1)
@@ -2755,7 +2755,8 @@ EOF
   ' >/dev/null || fail "canonical mixed-domain classification was wrong: $canonical"
   json=$(run "$home" "$fakebin" --json --fields bodies --all-landed)
   printf '%s' "$json" | jq -e '
-    ([.in_flight[].id] | sort) == ["hibit/hibit-worker", "home-assistant/prep", "wheel/wheel-worker"]
+    ([.in_flight[].id] | sort) == ["hibit/hibit-worker", "home-assistant/prep", "sshhip/unreadable-child", "wheel/wheel-worker"]
+      and (.in_flight | any(.id == "sshhip/unreadable-child" and .state == "unknown"))
       and (.decisions_open | any(.id == "sshhip/reviewer-decision"))
       and (.decisions_open | any(.id == "home-assistant/captain-run") | not)
       and (.gates | any(.id == "production-observation" and .owner == "wheel"
@@ -2781,7 +2782,7 @@ EOF
       and .provenance.trust == "partial-structured"
       and .invalidity == {kind:"orphan_in_flight",ids:["ordinary-orphan"]}
       and [.decisions_open[].id] == ["reviewer-decision"]
-      and [.holds[].id] == ["reviewer-decision"]
+      and [.holds[].id] == ["reviewer-decision", "unreadable-child"]
       and [.queued[].id] == ["reviewer-decision"]
       and [.landed[].id] == ["prior-release"]
       and [.endpoints[].id] == ["unreadable-child"]
@@ -2823,8 +2824,13 @@ EOF
     .secondmate_current.records[] | select(.id == "wheel")
     | ([.queued[] | select(.id == "production-observation")] | length) == 1
       and ([.holds[] | select(.id == "production-observation")] | length) == 1
+      and (.holds | any(.id == "production-observation" and .source == "child-state" and .state == "paused"))
       and ([.endpoints[] | select(.id == "production-observation")] | length) == 1
   ' >/dev/null || fail "held metadata plus a real child duplicated or discarded the record: $canonical"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.in_flight[] | select(.id == "wheel/production-observation" and .state == "paused")] | length) == 1
+  ' >/dev/null || fail "secondmate held child state disappeared from bearings: $json"
 
   fm_write_meta "$sshhip/state/unreadable-child.meta" \
     "window=firstmate:fm-unreadable-child" "worktree=$sshhip/projects/child" "project=sshhip" \
@@ -2918,13 +2924,15 @@ EOF
   printf 'working: preparing main canary\n' > "$home/state/prep.status"
   fm_write_meta "$home/state/observation.meta" \
     "window=firstmate:fm-observation" "worktree=$home/projects/observation" "project=firstmate" \
-    "harness=codex" "kind=scout" "mode=scout"
+    "harness=claude" "kind=scout" "mode=scout"
+  record_claude_state "$home/state" observation idle
   printf 'paused: observation is deliberately held\n' > "$home/state/observation.status"
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     (.in_flight | any(.id == "prep"))
-      and (.in_flight | any(.id == "observation") | not)
+      and (.in_flight | any(.id == "observation" and .state == "paused"
+        and (.doing | contains("observation is deliberately held"))))
       and ([.gates[] | select(.id == "observation" and .reason == "watch production")] | length) == 1
       and (.decisions_open | any(.id == "captain-run") | not)
       and (.gates | any(.id == "captain-run" and .blocked_by == "prep,review"))

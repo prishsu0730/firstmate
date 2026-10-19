@@ -508,7 +508,6 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | ([ .tasks[]
        | select(.kind != "secondmate")
        | select(.backlog.current_role != "program")
-       | select(.backlog.current_role != "held" or .current_state.state == "working")
        | {id, kind,
         state: .current_state.state,
         repo:(.backlog.repo // .project // null),

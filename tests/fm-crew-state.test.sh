@@ -5556,7 +5556,8 @@ test_reliability_reconciles_status_and_activity() {
   FM_FAKE_TMUX_COMMAND=codex
   printf 'paused [at=%s]: awaiting direction\n' "$now" > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)
-  assert_contains "$out" 'state: paused' 'fresh pause should survive an unverifiable Codex busy state'
+  assert_contains "$out" 'state: unknown' 'fresh pause cannot verify Codex turn activity'
+  assert_contains "$out" 'codex-unverified' 'unknown Codex state names missing activity evidence'
 
   printf 'paused [at=1]: stale pause\n' > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)

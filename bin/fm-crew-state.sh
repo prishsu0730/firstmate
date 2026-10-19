@@ -147,8 +147,7 @@
 #      proven historical head, or kind=scout): fall back to the recorded
 #      backend's pane busy state and resolved status declaration. Stamped
 #      contradictions identify both sources; a finished scout additionally needs
-#      its report and a task-bound endpoint. A recent paused Codex declaration
-#      can answer an unverified busy signal only with a verified live endpoint.
+#      its report and a task-bound endpoint.
 #      Decision-only events such as `resolved` never become current state or detail.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
@@ -1356,15 +1355,6 @@ if [ "$KIND" != secondmate ]; then
           emit blocked pane "stopped at a permission prompt$since (${BUSY_VERDICT#unknown }): still open, or denied and waiting for instructions; inspect the pane"
           ;;
       esac
-      NOW_EPOCH=$(date +%s)
-      if [ "$BUSY_VERDICT" = 'unknown codex-unverified' ] && [ -n "$LOG_EPOCH" ] \
-        && [ "$LOG_EPOCH" -le "$NOW_EPOCH" ] && [ "$((NOW_EPOCH - LOG_EPOCH))" -le 300 ] \
-        && [ "$(map_log_state "$LOG_LINE")" = paused ] \
-        && { [ -z "$BUSY_EPOCH" ] || [ "$BUSY_EPOCH" -le "$LOG_EPOCH" ]; } \
-        && fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null 2>&1 \
-        && [ "$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")" = alive ]; then
-        emit paused status-log "$(status_line_note "$LOG_LINE")${SEP}pane state unavailable ($BUSY_VERDICT)"
-      fi
       emit unknown pane "harness state unavailable ($BUSY_VERDICT)"
       ;;
     *) emit unknown pane "harness state unavailable ($BUSY_VERDICT)" ;;
