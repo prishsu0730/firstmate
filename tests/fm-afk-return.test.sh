@@ -1502,7 +1502,75 @@ test_resolution_routes_pending_reply_to_owner() {
   pass "pending-reply resolution stays with its owner workflow"
 }
 
+test_resolution_selects_task_for_duplicate_keys() {
+  local dir out rc first second
+  dir="$TMP_ROOT/resolve-duplicate-keys"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux default
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  first="$dir/home/state/repair-task.status"
+  printf 'blocked: first issue\n' > "$first"
+  printf 'window=synthetic:fm-other-task\nbackend=tmux\nkind=secondmate\n' > "$dir/home/state/other-task.meta"
+  second="$dir/home/state/other-task.status"
+  printf 'blocked: second issue\n' > "$second"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "duplicate blockers did not open catch-up: $out"
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve default --reason 'handled first issue' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "key-only resolution accepted ambiguous blockers"
+  assert_contains "$out" '--task <id>' "ambiguous blocker did not request a task selector"
+  [ "$(cat "$first")" = 'blocked: first issue' ] || fail "ambiguous resolution changed first status"
+  [ "$(cat "$second")" = 'blocked: second issue' ] || fail "ambiguous resolution changed second status"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve default --task repair-task --reason 'handled first issue' 2>&1) || fail "first task resolution failed: $out"
+  assert_contains "$(cat "$first")" 'handled first issue' "first task reason was not recorded"
+  [ "$(cat "$second")" = 'blocked: second issue' ] || fail "first task resolution changed second status"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "second task did not keep catch-up gated: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve default --task other-task --reason 'handled second issue' 2>&1) || fail "second task resolution failed: $out"
+  assert_contains "$(cat "$second")" 'handled second issue' "second task reason was not recorded"
+  out=$(run_return "$dir" check) || fail "duplicate-key resolutions did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "duplicate-key gate did not clear"
+  pass "duplicate blocker keys resolve within the selected task"
+}
+
+test_resolution_uses_configured_close_verb() {
+  local dir out rc status before
+  dir="$TMP_ROOT/resolve-configured-verb"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  status="$dir/home/state/repair-task.status"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "configured-verb blocker did not open catch-up: $out"
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1) || fail "configured close verb resolution failed: $out"
+  assert_contains "$(cat "$status")" 'answered [key=repair-key]' "configured close verb was not written"
+  before=$(cat "$status")
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'another reason' 2>&1) || fail "configured close verb no-op failed: $out"
+  assert_contains "$out" 'already resolved' "configured close verb did not recognize no-op"
+  [ "$(cat "$status")" = "$before" ] || fail "configured close verb no-op appended status"
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered run_return "$dir" check) || fail "configured close verb did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "configured close verb left gate closed"
+  pass "configured close verb closes blocker and supports repeated resolution"
+}
+
 test_guarded_blocker_resolution
+test_resolution_selects_task_for_duplicate_keys
+test_resolution_uses_configured_close_verb
 test_resolution_refuses_changed_unstamped_blocker
 test_resolution_refuses_reopened_blocker
 test_resolution_routes_pending_reply_to_owner
