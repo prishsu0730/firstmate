@@ -854,7 +854,7 @@ EOF
 }
 
 test_nonprogressing_child_states_are_explicit() {
-  local home mate fakebin canonical
+  local home mate fakebin canonical json
   home=$(make_home child-state-classification)
   mate="$TMP_ROOT/child-state-classification-home"
   make_valid_secondmate_home states "$mate"
@@ -883,6 +883,13 @@ EOF
       and .active_children == []
       and (.holds | any(.id == "parked" and .source == "child-state"))
   ' >/dev/null || fail "parked child was classified as active work: $canonical"
+  printf 'paused: waiting for review\n' > "$mate/state/parked.status"
+  refresh_local_secondmate_ledgers "$home"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    .in_flight | any(.[]; .id == "states/parked" and .state == "paused" and (.doing | contains("waiting for review")))
+  ' >/dev/null || fail "paused child disappeared from bearings: $json"
+  printf 'needs-decision [key=parked]: choose a route\n' > "$mate/state/parked.status"
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
 

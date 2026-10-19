@@ -15,7 +15,7 @@
 #
 # The determinism lives entirely here - run-step / pane / log reads, fixed
 # mapping logic, and terminal passed-run PR detail from bounded evidence only,
-# with no heuristics and no LLM.
+# with no LLM.
 # For a terminal passed no-mistakes run, a matching merge-poll retirement
 # receipt is local merged evidence; otherwise a 5s-bounded forge read is tried.
 # FM_CREW_STATE_NO_FORGE=1 keeps the receipt read but skips the forge fallback.
@@ -24,7 +24,7 @@
 # Output is one stable, parseable, token-tight line firstmate can read every
 # heartbeat:
 #
-#   state: <working|parked|done|blocked|paused|failed|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
+#   state: <working|parked|done|blocked|paused|failed|conflict|unknown> · source: <run-step|pane|status-log|remote-endpoint|none> · <detail>
 #
 # Logic, in order:
 #   1. Resolve worktree + backend target + kind from state/<id>.meta. A meta
@@ -145,9 +145,11 @@
 #      to reattach, not by escalating.
 #   4. No current run for this crew (pre-validation, uninitialized repository,
 #      proven historical head, or kind=scout): fall back to the recorded
-#      backend's pane busy state, then the resolved status declaration
-#      when its verb maps to a recognized run-state. Decision-only events such as
-#      `resolved` never become current state or detail.
+#      backend's pane busy state and resolved status declaration. Stamped
+#      contradictions identify both sources; a finished scout additionally needs
+#      its report and a task-bound endpoint. A recent paused Codex declaration
+#      can answer an unverified busy signal only with a verified live endpoint.
+#      Decision-only events such as `resolved` never become current state or detail.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log. On tmux and herdr, which own a
@@ -1283,6 +1285,29 @@ if ! pane_readable "$BACKEND_TARGET"; then
   esac
 fi
 
+# A recorded endpoint binding must identify this task before its status can be
+# attributed to that endpoint. Legacy tmux windows encode the task in the name.
+ENDPOINT_ID=$(meta_value endpoint_task_id)
+if [ -n "$ENDPOINT_ID" ] && [ "$ENDPOINT_ID" != "$ID" ]; then
+  emit unknown none "endpoint identity belongs to $ENDPOINT_ID, not $ID"
+fi
+
+# Compare only generation-validated semantic activity to an explicitly stamped
+# declaration. An unvalidated or un-timed signal cannot establish ordering.
+LOG_EPOCH=$(status_line_at_epoch "$LOG_LINE" 2>/dev/null || true)
+BUSY_EPOCH=''
+BUSY_RECORD=$(fm_busy_record_read "$STATE" "$ID" 2>/dev/null || true)
+scout_finished_evidence() {
+  local state note
+  [ "$KIND" = scout ] && [ -s "${FM_DATA_OVERRIDE:-$FM_HOME/data}/$ID/report.md" ] || return 1
+  fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null 2>&1 || return 1
+  state=$(map_log_state "$LOG_LINE")
+  [ "$state" = "done" ] && return 0
+  [ "$state" = paused ] || return 1
+  note=$(status_line_note "$LOG_LINE")
+  [ "$note" = finished ] || [[ "$note" = 'finished: '* ]]
+}
+
 # Secondmates idle on their own watcher (idle pane = healthy), so the busy
 # state is not meaningful for them; read their state from the status log only.
 # Only an exact busy verdict reports working here, and only an exact idle
@@ -1290,9 +1315,35 @@ fi
 # unverified semantic state remains unknown.
 if [ "$KIND" != secondmate ]; then
   BUSY_VERDICT=$(crew_busy_verdict "$BACKEND_TARGET")
+  if [ "${BUSY_VERDICT%% *}" = busy ] \
+    && [ "${BUSY_RECORD%% *}" = busy ] \
+    && [ "${BUSY_VERDICT#* }" = "$(printf '%s\n' "$BUSY_RECORD" | cut -d' ' -f2)" ]; then
+    BUSY_EPOCH=$(sed -n 's/.* ts=\([0-9][0-9]*\).*/\1/p' "$STATE/$ID.busy-state")
+  fi
   case "${BUSY_VERDICT%% *}" in
-    busy) emit working pane "harness busy (${BUSY_VERDICT#* })" ;;
-    idle) ;;
+    busy)
+      LOG_STATE=$(map_log_state "$LOG_LINE")
+      case "$LOG_STATE" in
+        paused|done|failed|blocked|parked)
+          if [ -z "$LOG_EPOCH" ] || [ -z "$BUSY_EPOCH" ]; then
+            emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); timestamp evidence unavailable"
+          fi
+          if [ "$BUSY_EPOCH" -gt "$LOG_EPOCH" ]; then
+            emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }), activity newer than status"
+          fi
+          if scout_finished_evidence; then
+            emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; busy hook no newer than status"
+          fi
+          emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); no corroborating completion evidence"
+          ;;
+      esac
+      emit working pane "harness busy (${BUSY_VERDICT#* })"
+      ;;
+    idle)
+      if scout_finished_evidence; then
+        emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; pane idle"
+      fi
+      ;;
     unknown)
       case "$BUSY_VERDICT" in
         *' permission-prompt')
@@ -1305,6 +1356,15 @@ if [ "$KIND" != secondmate ]; then
           emit blocked pane "stopped at a permission prompt$since (${BUSY_VERDICT#unknown }): still open, or denied and waiting for instructions; inspect the pane"
           ;;
       esac
+      NOW_EPOCH=$(date +%s)
+      if [ "$BUSY_VERDICT" = 'unknown codex-unverified' ] && [ -n "$LOG_EPOCH" ] \
+        && [ "$LOG_EPOCH" -le "$NOW_EPOCH" ] && [ "$((NOW_EPOCH - LOG_EPOCH))" -le 300 ] \
+        && [ "$(map_log_state "$LOG_LINE")" = paused ] \
+        && { [ -z "$BUSY_EPOCH" ] || [ "$BUSY_EPOCH" -le "$LOG_EPOCH" ]; } \
+        && fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null 2>&1 \
+        && [ "$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")" = alive ]; then
+        emit paused status-log "$(status_line_note "$LOG_LINE")${SEP}pane state unavailable ($BUSY_VERDICT)"
+      fi
       emit unknown pane "harness state unavailable ($BUSY_VERDICT)"
       ;;
     *) emit unknown pane "harness state unavailable ($BUSY_VERDICT)" ;;

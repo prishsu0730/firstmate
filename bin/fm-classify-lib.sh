@@ -493,7 +493,7 @@ status_paused_until() {  # <status-line> -> epoch on stdout
 # their grammar. Missing, malformed, or duplicate time fields mean UNKNOWN time;
 # never infer emission time from file mtime, a wake, or observation time. Relays
 # preserve source tags and leave legacy source events unstamped. Time describes
-# event history only and must never decide current state or decision closure.
+# event history only; it cannot alone decide current state or decision closure.
 # This parser owns that grammar; every reader below is a thin adapter over it,
 # so no second spelling of "well-formed" can drift against this one.
 # Internals carry a reserved prefix: bash locals are dynamically scoped, so a

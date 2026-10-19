@@ -209,12 +209,14 @@ set -u
 [ "${FM_FAKE_TMUX_UNREADABLE:-0}" = 1 ] && { printf 'no current client\n' >&2; exit 1; }
 case "${1:-}" in
   list-windows)
+    [ -z "${FM_FAKE_TMUX_INVENTORY:-}" ] || printf '%s\n' "$FM_FAKE_TMUX_INVENTORY"
     # A successful but empty inventory: it omits the crew's window, so absence
     # is proved by the answer rather than by an addressed call failing. Only
     # reached once display-message has already failed.
     ;;
   display-message)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
+    case "$*" in *pane_current_command*) [ -z "${FM_FAKE_TMUX_COMMAND:-}" ] || { printf '%s\n' "$FM_FAKE_TMUX_COMMAND"; exit 0; } ;; esac
     printf '%%1\n' ;;
   capture-pane)
     [ "${FM_FAKE_TMUX_MISSING:-0}" = 1 ] && exit 1
@@ -324,6 +326,9 @@ reset_fakes() {
   FM_FAKE_AXI_STATUS_RUN=""
   FM_FAKE_RUNS_LIST=""
   FM_FAKE_BUSY=0
+  FM_FAKE_TMUX_INVENTORY=
+  FM_FAKE_TMUX_COMMAND=
+  export FM_FAKE_TMUX_INVENTORY FM_FAKE_TMUX_COMMAND
   FM_FAKE_BUSY_TEXT=
   FM_FAKE_TMUX_MISSING=0
   FM_FAKE_TMUX_UNREADABLE=0
@@ -5525,6 +5530,59 @@ test_captured_completed_history() {
   pass 'captured completed status yields to synthetic subsequent development'
 }
 
+test_reliability_reconciles_status_and_activity() {
+  reset_fakes
+  local d now gen out
+  d=$(new_case reliability-reconcile)
+  make_repo_on_branch "$d/wt" fm/reliability
+  make_fakebin "$d" >/dev/null
+  now=$(date +%s)
+  fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "endpoint_task_id=task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=claude"
+  mkdir -p "$d/data/task"
+  printf 'finished report\n' > "$d/data/task/report.md"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" task)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task busy --gen "$gen" --source claude-hook --event user-prompt-submit
+  now=$(date +%s)
+  printf 'paused [at=%s]: finished\n' "$now" > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: done' 'saved scout report and finished declaration should survive a stale busy hook'
+
+  arm_idle_record "$d/state" task
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: done' 'a finished scout with an idle process and saved report is done'
+
+  fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "endpoint_task_id=task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=codex"
+  FM_FAKE_TMUX_INVENTORY=fm-task
+  FM_FAKE_TMUX_COMMAND=codex
+  printf 'paused [at=%s]: awaiting direction\n' "$now" > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: paused' 'fresh pause should survive an unverifiable Codex busy state'
+
+  printf 'paused [at=1]: stale pause\n' > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: unknown' 'old unverified pause lacks enough evidence for a current state'
+
+  fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "endpoint_task_id=other" "worktree=$d/wt" "project=sample" "kind=scout" "harness=codex"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: unknown' 'a different endpoint identity must not adopt the note'
+  assert_contains "$out" 'identity' 'identity mismatch must be explained'
+
+  fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "endpoint_task_id=task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=claude"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" task)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task busy --gen "$gen" --source claude-hook --event user-prompt-submit
+  printf 'paused [at=1]: awaiting direction\n' > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: conflict' 'newer busy activity contradicts an older pause'
+  assert_contains "$out" 'status' 'conflict names the status source'
+  assert_contains "$out" 'pane' 'conflict names the activity source'
+  printf 'paused: time unavailable\n' > "$d/state/task.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: conflict' 'unorderable status and busy signals remain a conflict'
+  assert_contains "$out" 'timestamp' 'unorderable conflict names missing timing evidence'
+  pass 'status reconciliation respects evidence, identity, and newer activity'
+}
+
+test_reliability_reconciles_status_and_activity
 test_captured_axi_status_shapes
 test_captured_inventory_replay
 test_captured_authority_transition

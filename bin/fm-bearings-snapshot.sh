@@ -527,6 +527,11 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                   | (if (($name | type) == "string" and ($name | test("[^[:space:]]")))
                      then $name else ($m.id + "/" + .id) end) | trunc(70)),
             doing:((.doing // .state) | trunc(90))} ]
+     + [ $secondmate_views[] as $m
+         | $m.holds[]?
+         | select(.source == "child-state" and .state != null)
+         | {id:($m.id + "/" + .id), kind:(.kind // "secondmate"), state,
+            repo:null, name:(.title // .id), doing:(.reason | trunc(90))} ]
      + [ .backlog.records[]
          | select(.structured and .current_role == "program")
          | ((.unresolved_blocker_ids // []) | join(", ")) as $waits_on
