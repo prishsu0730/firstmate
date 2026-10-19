@@ -497,9 +497,8 @@ SH
 
 # On a supervision-host home off Pi the drain's BRANCH OUTCOMES section is the
 # one presenter of branch outcomes and the one owner of their read cursor, so
-# the return brief counts the window's outcomes and points there instead of
-# listing them, and leaves the cursor alone. On Pi the brief lists them as
-# before.
+# the return brief counts and lists visible window outcomes while pointing to
+# the drain for its fuller presentation, and leaves the cursor alone.
 test_return_brief_points_at_the_drain_on_a_host_home_only() {
   local dir harness fakebin out n
   for harness in claude pi; do
@@ -527,15 +526,15 @@ test_return_brief_points_at_the_drain_on_a_host_home_only() {
       assert_contains "$out" "  1 captain outcome(s) escalated by the away session, presented in the drain's BRANCH OUTCOMES section" \
         "a host home's brief must point at the drain for its captain outcomes"
       assert_contains "$out" "the drain's BRANCH OUTCOMES section presents the visible outcomes" "a host home's brief must point at the visible outcomes in the drain"
-      assert_not_contains "$out" 'PR ready for review' "a host home's brief must leave the captain outcome to the drain"
-      assert_not_contains "$out" 'routine 6' "a host home's brief must leave the routine outcomes to the drain"
+      assert_contains "$out" '    - demo: PR ready for review' "a host home's brief must retain the captain outcome summary"
+      assert_contains "$out" '    - demo: routine 6' "a host home's brief must retain visible routine summaries"
     else
       assert_contains "$out" '    - demo: PR ready for review' "a Pi home's brief must still list the captain outcome"
       assert_contains "$out" '    - demo: routine 6' "a Pi home's brief must still list the latest routine outcomes"
     fi
     [ ! -e "$dir/home/state/.branch-outcomes-cursor" ] || fail "$harness: the return moved the outcome store's read cursor"
   done
-  pass "the return brief points at the drain for branch outcomes on a host home and leaves the read cursor to it, and a Pi home's brief is unchanged"
+  pass "the return brief lists visible outcomes, points to the drain, and leaves the read cursor alone"
 }
 
 test_return_brief_all_silent_window_does_not_point_at_drain() {

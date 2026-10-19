@@ -662,9 +662,11 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   captain=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" { n++ } END { print n + 0 }')
   visible_outcomes=$((routine_visible + captain))
   if [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ] && [ "$drain_ok" -eq 1 ]; then
-    printf '  the drain'"'"'s BRANCH OUTCOMES section presents the visible outcomes: each task'"'"'s captain outcomes on one line until you acknowledge them, visible routine notes once, past its limit as a count\n'
+    printf '  the drain'"'"'s BRANCH OUTCOMES section also presents the visible outcomes.\n'
+    printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$6 != "true" && ($3 == "routine" || $3 == "captain") { printf "    - %s: %s\n", $2, $5 }'
   elif [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ]; then
     printf '  visible outcomes %s\n' "$pointer"
+    printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$6 != "true" && ($3 == "routine" || $3 == "captain") { printf "    - %s: %s\n", $2, $5 }'
   elif [ "$routine_visible" -gt 0 ]; then
     printf '  %s routine outcome(s) recorded; the latest visible:\n' "$routine"
     printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { printf "    - %s: %s\n", $2, $5 }' | tail -5
