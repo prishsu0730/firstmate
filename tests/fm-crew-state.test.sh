@@ -5554,9 +5554,9 @@ test_reliability_reconciles_status_and_activity() {
   fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "endpoint_task_id=task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=codex"
   FM_FAKE_TMUX_INVENTORY=fm-task
   FM_FAKE_TMUX_COMMAND=codex
-  printf 'paused [at=%s]: awaiting direction\n' "$now" > "$d/state/task.status"
+  printf 'paused [at=%s]: awaiting direction\n' "$((now - 10))" > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)
-  assert_contains "$out" 'state: unknown' 'fresh pause cannot verify Codex turn activity'
+  assert_contains "$out" 'state: unknown' 'a 10-second-old pause cannot verify Codex turn activity'
   assert_contains "$out" 'codex-unverified' 'unknown Codex state names missing activity evidence'
 
   printf 'paused [at=1]: stale pause\n' > "$d/state/task.status"
