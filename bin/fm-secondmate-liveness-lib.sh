@@ -121,6 +121,7 @@ fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
 #   FM_SM_LIVE_CAUSE   relaunch cause phrase, on relaunchable
 #   FM_SM_LIVE_WHERE   backend=<b> or host=<h>, on relaunchable
 #   FM_SM_LIVE_REASON  exact skip suffix, on skipped
+#   FM_SM_LIVE_STOPPED 1 when the skip is a deliberate stop (a fact, not a fault)
 #   FM_SM_LIVE_LINE    verbose already-live line body, on alive
 #
 # `silent` means the meta records no endpoint at all - that shape is owned by
@@ -130,11 +131,12 @@ fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
 # relaunchable verdict could be acted on.
 fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
   local meta=$1 id=$2 mode=$3
-  FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_STATE=unknown FM_SM_LIVE_KILL=0
+  FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_STATE=unknown FM_SM_LIVE_KILL=0 FM_SM_LIVE_STOPPED=0
   FM_SM_LIVE_CAUSE='' FM_SM_LIVE_WHERE='' FM_SM_LIVE_REASON='' FM_SM_LIVE_LINE=''
   local window harness remote_host remote_rc out agent_state readiness_reason route_out remote_backend
   if [ -e "$STATE/.secondmate-stopped-$id" ] || [ -L "$STATE/.secondmate-stopped-$id" ]; then
     FM_SM_LIVE_REASON="deliberately stopped; use fm-control relaunch to resume"
+    FM_SM_LIVE_STOPPED=1
     return 0
   fi
   window=$(fm_meta_get "$meta" window)

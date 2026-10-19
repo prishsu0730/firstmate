@@ -645,11 +645,21 @@ retire_busy_incarnation() {
   fi
 }
 
+STOP_MARK_CREATED=0
 mark_deliberate_stop() {
   [ "$KIND" = secondmate ] && [ "$VERB" = exit ] || return 0
   if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
     printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
+    STOP_MARK_CREATED=1
   fi
+}
+
+# Take back the marker this call created when the exit command provably never
+# reached the mate; a marker an earlier exit left, or a late confirmation, stays.
+unmark_undelivered_stop() {
+  [ "$STOP_MARK_CREATED" = 1 ] || return 0
+  STOP_MARK_CREATED=0
+  rm -f "$STATE/.secondmate-stopped-$ID" || true
 }
 
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
@@ -753,9 +763,9 @@ do_exit() {
   # swallows the first Enter.
   mark_deliberate_stop
   verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
-    || die "the exit command could not be sent to task $ID on $BACKEND"
+    || { unmark_undelivered_stop; die "the exit command could not be sent to task $ID on $BACKEND"; }
   [ "$verdict" != send-failed ] \
-    || die "the exit command could not be sent to task $ID on $BACKEND"
+    || { unmark_undelivered_stop; die "the exit command could not be sent to task $ID on $BACKEND"; }
   # The submitting Enter can open the picker. The agent is still alive, and
   # another Enter would confirm the selected row. A dead agent may leave the
   # same text behind; that is not a prompt still waiting.

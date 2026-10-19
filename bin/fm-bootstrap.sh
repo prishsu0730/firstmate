@@ -769,7 +769,12 @@ secondmate_liveness_one() {  # <meta> <id>
       fi
       ;;
     skipped)
-      echo "SECONDMATE_LIVENESS: secondmate $id: skipped: $FM_SM_LIVE_REASON"
+      # A deliberate stop is a fact to leave alone, not a diagnostic to act on.
+      if [ "${FM_SM_LIVE_STOPPED:-0}" = 1 ]; then
+        echo "BOOTSTRAP_INFO: secondmate $id: skipped: $FM_SM_LIVE_REASON"
+      else
+        echo "SECONDMATE_LIVENESS: secondmate $id: skipped: $FM_SM_LIVE_REASON"
+      fi
       ;;
   esac
   fm_secondmate_liveness_unlock "$id"

@@ -710,7 +710,8 @@ test_sweep_respects_stop_and_window_bound() {
   log="$w/calls.log"; : > "$log"
   printf 'deliberate stop\n' > "$w/home/state/.secondmate-stopped-sm1"
   out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" zsh "$log")
-  assert_contains "$out" "deliberately stopped" "startup must respect the deliberate stop"
+  assert_contains "$out" "BOOTSTRAP_INFO: secondmate sm1: skipped: deliberately stopped" "startup must report the deliberate stop as a fact"
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" "a deliberate stop must not read as a liveness diagnostic to act on"
   [ ! -e "$w/home/state/.secondmate-relaunch-sm1" ] || fail "startup attempted a stopped mate"
   rm -f "$w/home/state/.secondmate-stopped-sm1"
   now=$(date +%s)

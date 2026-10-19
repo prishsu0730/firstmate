@@ -15,8 +15,9 @@
 # (bin/fm-afk-contract.sh), the supervision outcome store
 # (bin/fm-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
 # status logs. Its six parts follow the bearings chat shape: Outcome, Active,
-# Waiting, Held, Needs Me, and Next. The files line names recorded PRs, not
-# individual paths.
+# Waiting, Held, Needs Me, and Next. Outcome carries the captain's away words
+# verbatim and the away session's account of what it did under them. The files
+# line names recorded PRs, not individual paths.
 # The health snapshot is taken BEFORE daemon shutdown so shutdown is not a gap.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
@@ -475,6 +476,42 @@ strip_axi_help() {
   awk '/^help\[/ { skip = 1; next } skip && /^  / { next } { skip = 0; print }'
 }
 
+# The branch prompt (bin/fm-branch-prompt.sh "Postures") requires every action
+# taken under the captain's words to open its outcome summary with this marker
+# exactly; the brief's account includes visible rows from the window that carry it.
+AWAY_ACTION_MARKER='per your away instructions:'
+
+MANDATE_COUNT=0
+render_words_record() {  # <record> [superseded-time]
+  local record=$1 superseded=${2:-} words
+  if ! words=$("$CONTRACT" words --path "$record"; rc=$?; printf x; exit "$rc"); then
+    MANDATE_COUNT=$((MANDATE_COUNT + 1))
+    printf '  your words are unreadable in %s; catch-up stays gated until the record is restored\n' "$record"
+    return 1
+  fi
+  words=${words%x}
+  [ -n "$words" ] || return 0
+  MANDATE_COUNT=$((MANDATE_COUNT + 1))
+  if [ -n "$superseded" ]; then
+    printf '  your words superseded at %s:\n' "$superseded"
+  else
+    printf '  your words at entry:\n'
+  fi
+  printf '%s' "$words" | sed 's/^/    /'
+  case "$words" in *$'\n') ;; *) printf '\n' ;; esac
+}
+
+render_words_account() {  # the away session's account of what it did under the words
+  local rows
+  rows=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' -v marker="$AWAY_ACTION_MARKER" '
+    $6 != "true" && substr($5, 1, length(marker)) == marker { printf "    - %s: %s\n", $2, $5 }')
+  if [ -n "$rows" ]; then
+    printf '  the away session acted on them:\n%s\n' "$rows"
+  else
+    printf '  the away session took no action under them.\n'
+  fi
+}
+
 HELD_READ_FAILED=0
 HELD_READ_PATH=
 # Live task records whose recorded PR the merge outcome path already marked
@@ -560,7 +597,8 @@ pr_has_window_status_event() {  # <task> <url> <merged|ready> <since> <until>
 
 render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-ok>
   local evidence=$1 blockers=$2 since=$3 drain_ok=$4 now
-  local tag task key summary count live held_err last verb rows status url unknown_rows drained=0 pointer health outcome_count
+  local tag task key summary count live held_err last verb rows status url unknown_rows drained=0 pointer outcome_count
+  local record superseded superseded_at archive_dir stamp details routine routine_visible captain visible_outcomes
   local landed_rows review_rows file_rows landed_task review_task review_url decision_task decision_key window_end marker_epoch waiting_rows needs_rows
   now=$(date +%s)
   window_end=$(awk -F '\t' '$1 == "started" { print $2; exit }' "$GATE" 2>/dev/null || true)
@@ -587,15 +625,65 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
 
   # Outcome summaries point to the durable source records for full detail.
   printf 'Outcome: away session ended; catch-up follows.\n  CONSTRAINT: unknown (no ranking rule recorded)\n'
-  health=$(awk -F '\t' '$1 == "evidence" && $2 == "health" { print $3; exit }' "$evidence")
-  printf '  Health: %s\n' "${health:-unknown}"
-  printf '  Away instructions: retained in the posture archive.\n'
+  # Every health row, plus the lifecycle rows that name a record or store the
+  # captain cannot see otherwise, one compact line each.
+  rows=$(awk -F '\t' '$1 == "evidence" && $2 == "health" { print "  Health: " $3 }
+    $1 == "evidence" && $2 == "lifecycle" && ($3 ~ /^outcome store unreadable/ || $3 ~ /^status file unreadable:/ || $3 ~ /^away-posture record (unreadable|missing):/ || $3 ~ /^archived away-posture record/ || $3 ~ /^superseded away-posture record/) { print "  Lifecycle: " $3 }' "$evidence")
+  printf '%s\n' "${rows:-  Health: unknown}"
+  # The captain's own words verbatim, then the away session's account of what
+  # it did under them.
+  printf '  Away instructions:\n'
+  record=""
+  MANDATE_COUNT=0
+  [ -z "$since" ] || record=$("$CONTRACT" archived "$since" 2>/dev/null || true)
+  if [ -n "$record" ]; then
+    archive_dir=$(fm_afk_contract_archive_dir "$STATE")
+    for superseded in "$archive_dir/$since-superseded-"*.afk-contract; do
+      [ -f "$superseded" ] || continue
+      stamp=${superseded##*/"$since"-superseded-}
+      stamp=${stamp%%-*}
+      stamp=${stamp%.afk-contract}
+      case "$stamp" in ''|*[!0-9]*) superseded_at=unknown ;; *) superseded_at=$(epoch_to_iso "$stamp") ;; esac
+      render_words_record "$superseded" "$superseded_at"
+    done
+    render_words_record "$record"
+    [ "$MANDATE_COUNT" -gt 0 ] || printf '  (no away instructions recorded)\n'
+    render_words_account
+  else
+    printf '  (no away-posture record for this window; legacy away flag only)\n'
+  fi
   outcome_count=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' 'NF { n++ } END { print n + 0 }')
   printf '  Handled while away: %s outcomes.\n' "$outcome_count"
+  # Every outcome the away session recorded in the store during the window
+  # counts as handled. Where main processes outcomes through the drain
+  # (docs/supervision-host.md), the drain presents the visible ones.
+  routine=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" { n++ } END { print n + 0 }')
+  routine_visible=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { n++ } END { print n + 0 }')
+  captain=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" { n++ } END { print n + 0 }')
+  visible_outcomes=$((routine_visible + captain))
+  if [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ] && [ "$drain_ok" -eq 1 ]; then
+    printf '  the drain'"'"'s BRANCH OUTCOMES section presents the visible outcomes: each task'"'"'s captain outcomes on one line until you acknowledge them, visible routine notes once, past its limit as a count\n'
+  elif [ "$drained" -eq 1 ] && [ "$visible_outcomes" -gt 0 ]; then
+    printf '  visible outcomes %s\n' "$pointer"
+  elif [ "$routine_visible" -gt 0 ]; then
+    printf '  %s routine outcome(s) recorded; the latest visible:\n' "$routine"
+    printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { printf "    - %s: %s\n", $2, $5 }' | tail -5
+  elif [ "$routine" -gt 0 ]; then
+    printf '  %s routine outcome(s) recorded; none were visible.\n' "$routine"
+  fi
   live=0
   for meta in "$STATE"/*.meta; do [ -f "$meta" ] && live=$((live + 1)); done
   printf '  Cost: %s supervision outcome(s); %s task(s) live at return.\n' "$outcome_count" "$live"
-  printf '  Details: state/.afk-return-catchup, state/afk-contracts, and state/branch-outcomes.jsonl\n'
+  # Name only records that exist when the brief is read; the catch-up file is
+  # deleted on a clean return, so it appears only while a gate keeps it.
+  details=
+  if grep -q "^blocker$(printf '\t')" "$blockers" || [ "$drain_ok" -ne 1 ] || grep -q "^evidence$(printf '\t')lifecycle$(printf '\t')" "$evidence"; then
+    details=$GATE
+  fi
+  archive_dir=$(fm_afk_contract_archive_dir "$STATE")
+  [ ! -d "$archive_dir" ] || details="${details:+$details, }$archive_dir"
+  [ ! -s "$STATE/branch-outcomes.jsonl" ] || details="${details:+$details, }$STATE/branch-outcomes.jsonl"
+  [ -z "$details" ] || printf '  Details: %s\n' "$details"
 
   # Landed, cleanup due: finished work whose task record is still live.
   # Listing it keeps a landed task that remains live past the return from being
