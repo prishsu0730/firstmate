@@ -759,7 +759,7 @@ secondmate_liveness_one() {  # <meta> <id>
       [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $FM_SM_LIVE_LINE"
       ;;
     relaunchable)
-      if fm_secondmate_liveness_relaunch "$meta" "$id"; then
+      if fm_secondmate_liveness_relaunch "$meta" "$id" '' "${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-3}" "${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-3600}"; then
         secondmate_note_respawned "$id"
         report_relaunch "$id" "$FM_SM_LIVE_CAUSE" "$FM_SM_LIVE_WHERE"
       elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
