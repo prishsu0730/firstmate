@@ -2373,6 +2373,19 @@ test_unpushed_ship_done_is_blocked() {
   assert_contains "$out" "named head $sha is unreachable outside the worker copy" \
     "refusal must name the unpushed head"
   assert_not_contains "$out" "state: done" "unpushed ship done: must not remain done"
+  local gen
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" unpushed)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" unpushed busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  printf 'done [at=%s]: PR https://example.test/o/r/pull/9 checks green\n' \
+    "$(($(date +%s) + 30))" > "$d/state/unpushed.status"
+  out=$(run_crew_state "$d" unpushed)
+  assert_contains "$out" "state: blocked" "a newer done claim cannot bypass preservation over a busy hook"
+  assert_contains "$out" "named head $sha is unreachable outside the worker copy" "busy reconciliation names the unpublished head"
+  git -C "$d/wt" update-ref refs/remotes/origin/fm/unpushed "$sha"
+  out=$(run_crew_state "$d" unpushed)
+  assert_contains "$out" "state: done" "a preserved head can finish over an older busy hook"
+  assert_contains "$out" "busy hook older than status" "accepted completion retains ordering evidence"
   pass "unpushed ship done: is current-state blocked"
 }
 

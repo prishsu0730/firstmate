@@ -1342,6 +1342,9 @@ if [ "$KIND" != secondmate ]; then
           if scout_finished_evidence; then
             emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; busy hook no newer than status"
           fi
+          if [ "$LOG_STATE" = done ]; then
+            emit_ship_status_done "busy hook older than status"
+          fi
           emit "$LOG_STATE" status-log "$(status_line_note "$LOG_LINE")${SEP}busy hook older than status"
           ;;
         *) emit working pane "harness busy (${BUSY_VERDICT#* })" ;;

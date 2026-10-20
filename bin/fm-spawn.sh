@@ -1697,7 +1697,7 @@ spawn_refuse_if_away_spend_cap() {
     if [ -z "$remote_host" ]; then
       verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
     fi
-    [ "$verdict" != dead ] || continue
+    case "$verdict" in dead|missing) continue ;; esac
     live=$((live + 1))
   done
   if [ "$live" -ge "$cap" ]; then
