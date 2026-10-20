@@ -38,7 +38,9 @@
 #              the backend's recovery-grade classifier reports the agent gone.
 #              Already-stopped is success (idempotent). For a local secondmate,
 #              the deliberate-stop marker suppresses automatic recovery until
-#              a successful explicit relaunch clears it. An endpoint that reads
+#              a successful explicit relaunch or secondmate respawn clears it.
+#              Watcher ticks and session-start sweeps respect the marker.
+#              An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
 #              proof (fm_control_endpoint_absence_verdict) before anything is
 #              claimed about it, because `missing` also covers an endpoint that

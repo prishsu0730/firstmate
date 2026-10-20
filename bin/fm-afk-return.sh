@@ -16,8 +16,11 @@
 # (bin/fm-branch-outcome.sh), the held set in the backlog (tasks-axi), and the
 # status logs. Its six parts follow the bearings chat shape: Outcome, Active,
 # Waiting, Held, Needs Me, and Next. Outcome carries the captain's away words
-# verbatim and the away session's account of what it did under them. The files
-# line names recorded PRs, not individual paths.
+# verbatim and the away session's account of what it did under them. Files
+# changed lists up to three paths per merged or ready PR with away-window
+# evidence, then +N more, using local merge commits or a recorded branch
+# comparison. Without a base override, origin/HEAD supplies the base; when
+# local evidence cannot answer, the row says paths unavailable and why.
 # The health snapshot is taken BEFORE daemon shutdown so shutdown is not a gap.
 #
 # THE GATE. `blocked:` is the crewmate protocol's firstmate-actionable verb. A
@@ -643,9 +646,9 @@ render_return_brief() {  # <evidence-file> <blockers-file> <since-epoch> <drain-
   window_end=$(awk -F '\t' '$1 == "started" { print $2; exit }' "$GATE" 2>/dev/null || true)
   # Where main processes outcomes through the drain's BRANCH OUTCOMES section
   # (the supervision host off Pi, docs/supervision-host.md "Captain outcomes"),
-  # the drain alone presents the window's visible notes and owns their read
-  # cursor, so the brief points there only when visible outcomes exist, or says
-  # they await a successful drain when this return's drain failed.
+  # the drain owns the read cursor and acknowledgement. The brief also lists
+  # visible window outcomes without moving that cursor, and names the drain's
+  # presentation status when visible outcomes exist.
   # shellcheck source=bin/fm-supervision-engine-lib.sh
   if . "$SCRIPT_DIR/fm-supervision-engine-lib.sh" \
     && fm_supervision_host_outcomes_drained "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"; then
