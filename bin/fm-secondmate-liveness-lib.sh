@@ -269,10 +269,10 @@ fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
 # read or the attempt row cannot be appended, nothing is killed or spawned: the verdict becomes
 # FM_SM_LIVE_STATUS=skipped with FM_SM_LIVE_REASON set and this returns 1.
 # Caller holds the liveness lock and owns reporting.
-fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs]
+fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs] [max-attempts] [window-secs]
   local meta=$1 id=$2 timeout=${3:-}
   FM_SM_LIVE_OUT='' FM_SM_LIVE_RC=0
-  local max=${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-3} window=${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-3600} attempts
+  local max=${4:-${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-3}} window=${5:-${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-3600}} attempts
   case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
   case "$window" in ''|*[!0-9]*|0) window=3600 ;; esac
   if ! attempts=$(fm_secondmate_liveness_recent_attempts "$id" "$window"); then
@@ -281,12 +281,6 @@ fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs]
   fi
   if [ "$attempts" -ge "$max" ] || [ -e "$STATE/.secondmate-relaunch-bound-$id" ] || [ -L "$STATE/.secondmate-relaunch-bound-$id" ]; then
     FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_REASON="auto-relaunch paused after $max attempts in ${window}s; relaunch manually or retire the route" FM_SM_LIVE_RC=1
-    return 1
-  fi
-  if ! fm_secondmate_liveness_recent_attempts "$id" 0 >/dev/null; then
-    FM_SM_LIVE_STATUS=skipped
-    FM_SM_LIVE_REASON="relaunch ledger $STATE/.secondmate-relaunch-$id is unreadable; endpoint left $FM_SM_LIVE_STATE"
-    FM_SM_LIVE_RC=1
     return 1
   fi
   if ! fm_secondmate_liveness_ledger_add "$id" attempt; then
