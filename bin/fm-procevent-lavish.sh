@@ -66,7 +66,7 @@
 # put a wake in front of the handler whose entire content was that nothing
 # happened. `silent` accepts an empty ended session, browser_disconnected, and
 # an exact LISTENER_ACTIVE error that carries no queued content block.
-# Every other result stays announced.
+# Other results remain publishable unless `unchanged` proves a content-free repeat.
 #
 # Deliberately narrow, in both directions. A `Send & End` close carrying the
 # captain's actual answer arrives as `status: feedback` with `session_ended`, so
@@ -74,7 +74,7 @@
 # is any `ended` result that still carries a `prompts` or `feedback` block, which
 # the published poll is not expected to produce but which must never be dropped
 # on that expectation. A `waiting` session, a `missing` one, an `unknown` or
-# unreadable result, and other errors stay announced, because none of them
+# unreadable result, and other errors remain eligible for publication: none of them
 # positively proves nothing was said. Silence is only ever an absence this
 # adapter can see in the result, never an absence it assumes.
 #

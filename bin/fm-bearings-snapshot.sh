@@ -25,8 +25,8 @@
 # Contributions project cached coverage and required actors from fm-contributions.sh;
 # only captain rows are exposed, with counts for the other actors and unmeasured homes. It never infers
 # decisions from report or visual-review prose or reimplements snapshot semantics.
-# Underway (in_flight) projects every main live worker plus every active child
-# from every readable secondmate ledger, independently of that home's
+# Underway (in_flight) projects every main worker metadata row plus active
+# children and held_workers from readable secondmate ledgers, independently of each home's
 # bearings_state, plus each main In flight backlog row of kind program as
 # firstmate's own direct work (kind "direct"), which has no worker record.
 # A direct row never claims to be running, because nothing measures its

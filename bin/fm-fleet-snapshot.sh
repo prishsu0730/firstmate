@@ -87,7 +87,11 @@
 #     observed status file's mtime instead: freshness is how fresh this snapshot's
 #     own observation is, never when a worker emitted the event.
 #     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, and omitted. provenance.summary_source
+#     held_workers, queued, landed, endpoints, counts, and omitted.
+#     held_workers preserves non-working held-role children and other child-state
+#     holds independently of the queued-hold bound, with id, title, state, kind,
+#     reason, and source. Older summaries without it project an empty list.
+#     provenance.summary_source
 #     distinguishes "local-ledger", "remote-ledger", and "remote-ledger-cache";
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
 #     come from the selected summary's generation. Every successfully sampled home also carries

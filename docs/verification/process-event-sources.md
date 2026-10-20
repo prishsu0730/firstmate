@@ -47,17 +47,9 @@ That is why the adapter's terminal verdict covers a `feedback` response carrying
 
 ## Why an empty ordinary board close or disconnected browser is silent
 
-The generic `silent` verdict covers two positively identified no-answer shapes for an ordinary firstmate-owned source.
-`Send & End` delivers the captain's final feedback once as a `feedback` response carrying `session_ended`, and every poll after it returns an empty ended session.
-A firstmate-owned board the captain closes without saying anything therefore produces exactly one `ended` response carrying no queued content block, and announcing it put a wake in front of the handler whose entire content was that nothing happened.
-A task-owned empty terminal round bypasses this generic silence path so its owner receives the steering note required to conclude and retire the board.
-A `browser_disconnected` response likewise carries no answer while its session remains open, so the adapter classifies it as `disconnected`, suppresses its wake, and leaves its source nonterminal.
-
-The verdict is confined to those two shapes and fails closed everywhere else.
-A `Send & End` close carrying the captain's own answer classifies `feedback`, never `ended`, so it is announced unchanged; so is any `ended` result that still carries a `prompts` or `feedback` block, which this lifecycle is not expected to produce but which must never be dropped on that expectation.
-A `waiting` session, a `missing` one, an `unknown` or unreadable result, and every error stay announced, because none of them positively proves nothing was said.
-The content check anchors on column zero for the same reason the terminal check reads the leading `session:` block: content headers are top-level and their rows are indented, so captain-supplied payload text can neither forge a content block nor hide behind a fake empty one.
-Any recognized block counts as present even when its declared count is zero, and a malformed top-level `prompts` or `feedback` header is indeterminate and therefore announced.
+The current silence and repeat-suppression contract is owned by [configuration.md](../configuration.md#process-to-event-sources-stateprocevent).
+`tests/fm-procevent.test.sh` covers empty closes, disconnected browsers, listener-active errors, repeated captures, idempotent acknowledgements, and preservation of repeated captain feedback.
+The adapter's top-level content parser prevents indented captain payload text from forging or hiding a content block; malformed headers remain indeterminate rather than proof of emptiness.
 
 ## The loss limitation this runner cannot close
 
