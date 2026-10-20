@@ -1701,6 +1701,87 @@ test_resolution_uses_configured_close_verb() {
   pass "configured close verb closes blocker and supports repeated resolution"
 }
 
+test_resolution_racing_with_reopen() {
+  local dir out rc status
+  dir="$TMP_ROOT/resolve-racing-reopen"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=repair-key]: old issue\n' > "$status"
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) && fail "blocker did not retain gate"
+  cat >> "$dir/bin/fm-wake-lib.sh" <<'SH'
+eval "$(declare -f fm_wake_status_append_self_announced | sed '1s/fm_wake_status_append_self_announced/original_append/')"
+fm_wake_status_append_self_announced() {
+  printf 'resolved [key=repair-key]: worker handled old issue\nblocked [key=repair-key]: new issue\n' >> "$2"
+  original_append "$@"
+}
+SH
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'old issue handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "racing close reported success: $out"
+  (
+    . "$ROOT/bin/fm-classify-lib.sh"
+    local expected=$'repair-key\tblocked\tnew issue' open
+    open=$(status_open_decisions "$status" secondmate)
+    [ "$open" = "$expected" ] || fail "whole fold closed reopened blocker: $open"
+    open=$(status_open_decisions_incremental "$status")
+    [ "$open" = "$expected" ] || fail "incremental fold closed reopened blocker: $open"
+    [ "$(status_key_closing_verb "$status" repair-key)" = blocked ] || fail "closing verb lost reopened blocker"
+    printf 'note: unrelated prefix\n' > "$dir/span.status"
+    local start offset
+    start=$(wc -c < "$dir/span.status" | tr -d ' ')
+    printf 'blocked [key=span-key]: issue\n' >> "$dir/span.status"
+    open=$(status_open_decisions_incremental "$dir/span.status")
+    [ "$open" = $'span-key\tblocked\tissue' ] || fail "incremental opening failed"
+    printf 'resolved [key=span-key] [episode=byte-%s]: handled\n' "$start" >> "$dir/span.status"
+    [ -z "$(status_open_decisions "$dir/span.status" secondmate)" ] || fail "matching episode did not close"
+    [ -z "$(status_open_decisions_incremental "$dir/span.status")" ] || fail "cached episode did not close"
+    open=$(_fm_status_open_decision_origins "$dir/span.status" secondmate)
+    [ -z "$open" ] || fail "origin fold retained closed episode"
+    set +e
+    status_span_first_actionable_record "$dir/span.status" "$start" >/dev/null
+    offset=$?
+    set -e
+    [ "$offset" -eq 1 ] || fail "span retained a matching closed episode"
+  ) || return 1
+  out=$(run_return "$dir" check) && fail "racing reopen cleared catch-up"
+  pass "episode-qualified closes preserve concurrent reopens across status readers"
+}
+
+test_listing_uses_one_status_snapshot() {
+  local dir out status
+  dir="$TMP_ROOT/listing-snapshot"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=repair-key]: old issue\n' > "$status"
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  cat >> "$dir/bin/fm-classify-lib.sh" <<'SH'
+eval "$(declare -f status_open_decisions | sed '1s/status_open_decisions/original_open/')"
+status_open_decisions() {
+  original_open "$@"
+  if [ ! -e "$FM_HOME/injected" ]; then
+    touch "$FM_HOME/injected"
+    printf 'resolved [key=repair-key]: handled\nblocked [key=repair-key]: new issue\n' >> "$FM_HOME/state/repair-task.status"
+  fi
+}
+SH
+  out=$(run_return "$dir" begin) && fail "listing did not retain blocker"
+  [ -f "$dir/home/injected" ] || fail "listing race never ran"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'handled old issue' 2>&1) && fail "listing paired old summary with new identity"
+  assert_contains "$out" 'blocker changed' "listing did not retain original episode"
+  pass "listing retains one snapshot for blocker summary and episode"
+}
+
+test_resolution_racing_with_reopen
+test_listing_uses_one_status_snapshot
 test_guarded_blocker_resolution
 test_legacy_gate_blocker_row
 test_resolution_selects_task_for_duplicate_keys
