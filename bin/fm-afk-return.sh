@@ -589,6 +589,9 @@ pr_changed_paths() {
   fi
   branch=$(sed -n 's/^branch=//p' "$meta" | head -1)
   base=$(sed -n 's/^base_branch=//p' "$meta" | head -1)
+  if [ -z "$base" ]; then
+    base=$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null) || base=
+  fi
   paths=
   if [ "$state" = merged ]; then
     case "$url" in
@@ -606,7 +609,7 @@ pr_changed_paths() {
     fi
   fi
   if [ -n "$paths" ]; then
-    printf '%s\n' "$paths" | awk 'NR <= 3 { printf "%s%s", NR == 1 ? "" : ", ", $0 } END { if (NR > 3) printf " +%d more", NR - 3 }'
+    printf '%s\n' "$paths" | awk 'NR <= 3 { printf "%s%s", (NR == 1 ? "" : ", "), $0 } END { if (NR > 3) printf " +%d more", NR - 3 }'
   else
     printf 'paths unavailable: no local PR merge or recorded branch comparison answers'
   fi

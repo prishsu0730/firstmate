@@ -673,7 +673,7 @@ test_return_brief_lists_landed_work_awaiting_cleanup() {
 
 test_return_brief_files_and_next_action_precedence() {
   local scenario dir out next_line expected stamp
-  for scenario in blocker decision captain-outcome landed review unrecorded none; do
+  for scenario in blocker decision captain-outcome landed default-base review unrecorded none; do
     dir="$TMP_ROOT/brief-next-$scenario"
     install_runner "$dir"
     contract_in "$dir" enter --words 'handle the recorded PR work' >/dev/null 2>&1 \
@@ -696,7 +696,7 @@ SH
       fi
     fi
     case "$scenario" in
-      blocker|decision|captain-outcome|landed|unrecorded)
+      blocker|decision|captain-outcome|landed|default-base|unrecorded)
         printf 'window=synthetic:fm-landed\nbackend=tmux\nkind=ship\npr=https://github.com/example/landed/pull/7\n' > "$dir/home/state/landed.meta"
         if [ "$scenario" = unrecorded ]; then
           printf 'done: PR https://github.com/example/landed/pull/7 merged\n' > "$dir/home/state/landed.status"
@@ -729,12 +729,12 @@ SH
       outcome_in "$dir" append --task ready --verdict routine --summary 'PR ready for review' >/dev/null \
         || fail "could not record the review-ready outcome for $scenario"
       case "$scenario" in
-        blocker|decision|captain-outcome|landed)
+        blocker|decision|captain-outcome|landed|default-base)
           outcome_in "$dir" append --task landed --verdict routine --summary 'merged PR' >/dev/null \
             || fail "could not record the merged outcome for $scenario" ;;
       esac
     fi
-    if [ "$scenario" = landed ]; then
+    if [ "$scenario" = landed ] || [ "$scenario" = default-base ]; then
       mkdir -p "$dir/repo"
       git -C "$dir/repo" init -q -b main
       git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m base
@@ -749,11 +749,19 @@ SH
       done
       git -C "$dir/repo" branch ready-base HEAD~1
       sed -i.bak 's/base_branch=main/base_branch=ready-base/' "$dir/home/state/ready.meta"
+      if [ "$scenario" = default-base ]; then
+        git -C "$dir/repo" update-ref refs/remotes/origin/main ready-base
+        git -C "$dir/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --amend -m 'Locally landed changes'
+        for task in ready landed; do
+          sed -i.bak '/^base_branch=/d' "$dir/home/state/$task.meta"
+        done
+      fi
     fi
     touch "$dir/home/state/.last-watcher-beat"
     : > "$dir/home/state/.fake-drain"
     out=$(run_return "$dir" begin) || [ "$scenario" = blocker ] || fail "return failed for $scenario: $out"
-    if [ "$scenario" = landed ]; then
+    if [ "$scenario" = landed ] || [ "$scenario" = default-base ]; then
       assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged): a, b, c +2 more' "merged PR omitted local paths"
       assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review): a, b, c +2 more' "ready PR omitted local paths"
     elif [ "$scenario" = review ]; then
@@ -764,7 +772,7 @@ SH
       blocker) expected='Next: firstmate resolves the catch-up blocker for repair-task.' ;;
       decision) expected='Next: captain decides for choice [key=target].' ;;
       captain-outcome) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
-      landed) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      landed|default-base) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       review) expected='Next: captain reviews https://github.com/example/ready/pull/9 for ready.' ;;
       unrecorded) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       none) expected='Next: none.' ;;
@@ -776,7 +784,7 @@ SH
       assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence' "$scenario did not show recorded PR changes"
       assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review)' "$scenario omitted the review-ready PR"
       case "$scenario" in
-        blocker|decision|captain-outcome|landed)
+        blocker|decision|captain-outcome|landed|default-base)
           assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged)' "$scenario omitted the landed PR" ;;
       esac
     fi
