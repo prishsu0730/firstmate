@@ -32,6 +32,7 @@
 #   fm-captain-hold.sh verify <origin-id>
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
+#   fm-captain-hold.sh check-records
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -193,18 +194,15 @@
 # `diverged` is the read-only guard over the seam between the two records of
 # one captain call. See "record divergence" beside command_diverged below.
 #
-# `check-records` is the read-only early look at three task-record problems that
-# otherwise surface only at cleanup: a decision_keys entry naming
-# the task itself (the `complete` and `verify` self-inventory refusal), an entry
-# that resolves to no task or hold (the same resolve_entry and verify_hold_durable
-# those gates run), and a recorded worktree whose slot claim names another task
-# (bin/fm-wake-lib.sh's fm_treehouse_slot_owner_state, scoped by the same
-# fm_treehouse_pool_slot test teardown uses). It prints one
-# `<task-id><TAB><kind><TAB><detail>` line per problem, kind being
-# self-decision-key, unresolved-decision-key, or slot-reassigned, and nothing
-# when the records are sound. It writes, closes, and repairs nothing; a backlog
-# it cannot read yields no unresolved-decision-key line rather than a guess.
-# bin/fm-session-start.sh prints the result as RECORD PROBLEMS.
+# `check-records` takes no arguments and prints one
+# `<task-id><TAB><kind><TAB><detail>` line per problem. Kinds are
+# self-decision-key, unresolved-decision-key, and slot-reassigned.
+# It exits 0 after a completed scan (including one with findings), or 2 on a
+# backlog read failure; completed findings remain on stdout in either case.
+# An unavailable tasks-axi or a status directory outside the active home skips
+# backlog checks without making the exit status nonzero.
+# For the read-only check's rules, safety boundaries, and startup presentation,
+# see docs/captain-hold-lifecycle.md, "Record problems".
 #
 # Resolution records: the block written into the body names this script, the
 # decision digest, and a `Resolution mode:` of answered, released, repaired, or
