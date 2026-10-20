@@ -193,6 +193,19 @@
 # `diverged` is the read-only guard over the seam between the two records of
 # one captain call. See "record divergence" beside command_diverged below.
 #
+# `check-records` is the read-only early look at three task-record problems that
+# otherwise surface only when a cleanup refuses: a decision_keys entry naming
+# the task itself (the `complete` and `verify` self-inventory refusal), an entry
+# that resolves to no task or hold (the same resolve_entry and verify_hold_durable
+# those gates run), and a recorded worktree whose slot claim names another task
+# (bin/fm-wake-lib.sh's fm_treehouse_slot_owner_state, scoped by the same
+# fm_treehouse_pool_slot test teardown uses). It prints one
+# `<task-id><TAB><kind><TAB><detail>` line per problem, kind being
+# self-decision-key, unresolved-decision-key, or slot-reassigned, and nothing
+# when the records are sound. It writes, closes, and repairs nothing; a backlog
+# it cannot read yields no unresolved-decision-key line rather than a guess.
+# bin/fm-session-start.sh prints the result as RECORD PROBLEMS.
+#
 # Resolution records: the block written into the body names this script, the
 # decision digest, and a `Resolution mode:` of answered, released, repaired, or
 # reconciled. Records written by the retired fm-decision-hold.sh (routed,
@@ -2025,6 +2038,64 @@ EOF
   done
 }
 
+# Read-only report of task records that a later cleanup will refuse. Each rule
+# is the one the refusing command already applies, reused rather than restated:
+# the self-inventory test of refuse_self_inventory, resolve_entry plus
+# verify_hold_durable for an entry that must name a hold, and the slot claim
+# read of bin/fm-wake-lib.sh. Nothing here mutates a record, a claim, or the
+# backlog. Output: one `<task-id>\t<kind>\t<detail>` line per problem.
+command_check_records() {
+  local meta id keys entry resolved rc worktree project kind can_resolve=0 owner
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  # tasks-axi reads $FM_HOME's backlog, so a state dir pointed elsewhere would
+  # compare one home's records against another home's tasks; stay silent on
+  # that half rather than invent a problem.
+  if [ "$STATE" = "$FM_HOME/state" ] && command -v tasks-axi >/dev/null 2>&1; then
+    can_resolve=1
+  fi
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    keys=$(meta_value "$meta" decision_keys)
+    while IFS= read -r entry; do
+      [ -n "$entry" ] || continue
+      if [ "$entry" = "$id" ]; then
+        printf '%s\tself-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+        continue
+      fi
+      [ "$can_resolve" -eq 1 ] || continue
+      case "$entry" in
+        *[!A-Za-z0-9._-]*)
+          printf '%s\tunresolved-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+          continue
+          ;;
+      esac
+      # Both gates exit 1 through fail() when the entry names no hold; any other
+      # status (the backend's read bound, an unreadable listing) is "cannot
+      # tell" and reports nothing.
+      rc=0
+      resolved=$(resolve_entry "$id" "$entry" 2>/dev/null) || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        (verify_hold_durable "${resolved%% *}") >/dev/null 2>&1 || rc=$?
+      fi
+      if [ "$rc" -eq 1 ]; then
+        printf '%s\tunresolved-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+      fi
+    done <<KEYS
+$(printf '%s\n' "$keys" | tr ',' '\n')
+KEYS
+    kind=$(meta_value "$meta" kind)
+    worktree=$(meta_value "$meta" worktree)
+    project=$(meta_value "$meta" project)
+    [ -n "$worktree" ] && [ "$kind" != secondmate ] || continue
+    fm_treehouse_pool_slot "$project" "$worktree" || continue
+    fm_treehouse_slot_owner_state "$worktree" "$id"
+    [ "$FM_TREEHOUSE_SLOT_OWNER" = other ] || continue
+    owner=$(sanitize_field "$FM_TREEHOUSE_SLOT_OWNER_ID")
+    printf '%s\tslot-reassigned\t%s\n' "$id" "$owner"
+  done
+}
+
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
 # A row this home does not carry is 3 when the caller requests the distinction,
 # and so is a home with no backlog file at all, because a backlog that does not
@@ -2109,6 +2180,7 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
   diverged) shift; command_diverged "$@" ;;
+  check-records) shift; command_check_records "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
