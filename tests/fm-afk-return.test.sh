@@ -734,9 +734,31 @@ SH
             || fail "could not record the merged outcome for $scenario" ;;
       esac
     fi
+    if [ "$scenario" = landed ]; then
+      mkdir -p "$dir/repo"
+      git -C "$dir/repo" init -q -b main
+      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m base
+      git -C "$dir/repo" checkout -q -b changes
+      touch "$dir/repo/a" "$dir/repo/b" "$dir/repo/c" "$dir/repo/d" "$dir/repo/e"
+      git -C "$dir/repo" add .
+      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m 'Changes (#7)'
+      git -C "$dir/repo" checkout -q main
+      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com merge -q --no-ff changes -m 'Merge pull request #7 from example/changes'
+      for task in ready landed; do
+        printf 'project=%s/repo\nbranch=changes\nbase_branch=main\n' "$dir" >> "$dir/home/state/$task.meta"
+      done
+      git -C "$dir/repo" branch ready-base HEAD~1
+      sed -i.bak 's/base_branch=main/base_branch=ready-base/' "$dir/home/state/ready.meta"
+    fi
     touch "$dir/home/state/.last-watcher-beat"
     : > "$dir/home/state/.fake-drain"
     out=$(run_return "$dir" begin) || [ "$scenario" = blocker ] || fail "return failed for $scenario: $out"
+    if [ "$scenario" = landed ]; then
+      assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged): a, b, c +2 more' "merged PR omitted local paths"
+      assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review): a, b, c +2 more' "ready PR omitted local paths"
+    elif [ "$scenario" = review ]; then
+      assert_contains "$out" 'paths unavailable: recorded local repository missing' "missing repository lacked a reason"
+    fi
     next_line=$(printf '%s\n' "$out" | grep '^Next:' || true)
     case "$scenario" in
       blocker) expected='Next: firstmate resolves the catch-up blocker for repair-task.' ;;
@@ -751,7 +773,7 @@ SH
     if [ "$scenario" = none ] || [ "$scenario" = unrecorded ]; then
       assert_contains "$out" 'Files changed: none recorded' "empty records did not say no changes were recorded"
     else
-      assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence (individual paths unavailable)' "$scenario did not show recorded PR changes"
+      assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence' "$scenario did not show recorded PR changes"
       assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review)' "$scenario omitted the review-ready PR"
       case "$scenario" in
         blocker|decision|captain-outcome|landed)

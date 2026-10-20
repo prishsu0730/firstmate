@@ -576,6 +576,42 @@ scan_review_ready_prs() {  # -> <task>\t<url> rows
   done
 }
 
+pr_changed_paths() {
+  local task=$1 url=$2 state=$3 meta repo branch base commit paths
+  meta="$STATE/$task.meta"
+  repo=$(sed -n 's/^project=//p' "$meta" | head -1)
+  if [ -z "$repo" ] || ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    repo=$(sed -n 's/^worktree=//p' "$meta" | head -1)
+  fi
+  if [ -z "$repo" ] || ! git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+    printf 'paths unavailable: recorded local repository missing'
+    return
+  fi
+  branch=$(sed -n 's/^branch=//p' "$meta" | head -1)
+  base=$(sed -n 's/^base_branch=//p' "$meta" | head -1)
+  paths=
+  if [ "$state" = merged ]; then
+    case "$url" in
+      */pull/[0-9]*)
+        commit=$(git -C "$repo" log --all --format='%H' --fixed-strings --grep="Merge pull request #${url##*/} " --grep="(#${url##*/})" -1 2>/dev/null)
+        if [ -n "$commit" ]; then
+          paths=$(git -C "$repo" diff-tree --root --no-commit-id --name-only -r "$commit^1" "$commit" -- 2>/dev/null) || paths=
+        fi ;;
+    esac
+  fi
+  if [ -z "$paths" ] && [ -n "$branch" ] && [ -n "$base" ]; then
+    commit=$(git -C "$repo" merge-base "$base" "$branch" 2>/dev/null) || commit=
+    if [ -n "$commit" ]; then
+      paths=$(git -C "$repo" diff --name-only "$commit" "$branch" -- 2>/dev/null) || paths=
+    fi
+  fi
+  if [ -n "$paths" ]; then
+    printf '%s\n' "$paths" | awk 'NR <= 3 { printf "%s%s", NR == 1 ? "" : ", ", $0 } END { if (NR > 3) printf " +%d more", NR - 3 }'
+  else
+    printf 'paths unavailable: no local PR merge or recorded branch comparison answers'
+  fi
+}
+
 pr_has_window_status_event() {  # <task> <url> <merged|ready> <since> <until>
   local status="$STATE/$1.status" url=$2 kind=$3 since=$4 until=$5 line epoch note verb after
   case "$since:$until" in *[!0-9:]*|:*|*:) return 1 ;; esac
@@ -717,7 +753,7 @@ EOF
       case "$since:$window_end:$marker_epoch" in *[!0-9:]*) continue ;; esac
       [ "$marker_epoch" -ge "$since" ] && [ "$marker_epoch" -le "$window_end" ] || continue
     fi
-    file_rows="${file_rows}    - $task: $url (merged)"$'\n'
+    file_rows="${file_rows}    - $task: $url (merged): $(pr_changed_paths "$task" "$url" merged)"$'\n'
   done <<EOF
 $landed_rows
 EOF
@@ -725,12 +761,12 @@ EOF
     [ -n "$task" ] || continue
     [ -n "$review_task" ] || { review_task=$task; review_url=$url; }
     pr_has_window_status_event "$task" "$url" ready "$since" "$window_end" || continue
-    file_rows="${file_rows}    - $task: $url (ready for review)"$'\n'
+    file_rows="${file_rows}    - $task: $url (ready for review): $(pr_changed_paths "$task" "$url" ready)"$'\n'
   done <<EOF
 $review_rows
 EOF
   if [ -n "$file_rows" ]; then
-    printf '  Files changed: PRs with away-window merge or ready evidence (individual paths unavailable)\n%s' "$file_rows"
+    printf '  Files changed: PRs with away-window merge or ready evidence\n%s' "$file_rows"
   else
     printf '  Files changed: none recorded\n'
   fi
