@@ -572,17 +572,17 @@ print_status_tail() {
   done < <(tail -n "$STATUS_TAIL" "$status")
 }
 
-# Task records a later cleanup will refuse, found now instead. bin/fm-captain-hold.sh
+# Task-record problems relevant to cleanup, found now. bin/fm-captain-hold.sh
 # check-records owns which problems count and reads without writing; this prints
 # what it reports, and nothing at all when the records are sound. Bounded in time
-# and size, and a failing check never changes the digest: it is only a warning.
+# and size; incomplete scans retain completed findings and report uncertainty.
 print_record_problems() {
-  local report bound task kind detail line output='' shown=0 omitted=0
+  local report bound task kind detail line output='' shown=0 omitted=0 rc=0
   local max_items=8 item_bytes=200
   bound=${FM_RECORD_CHECK_TIMEOUT:-20}
   case "$bound" in ''|*[!0-9]*|0) bound=20 ;; esac
-  report=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" check-records 2>/dev/null) || return 0
-  [ -n "$report" ] || return 0
+  report=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" check-records 2>/dev/null) || rc=$?
+  [ -n "$report" ] || [ "$rc" -ne 0 ] || return 0
   while IFS=$(printf '\t') read -r task kind detail; do
     [ -n "$task" ] || continue
     case "$kind" in
@@ -602,9 +602,12 @@ print_record_problems() {
   done <<EOF
 $report
 EOF
-  [ "$shown" -gt 0 ] || return 0
-  subsection "RECORD PROBLEMS (read-only check - nothing was changed; cleanup of these tasks will refuse until the record is corrected)"
+  [ "$shown" -gt 0 ] || [ "$rc" -ne 0 ] || return 0
+  subsection "RECORD PROBLEMS (read-only check - nothing was changed; reassigned slots permit records-only cleanup)"
   printf '%s' "$output"
+  if [ "$rc" -ne 0 ]; then
+    printf 'Record check incomplete; some records could not be checked.\n'
+  fi
   if [ "$omitted" -gt 0 ]; then
     printf '%d more omitted (line cap)\n' "$omitted"
   fi

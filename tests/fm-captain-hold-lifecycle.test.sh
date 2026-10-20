@@ -2747,6 +2747,40 @@ test_check_records_flags_a_decision_key_with_no_hold() {
   pass "a decision key that resolves to no task or hold is reported"
 }
 
+test_check_records_preserves_unknown_reads() {
+  local home out rc mode
+  for mode in first second timeout; do
+    home=$(make_home "records-unknown-$mode")
+    write_record_meta "$home" sample-origin decision_keys=sample-origin,sample-call,sample-later
+    cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ]; then
+  printf 'read\n' >> "$FM_HOME/reads"
+  if [ "$RECORD_READ_MODE" = second ] && [ "$(wc -l < "$FM_HOME/reads")" -eq 1 ]; then
+    printf 'id: sample-call\nstate: queued\nhold_kind: captain\n'
+    exit 0
+  fi
+  [ "$RECORD_READ_MODE" != timeout ] || exit 124
+  printf 'error: backlog unreadable\n' >&2
+  exit 1
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+    chmod +x "$home/fakebin/tasks-axi"
+    rc=0
+    out=$(RECORD_READ_MODE="$mode" run_captain "$home" check-records) || rc=$?
+    expect_code 2 "$rc" "unknown $mode read must mark the scan incomplete"
+    assert_contains "$out" "self-decision-key" "a completed finding was lost"
+    case "$out" in *unresolved-decision-key*) fail "an unreadable hold was reported missing: $out" ;; esac
+    if [ "$mode" = second ]; then
+      assert_equals 2 "$(wc -l < "$home/reads" | tr -d ' ')" "durability failure triggered further reads"
+    else
+      assert_equals 1 "$(wc -l < "$home/reads" | tr -d ' ')" "read failure triggered further reads"
+    fi
+  done
+  pass "unknown reads preserve findings and stop further backlog reads"
+}
+
 test_check_records_flags_a_slot_claimed_by_another_task() {
   local home out
   home=$(make_home records-slot)
@@ -4845,6 +4879,15 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
+if [ "${FM_TEST_RECORDS_ONLY:-0}" = 1 ]; then
+  test_check_records_flags_a_decision_list_naming_its_own_task
+  test_check_records_flags_a_decision_key_with_no_hold
+  test_check_records_preserves_unknown_reads
+  test_check_records_flags_a_slot_claimed_by_another_task
+  test_check_records_is_silent_and_read_only_on_a_clean_home
+  exit 0
+fi
+
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_precede_backend_holds
 test_historical_self_inventory_has_workable_repair
@@ -4882,6 +4925,7 @@ test_status_resolution_over_an_open_hold_is_signalled
 test_legitimate_holds_produce_no_divergence_signal
 test_check_records_flags_a_decision_list_naming_its_own_task
 test_check_records_flags_a_decision_key_with_no_hold
+test_check_records_preserves_unknown_reads
 test_check_records_flags_a_slot_claimed_by_another_task
 test_check_records_is_silent_and_read_only_on_a_clean_home
 test_teardown_never_closes_a_captain_held_task

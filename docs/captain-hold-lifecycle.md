@@ -44,7 +44,7 @@ It never reads report bodies, review artifacts, terminal output, or chat.
 | `reconcile-requests` | Internal intake that records a reconcile request from a board selection. | [Reconcile](#reconcile-re-check-reality-never-a-blind-close) |
 | `reconcile close`, `reconcile note`, `reconcile list` | Retire or list pending reconcile requests. | [Verifying and retiring a request](#verifying-and-retiring-a-request) |
 | `diverged` | Read-only report of a call whose two records disagree. | [Record divergence](#record-divergence) |
-| `check-records` | Read-only report of task records a later cleanup will refuse. | [Record problems](#record-problems) |
+| `check-records` | Read-only report of task-record problems relevant to cleanup. | [Record problems](#record-problems) |
 
 ### Creating a hold (`hold`)
 
@@ -459,17 +459,19 @@ If tasks-axi is unavailable or its listing cannot be parsed, the guard cannot re
 
 ## Record problems
 
-Three task-record problems used to surface only when a cleanup refused.
+Three task-record problems used to surface only at cleanup.
 `bin/fm-captain-hold.sh check-records` reports them early, and `bin/fm-session-start.sh` prints the result as a bounded `RECORD PROBLEMS` subsection of FLEET STATE.
-The subsection appears only when a problem exists.
+The subsection appears when a problem exists or the scan is incomplete.
 
-Each problem reuses the rule the refusing command already applies:
+Each problem reuses the existing lifecycle rule:
 
 - A `decision_keys` entry equal to the task's own id is the self-inventory refusal `complete` and `verify` make.
 - An entry that resolves to no task or hold fails the same `resolve_entry` and `verify_hold_durable` checks those gates run.
 - A recorded worktree whose slot claim (`.fm-slot-owner`) names a different task is the reassigned-slot state `bin/fm-wake-lib.sh` owns, read only for a worktree that is a live pool slot of the task's project, as teardown reads it.
 
+A reassigned slot permits records-only cleanup, which leaves the newer owner's slot untouched.
 The report writes nothing, closes nothing, and repairs nothing.
+Read failures leave absence unknown and stop further backlog reads for this scan; startup preserves completed findings and reports the scan as incomplete.
 If tasks-axi is unavailable or the status directory is not the active home's own, only the self-naming and slot checks run.
 The focused regression cases are in `tests/fm-captain-hold-lifecycle.test.sh`, and the digest wiring case is in `tests/fm-session-start.test.sh`.
 

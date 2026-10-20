@@ -194,7 +194,7 @@
 # one captain call. See "record divergence" beside command_diverged below.
 #
 # `check-records` is the read-only early look at three task-record problems that
-# otherwise surface only when a cleanup refuses: a decision_keys entry naming
+# otherwise surface only at cleanup: a decision_keys entry naming
 # the task itself (the `complete` and `verify` self-inventory refusal), an entry
 # that resolves to no task or hold (the same resolve_entry and verify_hold_durable
 # those gates run), and a recorded worktree whose slot claim names another task
@@ -449,13 +449,20 @@ require_tasks_axi() {
 TASK_SHOW_OUTPUT=
 task_show() {  # <id>; sets TASK_SHOW_OUTPUT
   local data status=0 reason
-  data=$(fm_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
+  data=$(fm_backlog_data_absolute "$DATA") || {
+    [ "${record_check_reads:-0}" != 1 ] || exit 2
+    fail "data directory cannot be resolved: $DATA"
+  }
   TASK_SHOW_OUTPUT=$(fm_backlog_row_show "$data" "$1" --full 2>/dev/null) || status=$?
   if [ "$status" -eq 124 ]; then
     reason=${TASK_SHOW_OUTPUT%%$'\n'*}
     printf 'fm-captain-hold: %s\n' \
       "${reason:-tasks-axi show $1 exceeded its backlog read bound}" >&2
     exit 124
+  fi
+  if [ "${record_check_reads:-0}" = 1 ] && [ "$status" -ne 0 ] &&
+    ! printf '%s\n' "$TASK_SHOW_OUTPUT" | grep -q '^code: NOT_FOUND$'; then
+    exit 2
   fi
   return "$status"
 }
@@ -2038,14 +2045,15 @@ EOF
   done
 }
 
-# Read-only report of task records that a later cleanup will refuse. Each rule
-# is the one the refusing command already applies, reused rather than restated:
+# Read-only report of task-record problems relevant to cleanup. Each rule
+# is the existing lifecycle rule, reused rather than restated:
 # the self-inventory test of refuse_self_inventory, resolve_entry plus
 # verify_hold_durable for an entry that must name a hold, and the slot claim
 # read of bin/fm-wake-lib.sh. Nothing here mutates a record, a claim, or the
 # backlog. Output: one `<task-id>\t<kind>\t<detail>` line per problem.
 command_check_records() {
   local meta id keys entry resolved rc worktree project kind can_resolve=0 owner
+  local record_check_reads=1 incomplete=0
   [ "$#" -eq 0 ] || { usage >&2; exit 2; }
   # tasks-axi reads $FM_HOME's backlog, so a state dir pointed elsewhere would
   # compare one home's records against another home's tasks; stay silent on
@@ -2070,9 +2078,6 @@ command_check_records() {
           continue
           ;;
       esac
-      # Both gates exit 1 through fail() when the entry names no hold; any other
-      # status (the backend's read bound, an unreadable listing) is "cannot
-      # tell" and reports nothing.
       rc=0
       resolved=$(resolve_entry "$id" "$entry" 2>/dev/null) || rc=$?
       if [ "$rc" -eq 0 ]; then
@@ -2080,6 +2085,9 @@ command_check_records() {
       fi
       if [ "$rc" -eq 1 ]; then
         printf '%s\tunresolved-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+      elif [ "$rc" -ne 0 ]; then
+        can_resolve=0
+        incomplete=1
       fi
     done <<KEYS
 $(printf '%s\n' "$keys" | tr ',' '\n')
@@ -2094,6 +2102,7 @@ KEYS
     owner=$(sanitize_field "$FM_TREEHOUSE_SLOT_OWNER_ID")
     printf '%s\tslot-reassigned\t%s\n' "$id" "$owner"
   done
+  [ "$incomplete" -eq 0 ] || return 2
 }
 
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
