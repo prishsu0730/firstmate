@@ -891,6 +891,9 @@ _fm_decision_public_set() {
   done
 }
 
+# Internal @key rows retain the opening byte offset for episode-qualified closes;
+# an episode tag must match that opening, so a delayed close cannot clear a reopen.
+# Public open-set readers strip these identity rows before returning decisions.
 _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb> <kind> [<byte-offset>]
   local open=$1 line=$2 resolve=$3 held=$4 kind=$5 position=${6:-} verb key note unstamped episode row head
   # Both colon tests below ask where the head ends, the same question the note
@@ -1084,14 +1087,8 @@ EOF
 # _fm_decision_fold_line rule the two folds use, and the reported verb is read
 # off the transitions that rule produces.
 #
-# One `grep` pre-selects those candidates so the bash fold below costs the log's
-# TRANSITIONS rather than its whole lifetime length - status files are only ever
-# appended to, and this runs per open task on every supervision presentation.
-# The pre-select deliberately over-includes: it takes any line whose leading word
-# could be a fold verb (including the ship/scout terminals, which carry no key
-# token), and the fold alone decides which of them really moves the set. A line
-# whose leading word is followed by neither whitespace, a colon, nor a bracket
-# tag cannot be a transition, because the fold's own declaration guard rejects it.
+# Read the complete stream to preserve byte offsets for episode matching, even
+# across lines that do not change the open set.
 status_key_closing_verb() {  # <status-file> <key>
   local f=$1 want=$2 line resolve held open='' was verb='' kind event position=0 start LC_ALL=C
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
