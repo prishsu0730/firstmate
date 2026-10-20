@@ -3309,17 +3309,34 @@ test_secondmate_liveness_tick_attempt_bound_parks_then_rearm_on_alive() {
     || fail "the live rearm was not ledgered exactly once: $(cat "$ledger")"
   drain_liveness_wakes "$dir"
   rm -f "$state/.secondmate-liveness-tick"
-  # The three seeded attempts still sit inside the window, yet the rearm
-  # restores the full default budget: the next death relaunches, not re-parks.
+  # The three attempts remain in the window after rearming: the next death parks again.
   run_liveness_leg "$dir" rearmed-dead FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_WINDOW_GONE=1; pid=$LIVENESS_PID
-  wait_for_exit "$pid" 300 || fail "a rearmed mate was not auto-relaunched on its next death"
-  grep -F 'check: secondmate sm1 auto-relaunched' "$dir/watch-rearmed-dead.out" >/dev/null \
-    || fail "the rearmed mate's relaunch did not wake: $(cat "$dir/watch-rearmed-dead.out" "$dir/watch-rearmed-dead.err")"
-  [ ! -e "$state/.secondmate-relaunch-bound-sm1" ] \
-    || fail "a rearmed mate was re-parked on its pre-rearm attempts"
-  [ "$(awk -F '\t' '$2 == "attempt"' "$ledger" | wc -l | tr -d ' ')" -eq 4 ] \
+  wait_for_exit "$pid" 300 || fail "the bounded mate did not wake"
+  grep -F 'auto-relaunch paused after 3 attempts' "$dir/watch-rearmed-dead.out" >/dev/null \
+    || fail "rearming reset the attempt limit"
+  [ -e "$state/.secondmate-relaunch-bound-sm1" ] \
+    || fail "the mate was not re-parked on its pre-rearm attempts"
+  [ "$(awk -F '\t' '$2 == "attempt"' "$ledger" | wc -l | tr -d ' ')" -eq 3 ] \
     || fail "the ledger did not keep its pre-rearm history plus the new attempt: $(cat "$ledger")"
   pass "watch liveness: the attempt bound parks a flapping mate once and a live probe rearms a full budget"
+}
+
+test_secondmate_liveness_tick_respects_deliberate_stop() {
+  local dir state pid leg
+  dir=$(make_secondmate_liveness_case liveness-stopped)
+  state="$dir/state"
+  printf 'deliberate stop\n' > "$state/.secondmate-stopped-sm1"
+  for leg in first second; do
+    rm -f "$state/.secondmate-liveness-tick"
+    run_liveness_leg "$dir" "$leg" FM_FAKE_TMUX_CURRENT_COMMAND=zsh; pid=$LIVENESS_PID
+    sleep 4
+    is_live_non_zombie "$pid" || fail "stopped mate caused a wake: $(cat "$dir/watch-$leg.out" "$dir/watch-$leg.err")"
+    kill_liveness_leg "$pid"
+    drain_liveness_wakes "$dir"
+  done
+  [ ! -e "$state/.secondmate-relaunch-sm1" ] || fail "stopped mate was attempted"
+  [ ! -s "$dir/tmux.log" ] || fail "stopped mate endpoint was changed"
+  pass "watch liveness: a deliberate stop survives two ticks"
 }
 
 test_secondmate_liveness_tick_relaunch_failure_reports_once() {
@@ -3567,6 +3584,7 @@ test_secondmate_liveness_tick_relaunches_every_dead_mate_before_waking
 test_secondmate_liveness_tick_leaves_alive_and_inconclusive_untouched
 test_secondmate_liveness_tick_cadence_gates_the_probe
 test_secondmate_liveness_tick_attempt_bound_parks_then_rearm_on_alive
+test_secondmate_liveness_tick_respects_deliberate_stop
 test_secondmate_liveness_tick_relaunch_failure_reports_once
 test_secondmate_liveness_tick_fails_closed_on_ledger_errors
 test_secondmate_liveness_tick_error_keeps_scanning_and_wakes

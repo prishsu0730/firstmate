@@ -17,7 +17,8 @@ set -u
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-TMP_ROOT=$(fm_test_tmproot fm-afk-return-tests)
+TMP_ROOT=$(fm_test_tmproot fm-afk-return-tests) || exit 1
+case "$TMP_ROOT" in ''|"$ROOT"|"$ROOT"/*) printf 'unsafe test root: %s\n' "$TMP_ROOT" >&2; exit 1 ;; esac
 
 install_runner() {  # <case-dir>
   local dir=$1
@@ -381,6 +382,14 @@ test_return_brief_composes_from_record_store_and_held_set() {
   local dir out rc gate health_line words_line waiting_line failed_line second
   dir="$TMP_ROOT/brief"
   install_runner "$dir"
+  cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  other) printf 'state: working · source: pane · progressing\n' ;;
+  *) printf 'state: unknown · source: none · unverified\n' ;;
+esac
+SH
+  chmod +x "$dir/bin/fm-crew-state.sh"
   (cd "$dir/home" && tasks-axi add fix-windows 'Fix the windows lane' --file data/backlog.md >/dev/null \
     && tasks-axi hold fix-windows --reason 'awaiting the captain on the merge' --kind captain --file data/backlog.md >/dev/null) \
     || fail "could not seed the held backlog"
@@ -428,17 +437,31 @@ test_return_brief_composes_from_record_store_and_held_set() {
   [ -e "$dir/home/state/afk-contracts" ] || fail "the return did not archive the away-posture record"
   [ ! -e "$dir/home/state/.afk-contract" ] || fail "the live away-posture record survived the return"
   assert_contains "$out" '=== Return brief (away ' "the brief did not open with the away window"
-  assert_contains "$out" 'supervision ran through the away window with no detected gap' "health did not report the clean window"
-  health_line=$(line_of "$out" 'Supervisor health:')
-  words_line=$(line_of "$out" 'Your instructions:')
-  waiting_line=$(line_of "$out" 'Waiting on you:')
-  failed_line=$(line_of "$out" 'Tried and failed, or could not be fixed:')
+  assert_contains "$out" 'Still running:' "the return brief must show running work"
+  local active_section waiting_section
+  active_section=$(printf '%s\n' "$out" | sed -n '/^Active:$/,/^Waiting:$/p')
+  waiting_section=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
+  assert_contains "$active_section" 'other: state: working' "confirmed running work must appear under Active"
+  assert_not_contains "$active_section" 'dead: current state unknown' "unknown work must not be called active"
+  assert_contains "$waiting_section" 'dead: current state unknown' "unknown work must remain visible under Waiting"
+  assert_contains "$out" 'Files changed:' "the return brief must show changed files or unknown"
+  assert_contains "$out" 'Next:' "the return brief must identify one next action"
+  local headings
+  headings=$(printf '%s\n' "$out" | grep -E '^(Outcome:|Active:|Waiting:|Held:|Needs Me:|Next:)')
+  [ "$(printf '%s\n' "$headings" | sed 's/:.*/:/')" = "$(printf 'Outcome:\nActive:\nWaiting:\nHeld:\nNeeds Me:\nNext:')" ] || fail "the six return parts are missing or out of order: $headings"
+  assert_contains "$out" 'Health: supervision ran through the away window with no detected gap' "health summary did not report the clean window"
+  assert_contains "$out" 'Handled while away: 6 outcomes.' "the handled-outcome summary is wrong"
+  assert_contains "$out" "$dir/home/state/afk-contracts" "the archived instructions are not pointed to by the details line"
+  health_line=$(line_of "$out" '  Health:')
+  words_line=$(line_of "$out" '  Away instructions:')
+  waiting_line=$(line_of "$out" 'Needs Me:')
+  failed_line=$(line_of "$out" '  Tried and failed, or could not be fixed:')
   [ -n "$health_line" ] && [ -n "$words_line" ] && [ -n "$waiting_line" ] && [ -n "$failed_line" ] \
     || fail "the brief is missing a section: $out"
-  [ "$health_line" -lt "$words_line" ] && [ "$words_line" -lt "$waiting_line" ] && [ "$waiting_line" -lt "$failed_line" ] \
+  [ "$health_line" -lt "$words_line" ] && [ "$words_line" -lt "$failed_line" ] && [ "$failed_line" -lt "$waiting_line" ] \
     || fail "the brief sections are out of order (health $health_line, instructions $words_line, waiting $waiting_line, failed $failed_line)"
   assert_contains "$out" $'  your words at entry:\n    merge the windows fix when green, then cut a prerelease\n    if the install deadlocks abort the competing run\n' "the captain's verbatim words were not carried into the brief"
-  assert_contains "$out" $'  the away session acted on them:\n    - fix-windows: per your away instructions: merged the windows fix PR once checks went green\n    - prerelease: per your away instructions: filed and dispatched the prerelease cut; it needs your review\nWaiting on you:\n' "the session's account listed something other than exactly the two actions taken under the words"
+  assert_contains "$out" $'  the away session acted on them:\n    - fix-windows: per your away instructions: merged the windows fix PR once checks went green\n    - prerelease: per your away instructions: filed and dispatched the prerelease cut; it needs your review\n  Handled while away:' "the session's account listed something other than exactly the two actions taken under the words"
   assert_not_contains "$out" $'acted on them:\n    - other:' "an outcome that did not cite the words was listed as an action under them"
   assert_not_contains "$out" $'acted on them:\n    - held-note:' "a summary opening with the marker's words but no colon was listed as an action under them"
   assert_not_contains "$out" 'still building' "the return brief rendered a silent routine outcome"
@@ -451,9 +474,7 @@ test_return_brief_composes_from_record_store_and_held_set() {
   assert_contains "$out" 'fix-windows [key=token] still blocked, firstmate remediates before ordinary work' "the blocker sharing a task with a captain outcome was exempted"
   assert_contains "$out" 'other [key=dep] still blocked, firstmate remediates before ordinary work' "the unreached blocker was not listed as could-not-fix"
   assert_contains "$out" 'dead: failed: the reproduction never compiled' "the failed task was not listed"
-  assert_contains "$out" '4 routine outcome(s) recorded' "the routine outcome count was not reported"
-  assert_contains "$out" 'other: resent the steer; worker resumed' "the routine outcome was not listed"
-  assert_contains "$out" 'Cost: 6 supervision outcome(s) recorded (4 routine, 2 captain); 3 task(s) live at return.' "the cost line is wrong"
+  assert_contains "$out" 'Cost: 6 supervision outcome(s); 3 task(s) live at return.' "the cost line is wrong"
   assert_contains "$out" 'firstmate-actionable blocker: other [key=dep]' "the unreached blocker did not gate"
   assert_contains "$out" 'firstmate-actionable blocker: fix-windows [key=token]' "a captain outcome incorrectly exempted an open blocker"
   grep -F "$(printf 'contract\t')" "$gate" >/dev/null || fail "the gate did not retain the posture-record window"
@@ -466,7 +487,7 @@ test_return_brief_composes_from_record_store_and_held_set() {
   second=$(run_return "$dir" check) || fail "the remediated return did not clear: $second"
   assert_contains "$second" $'  your words at entry:\n    merge the windows fix when green, then cut a prerelease' "check did not re-render the words from the archived record"
   assert_contains "$second" 'fix-windows: per your away instructions: merged the windows fix PR' "check did not re-render the session account"
-  assert_contains "$second" 'supervision ran through the away window with no detected gap' "check lost the health snapshot taken at begin"
+  assert_contains "$second" 'Health: supervision ran through the away window with no detected gap' "check lost the health snapshot taken at begin"
   assert_contains "$second" 'catch-up clear' "check did not clear the gate"
   [ ! -e "$gate" ] || fail "the cleared check left the gate behind"
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$dir/bin/fm-afk-return.sh" guard \
@@ -476,9 +497,8 @@ test_return_brief_composes_from_record_store_and_held_set() {
 
 # On a supervision-host home off Pi the drain's BRANCH OUTCOMES section is the
 # one presenter of branch outcomes and the one owner of their read cursor, so
-# the return brief counts the window's outcomes and points there instead of
-# listing them, and leaves the cursor alone. On Pi the brief lists them as
-# before.
+# the return brief counts and lists visible window outcomes while pointing to
+# the drain for its fuller presentation, and leaves the cursor alone.
 test_return_brief_points_at_the_drain_on_a_host_home_only() {
   local dir harness fakebin out n
   for harness in claude pi; do
@@ -501,20 +521,20 @@ test_return_brief_points_at_the_drain_on_a_host_home_only() {
     # shellcheck disable=SC2016 # the single-quoted script expands in the harness shell
     out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
       "$fakebin/$harness" -c '"$0" begin 2>&1' "$dir/bin/fm-afk-return.sh") || fail "$harness: the return did not clear: $out"
-    assert_contains "$out" '7 outcome(s) handled by the away session (6 routine, 1 escalated above)' "$harness: the brief must count the window's outcomes"
+    assert_contains "$out" 'Handled while away: 7 outcomes.' "$harness: the brief must count the window's outcomes"
     if [ "$harness" = claude ]; then
       assert_contains "$out" "  1 captain outcome(s) escalated by the away session, presented in the drain's BRANCH OUTCOMES section" \
         "a host home's brief must point at the drain for its captain outcomes"
       assert_contains "$out" "the drain's BRANCH OUTCOMES section presents the visible outcomes" "a host home's brief must point at the visible outcomes in the drain"
-      assert_not_contains "$out" 'PR ready for review' "a host home's brief must leave the captain outcome to the drain"
-      assert_not_contains "$out" 'routine 6' "a host home's brief must leave the routine outcomes to the drain"
+      assert_contains "$out" '    - demo: PR ready for review' "a host home's brief must retain the captain outcome summary"
+      assert_contains "$out" '    - demo: routine 6' "a host home's brief must retain visible routine summaries"
     else
       assert_contains "$out" '    - demo: PR ready for review' "a Pi home's brief must still list the captain outcome"
       assert_contains "$out" '    - demo: routine 6' "a Pi home's brief must still list the latest routine outcomes"
     fi
     [ ! -e "$dir/home/state/.branch-outcomes-cursor" ] || fail "$harness: the return moved the outcome store's read cursor"
   done
-  pass "the return brief points at the drain for branch outcomes on a host home and leaves the read cursor to it, and a Pi home's brief is unchanged"
+  pass "the return brief lists visible outcomes, points to the drain, and leaves the read cursor alone"
 }
 
 test_return_brief_all_silent_window_does_not_point_at_drain() {
@@ -536,10 +556,10 @@ test_return_brief_all_silent_window_does_not_point_at_drain() {
   # shellcheck disable=SC2016 # the single-quoted script expands in the harness shell
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$fakebin/claude" -c '"$0" begin 2>&1' "$dir/bin/fm-afk-return.sh") || fail "the all-silent return did not clear: $out"
-  assert_contains "$out" '1 outcome(s) handled by the away session (1 routine, 0 escalated above)' \
+  assert_contains "$out" 'Handled while away: 1 outcomes.' \
     "the all-silent window's stored outcome count was lost"
-  assert_contains "$out" '1 routine outcome(s) recorded; none were visible.' \
-    "the all-silent window should report no visible routine notes"
+  assert_contains "$out" "Details: $dir/home/state/afk-contracts, $dir/home/state/branch-outcomes.jsonl" \
+    "the all-silent window did not point to durable outcome detail"
   assert_not_contains "$out" 'still building' "the return brief rendered the silent routine note"
   assert_not_contains "$out" 'BRANCH OUTCOMES section' "the all-silent brief pointed at a drain section that does not exist"
   [ ! -e "$dir/home/state/.branch-outcomes-cursor" ] || fail "the return moved the outcome store's read cursor"
@@ -634,19 +654,218 @@ test_return_brief_lists_landed_work_awaiting_cleanup() {
   : > "$dir/home/state/.fake-drain"
 
   out=$(run_return "$dir" begin) || fail "a return with only landed work should clear: $out"
-  landed_line=$(line_of "$out" 'Landed, cleanup due:')
-  failed_line=$(line_of "$out" 'Tried and failed, or could not be fixed:')
-  handled_line=$(line_of "$out" 'Handled while away:')
+  landed_line=$(line_of "$out" '  Recently landed (cleanup due):')
+  failed_line=$(line_of "$out" '  Tried and failed, or could not be fixed:')
+  handled_line=$(line_of "$out" '  Handled while away:')
   [ -n "$landed_line" ] && [ -n "$failed_line" ] && [ -n "$handled_line" ] || fail "the brief is missing a section: $out"
-  [ "$failed_line" -lt "$landed_line" ] && [ "$landed_line" -lt "$handled_line" ] \
+  [ "$handled_line" -lt "$landed_line" ] && [ "$landed_line" -lt "$failed_line" ] \
     || fail "landed work is out of order (failed $failed_line, landed $landed_line, handled $handled_line)"
   assert_contains "$out" '  - landed: https://github.com/example/landed/pull/7 is merged and the worker is still up; close it with bin/fm-teardown.sh landed once catch-up clears' "the landed worker was not listed for cleanup"
-  assert_not_contains "$out" '  - open:' "a done worker with no durable merge evidence was listed as landed"
-  assert_not_contains "$out" '  - axi-mate:' "a persistent secondmate was listed as landed work"
+  local landed_section
+  landed_section=$(printf '%s\n' "$out" | sed -n '/^  Recently landed (cleanup due):$/,/^  Files changed:/p')
+  assert_not_contains "$landed_section" '  - open:' "a done worker with no durable merge evidence was listed as landed"
+  assert_not_contains "$landed_section" '  - axi-mate:' "a persistent secondmate was listed as landed work"
   assert_not_contains "$out" 'bin/fm-teardown.sh axi-mate' "the brief offered a persistent secondmate for teardown"
   assert_not_contains "$out" 'example/child/pull/7' "a secondmate's recorded PR surfaced in the brief"
   assert_contains "$out" 'catch-up clear' "landed work must not hold the gate"
   pass "the return brief lists landed work whose worker is still up, from the durable merge marker only, without gating on it and never offering a secondmate for teardown"
+}
+
+test_return_brief_files_and_next_action_precedence() {
+  local scenario dir out next_line expected stamp
+  for scenario in blocker decision captain-outcome landed default-base review unrecorded none; do
+    dir="$TMP_ROOT/brief-next-$scenario"
+    install_runner "$dir"
+    contract_in "$dir" enter --words 'handle the recorded PR work' >/dev/null 2>&1 \
+      || fail "could not enter the away window for $scenario"
+    stamp=$(date +%s)
+    cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  ready) printf 'state: done · checks green: PR ready for review\n' ;;
+  *) printf 'state: unknown\n' ;;
+esac
+SH
+    chmod +x "$dir/bin/fm-crew-state.sh"
+    if [ "$scenario" != none ]; then
+      printf 'window=synthetic:fm-ready\nbackend=tmux\nkind=ship\npr=https://github.com/example/ready/pull/9\n' > "$dir/home/state/ready.meta"
+      if [ "$scenario" = unrecorded ]; then
+        printf 'done: PR https://github.com/example/ready/pull/9 checks green\n' > "$dir/home/state/ready.status"
+      else
+        printf 'done [at=%s]: PR https://github.com/example/ready/pull/9 checks green\n' "$stamp" > "$dir/home/state/ready.status"
+      fi
+    fi
+    case "$scenario" in
+      blocker|decision|captain-outcome|landed|default-base|unrecorded)
+        printf 'window=synthetic:fm-landed\nbackend=tmux\nkind=ship\npr=https://github.com/example/landed/pull/7\n' > "$dir/home/state/landed.meta"
+        if [ "$scenario" = unrecorded ]; then
+          printf 'done: PR https://github.com/example/landed/pull/7 merged\n' > "$dir/home/state/landed.status"
+        else
+          printf 'done [at=%s]: PR https://github.com/example/landed/pull/7 merged\n' "$stamp" > "$dir/home/state/landed.status"
+        fi
+        (
+          # shellcheck source=bin/fm-pr-lib.sh
+          . "$ROOT/bin/fm-pr-lib.sh"
+          fm_pr_poll_merge_mark_notified "$dir/home/state" landed github github.com example/landed 7
+        ) || fail "could not record the landed PR for $scenario"
+        # No time evidence at all: the merge marker predates the away window too.
+        [ "$scenario" != unrecorded ] || touch -t 202001010000 "$dir/home/state/landed.pr-poll-merge-notified"
+        ;;
+    esac
+    case "$scenario" in
+      blocker|decision)
+        printf 'window=synthetic:fm-choice\nbackend=tmux\nkind=ship\n' > "$dir/home/state/choice.meta"
+        printf 'needs-decision [key=target]: choose the target\n' > "$dir/home/state/choice.status"
+        ;;
+      captain-outcome)
+        outcome_in "$dir" append --task choice --verdict captain --summary 'choose the target' >/dev/null \
+          || fail "could not record the captain outcome"
+        ;;
+    esac
+    if [ "$scenario" = blocker ]; then
+      seed_live_blocker "$dir" tmux dependency
+    fi
+    if [ "$scenario" != none ] && [ "$scenario" != unrecorded ]; then
+      outcome_in "$dir" append --task ready --verdict routine --summary 'PR ready for review' >/dev/null \
+        || fail "could not record the review-ready outcome for $scenario"
+      case "$scenario" in
+        blocker|decision|captain-outcome|landed|default-base)
+          outcome_in "$dir" append --task landed --verdict routine --summary 'merged PR' >/dev/null \
+            || fail "could not record the merged outcome for $scenario" ;;
+      esac
+    fi
+    if [ "$scenario" = landed ] || [ "$scenario" = default-base ]; then
+      mkdir -p "$dir/repo"
+      git -C "$dir/repo" init -q -b main
+      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m base
+      git -C "$dir/repo" checkout -q -b changes
+      touch "$dir/repo/a" "$dir/repo/b" "$dir/repo/c" "$dir/repo/d" "$dir/repo/e"
+      git -C "$dir/repo" add .
+      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m 'Changes (#7)'
+      git -C "$dir/repo" checkout -q main
+      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com merge -q --no-ff changes -m 'Merge pull request #7 from example/changes'
+      for task in ready landed; do
+        printf 'project=%s/repo\nbranch=changes\nbase_branch=main\n' "$dir" >> "$dir/home/state/$task.meta"
+      done
+      git -C "$dir/repo" branch ready-base HEAD~1
+      sed -i.bak 's/base_branch=main/base_branch=ready-base/' "$dir/home/state/ready.meta"
+      if [ "$scenario" = default-base ]; then
+        git -C "$dir/repo" update-ref refs/remotes/origin/main ready-base
+        git -C "$dir/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --amend -m 'Locally landed changes'
+        for task in ready landed; do
+          sed -i.bak '/^base_branch=/d' "$dir/home/state/$task.meta"
+        done
+      fi
+    fi
+    touch "$dir/home/state/.last-watcher-beat"
+    : > "$dir/home/state/.fake-drain"
+    out=$(run_return "$dir" begin) || [ "$scenario" = blocker ] || fail "return failed for $scenario: $out"
+    if [ "$scenario" = landed ] || [ "$scenario" = default-base ]; then
+      assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged): a, b, c +2 more' "merged PR omitted local paths"
+      assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review): a, b, c +2 more' "ready PR omitted local paths"
+    elif [ "$scenario" = review ]; then
+      assert_contains "$out" 'paths unavailable: recorded local repository missing' "missing repository lacked a reason"
+    fi
+    next_line=$(printf '%s\n' "$out" | grep '^Next:' || true)
+    case "$scenario" in
+      blocker) expected='Next: firstmate resolves the catch-up blocker for repair-task.' ;;
+      decision) expected='Next: captain decides for choice [key=target].' ;;
+      captain-outcome) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      landed|default-base) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      review) expected='Next: captain reviews https://github.com/example/ready/pull/9 for ready.' ;;
+      unrecorded) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      none) expected='Next: none.' ;;
+    esac
+    [ "$next_line" = "$expected" ] || fail "$scenario selected the wrong next action: $next_line"
+    if [ "$scenario" = none ] || [ "$scenario" = unrecorded ]; then
+      assert_contains "$out" 'Files changed: none recorded' "empty records did not say no changes were recorded"
+    else
+      assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence' "$scenario did not show recorded PR changes"
+      assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review)' "$scenario omitted the review-ready PR"
+      case "$scenario" in
+        blocker|decision|captain-outcome|landed|default-base)
+          assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged)' "$scenario omitted the landed PR" ;;
+      esac
+    fi
+  done
+  pass "the return brief shows recorded PR changes and selects one next action by precedence"
+}
+
+test_return_brief_excludes_pr_merged_before_away() {
+  local dir out
+  dir="$TMP_ROOT/brief-old-merge"
+  install_runner "$dir"
+  printf 'window=synthetic:fm-old\nbackend=tmux\nkind=ship\npr=https://github.com/example/old/pull/3\n' > "$dir/home/state/old.meta"
+  printf 'done [at=1]: PR https://github.com/example/old/pull/3 merged\n' > "$dir/home/state/old.status"
+  (
+    . "$ROOT/bin/fm-pr-lib.sh"
+    fm_pr_poll_merge_mark_notified "$dir/home/state" old github github.com example/old 3
+  ) || fail "could not record the pre-away merge"
+  touch -t 202001010000 "$dir/home/state/old.pr-poll-merge-notified"
+  contract_in "$dir" enter --words 'continue ordinary cleanup' >/dev/null 2>&1 \
+    || fail "could not enter the later away window"
+  outcome_in "$dir" append --task old --verdict routine --summary 'checked cleanup status' >/dev/null \
+    || fail "could not record the later routine outcome"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "return failed for the pre-away merge: $out"
+  assert_contains "$out" 'Files changed: none recorded' "a later task outcome re-dated the old merge"
+  assert_contains "$out" 'Next: firstmate closes landed task old with bin/fm-teardown.sh old.' \
+    "old landed work was lost from cleanup precedence"
+  pass "a later routine outcome does not make a pre-away merge an away-window change"
+}
+
+test_return_brief_reconciles_all_states_and_pr_records() {
+  local dir out active waiting needs files task
+  dir="$TMP_ROOT/brief-record-forms"
+  install_runner "$dir"
+  contract_in "$dir" enter --words 'review ready work and close landed work' >/dev/null 2>&1 \
+    || fail "could not enter the away window"
+  cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  green|published|status-only) printf 'state: done · source: run-step · run completed\n' ;;
+  run-only) printf 'state: done · source: run-step · checks green: PR ready for review: https://github.com/example/run/pull/12\n' ;;
+  parked|blocked|paused|failed|done|working) printf 'state: %s · source: run-step · current task\n' "$1" ;;
+  *) printf 'state: unknown · source: none\n' ;;
+esac
+SH
+  chmod +x "$dir/bin/fm-crew-state.sh"
+  for task in green published status-only run-only parked blocked paused failed "done" working merged; do
+    printf 'window=synthetic:fm-%s\nbackend=tmux\nkind=ship\n' "$task" > "$dir/home/state/$task.meta"
+    : > "$dir/home/state/$task.status"
+  done
+  printf 'pr=https://github.com/example/green/pull/9\n' >> "$dir/home/state/green.meta"
+  printf 'done [at=%s]: PR https://github.com/example/green/pull/9 checks green\n' "$(date +%s)" > "$dir/home/state/green.status"
+  printf 'pr=https://gerrit.example.com/c/team/app/+/11\n' >> "$dir/home/state/published.meta"
+  printf 'done [at=%s]: PR https://gerrit.example.com/c/team/app/+/11 published for review\n' "$(date +%s)" > "$dir/home/state/published.status"
+  printf 'done [at=%s]: PR https://github.com/example/status/pull/10 checks green\n' "$(date +%s)" > "$dir/home/state/status-only.status"
+  printf 'pr=https://github.com/example/landed/pull/7\n' >> "$dir/home/state/merged.meta"
+  (
+    . "$ROOT/bin/fm-pr-lib.sh"
+    fm_pr_poll_merge_mark_notified "$dir/home/state" merged github github.com example/landed 7
+  ) || fail "could not record the merged PR"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "return did not reconcile the record forms: $out"
+  active=$(printf '%s\n' "$out" | sed -n '/^Active:$/,/^Waiting:$/p')
+  waiting=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
+  needs=$(printf '%s\n' "$out" | sed -n '/^Needs Me:$/,/^Next:/p')
+  files=$(printf '%s\n' "$out" | sed -n '/^  Files changed:/,/^Active:$/p')
+  assert_contains "$active" 'working: state: working' "running work vanished"
+  assert_contains "$needs" 'parked: state: parked' "a validation gate vanished"
+  for task in blocked paused failed "done"; do
+    assert_contains "$waiting" "$task: state: $task" "$task vanished from waiting"
+  done
+  assert_contains "$out" 'green: https://github.com/example/green/pull/9 (ready for review)' "the checks-green record vanished"
+  assert_contains "$out" 'published: https://gerrit.example.com/c/team/app/+/11 (ready for review)' "the published Gerrit change vanished"
+  assert_contains "$out" 'status-only: https://github.com/example/status/pull/10 (ready for review)' "the status URL without metadata vanished"
+  assert_contains "$out" 'run-only: state: done' "the run-only ready state vanished"
+  assert_contains "$out" 'merged: https://github.com/example/landed/pull/7 (merged)' "the main-home merge marker lacked an away-window time"
+  assert_not_contains "$files" 'run-only:' "an untimed ready run was called an away-window file change"
+  assert_contains "$out" 'Next: firstmate closes landed task merged with bin/fm-teardown.sh merged.' "cleanup lost precedence over review"
+  pass "return brief reconciles crew states and normal PR records with away-window proof"
 }
 
 test_return_brief_keeps_refresh_history() {
@@ -666,8 +885,8 @@ test_return_brief_keeps_refresh_history() {
   assert_contains "$out" $'  your words superseded at ' "the superseded words were omitted"
   assert_contains "$out" '    first mandate: merge task first PR when green' "the superseded words were not rendered verbatim"
   assert_contains "$out" $'  your words at entry:\n    replacement mandate' "the final words were omitted"
-  assert_contains "$out" 'first: completed before the mandate refresh' "the pre-refresh outcome was omitted"
-  assert_contains "$out" $'    replacement mandate\n    \n  the away session took no action under them.\nWaiting on you:' "the return brief dropped a trailing blank line from the final words or lost the empty account"
+  assert_contains "$out" $'    replacement mandate\n    \n  the away session took no action under them.\n  Handled while away:' "the return brief dropped a trailing blank line from the final words or lost the empty account"
+  assert_contains "$out" "$dir/home/state/afk-contracts" "the brief omitted the archive pointer"
   [ -f "$dir/home/state/afk-contracts/$first_epoch.afk-contract" ] || fail "return did not archive the final session record at the canonical path"
   pass "a refreshed posture keeps its original window, superseded mandate, and earlier outcomes"
 }
@@ -795,7 +1014,7 @@ SH
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" "$ROOT/bin/fm-bearings-snapshot.sh" --json \
     | jq -e '.gates | any(.id == "(return-catchup)" and (.title | startswith("catch-up retained:")))' >/dev/null \
     || fail "Bearings did not carry the blockerless catch-up retention reason"
-  waiting=$(printf '%s\n' "$out" | awk '/^Waiting on you:/{show=1} /^Tried and failed, or could not be fixed:/{show=0} show')
+  waiting=$(printf '%s\n' "$out" | awk '/^Held:/{show=1} /^Needs Me:/{show=0} show')
   assert_contains "$waiting" "held listing unavailable: $dir/home/data/backlog.md: synthetic held backlog failure; catch-up stays gated" "the failed held listing was not disclosed"
   assert_not_contains "$waiting" '(nothing)' "an unavailable held set was also reported as empty"
   out=$(run_return "$dir" check) || fail "catch-up did not clear after the held-set reader recovered: $out"
@@ -925,13 +1144,56 @@ test_return_brief_health_leads_with_a_gap() {
   else touch -m -d "@$(( $(date +%s) - 900 ))" "$dir/home/state/.last-watcher-beat"; fi
   : > "$dir/home/state/.fake-drain"
   out=$(run_return "$dir" begin) || fail "a clean fleet with a supervision gap should still clear the gate: $out"
-  assert_contains "$out" 'GAP: watcher downtime was detected during the away window' "the downtime marker was not reported as a gap"
-  assert_contains "$out" 'GAP: the watcher beat was ' "the stale beacon was not reported as a gap"
+  assert_contains "$out" 'Health: GAP: watcher downtime was detected during the away window' "the downtime marker was not reported as a gap"
+  assert_contains "$out" 'Health: GAP: the watcher beat was ' "the stale beacon was not reported as a gap"
   assert_not_contains "$out" 'no detected gap' "a gap window was reported as clean"
   gap_line=$(line_of "$out" 'GAP: watcher downtime')
-  clean_line=$(line_of "$out" 'Your instructions:')
+  clean_line=$(line_of "$out" 'Away instructions:')
   [ "$gap_line" -lt "$clean_line" ] || fail "the gap was not reported before the instructions"
-  pass "the return brief leads with supervisor health and names every detected gap"
+  pass "the return brief names every detected health gap before the instructions"
+}
+
+test_return_brief_lists_every_health_and_lifecycle_row() {
+  local dir out rc outcome_section
+  dir="$TMP_ROOT/brief-all-rows"
+  install_runner "$dir"
+  contract_in "$dir" enter >/dev/null 2>&1 || fail "could not write the away-posture record"
+  : > "$dir/home/state/.watcher-down"
+  touch "$dir/home/state/.last-watcher-beat"
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$(( $(date +%s) - 900 ))" '+%Y%m%d%H%M.%S')" "$dir/home/state/.last-watcher-beat"
+  else touch -m -d "@$(( $(date +%s) - 900 ))" "$dir/home/state/.last-watcher-beat"; fi
+  printf '{malformed json\n' > "$dir/home/state/branch-outcomes.jsonl"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "an unreadable outcome store should keep catch-up gated (rc=$rc): $out"
+  outcome_section=$(printf '%s\n' "$out" | sed -n '/^Outcome:/,/^Active:$/p')
+  assert_contains "$outcome_section" 'Health: GAP: watcher downtime was detected during the away window' "the first health row is missing from the brief"
+  assert_contains "$outcome_section" 'Health: GAP: the watcher beat was ' "the second health row is missing from the brief"
+  assert_contains "$outcome_section" 'Lifecycle: outcome store unreadable, catch-up stays gated' "the lifecycle row is missing from the brief"
+  pass "the return brief lists every health row and the lifecycle problems that gate catch-up"
+}
+
+test_return_brief_details_name_only_paths_that_exist() {
+  local dir out details path
+  dir="$TMP_ROOT/brief-details-exist"
+  install_runner "$dir"
+  contract_in "$dir" enter --words 'watch the fleet' >/dev/null 2>&1 || fail "could not write the away-posture record"
+  outcome_in "$dir" append --task demo --verdict routine --summary 'routine note' >/dev/null || fail "could not seed the outcome"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || fail "a clean fleet should clear catch-up: $out"
+  details=$(printf '%s\n' "$out" | sed -n 's/^  Details: //p')
+  [ -n "$details" ] || fail "the brief named no durable records: $out"
+  assert_not_contains "$details" '.afk-return-catchup' "a clean return named the catch-up file it deletes"
+  while IFS= read -r path; do
+    [ -e "$path" ] || fail "the Details line names a path that does not exist after the return: $path"
+  done <<EOF
+$(printf '%s\n' "$details" | sed 's/, /\n/g')
+EOF
+  pass "a clean return's Details line names only records that still exist"
 }
 
 test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
@@ -946,8 +1208,8 @@ test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap() {
   touch "$dir/home/state/.last-watcher-beat"
   : > "$dir/home/state/.fake-drain"
   out=$(run_return "$dir" begin) || fail "a clean fleet with only a handled marker should clear the gate: $out"
-  assert_not_contains "$out" 'GAP: watcher downtime was detected' "an acked recovery marker was reported as an open gap"
-  assert_contains "$out" 'no detected gap' "a fully acked window was not reported as clean"
+  assert_not_contains "$out" 'Health: GAP: watcher downtime was detected' "an acked recovery marker was reported as an open gap"
+  assert_contains "$out" 'Health: supervision ran through the away window with no detected gap' "a fully acked window was not reported as clean"
   pass "the return brief does not report an already-acked watcher-down marker as an open gap"
 }
 
@@ -967,10 +1229,9 @@ test_return_brief_reports_only_an_open_downtime_episode_as_a_gap() {
     case "$token" in
       *:handling)
         assert_not_contains "$out" 'GAP:' "$token: a wake mid-handling was reported as a gap"
-        assert_contains "$out" 'no detected gap' "$token: a wake mid-handling hid the clean health line"
-        assert_contains "$out" "a wake was being handled at return (recovery marker $token); not a gap" "$token: the handling state was not reported as information" ;;
+        assert_contains "$out" 'Health: supervision ran through the away window with no detected gap' "$token: a wake mid-handling hid the clean health summary" ;;
       *)
-        assert_contains "$out" 'GAP: watcher downtime was detected during the away window (recovery marker present)' "$token: an open downtime episode was not reported as a gap"
+        assert_contains "$out" 'Health: GAP: watcher downtime was detected during the away window (recovery marker present)' "$token: an open downtime episode was not reported as a gap"
         assert_not_contains "$out" 'no detected gap' "$token: an open downtime episode was reported as clean" ;;
     esac
   done
@@ -1019,7 +1280,7 @@ $now${tab}to-main${tab}the away session could not take this wake: the engine tur
   : > "$dir/home/state/.fake-drain"
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a latch with no blocker should not hold the gate: $out"
-  section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+  section=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
   assert_contains "$section" "  - the supervision session latched at $(date -u -r "$now" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$now" '+%Y-%m-%dT%H:%M:%SZ') after 2 consecutive engine errors and paused away supervision (at least 2 engine error(s) in the window, last cooldown 300s)" \
     "the failures section did not name the latch, its time, and the window's engine errors"
   assert_contains "$section" "still paused at return: every wake reaches main until $(date -u -r "$retry" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$retry" '+%Y-%m-%dT%H:%M:%SZ')" \
@@ -1135,7 +1396,7 @@ $now${tab}latch${tab}errors=3${tab}cooldown=600s"
   : > "$dir/home/state/.fake-drain"
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a latch with no ledger and no blocker should not hold the gate: $out"
-  section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+  section=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
   assert_contains "$section" '  - the supervision session latched after engine errors and paused away supervision (trip time unavailable); still paused at return' \
     "a paused latch with no host ledger was not reported"
   assert_not_contains "$section" '(nothing)' "a paused latch with no host ledger reported no failures"
@@ -1157,7 +1418,7 @@ $recovered${tab}recovered${tab}after a successful probe"
   : > "$dir/home/state/.fake-drain"
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a lost second trip append should not hold the gate: $out"
-  section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+  section=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
   first_iso=$(date -u -r "$first" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$first" +%Y-%m-%dT%H:%M:%SZ)
   recovered_iso=$(date -u -r "$recovered" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$recovered" +%Y-%m-%dT%H:%M:%SZ)
   assert_contains "$section" "  - the supervision session latched at $first_iso after 2 consecutive engine errors and paused away supervision (last cooldown 300s); it recovered at $recovered_iso after a successful probe" \
@@ -1183,7 +1444,7 @@ $recovered${tab}recovered${tab}after a successful probe"
   : > "$dir/home/state/.fake-drain"
   out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
     "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "a recovery being saved should not hold the gate: $out"
-  section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+  section=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
   first_iso=$(date -u -r "$first" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$first" +%Y-%m-%dT%H:%M:%SZ)
   recovered_iso=$(date -u -r "$recovered" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$recovered" +%Y-%m-%dT%H:%M:%SZ)
   [ "$(printf '%s\n' "$section" | grep -c '  - the supervision session latched')" -eq 1 ] \
@@ -1266,7 +1527,7 @@ $second${tab}latch${tab}errors=3${tab}cooldown=300s" ;;
     : > "$dir/home/state/.fake-drain"
     out=$(FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/home/state" FM_CONFIG_OVERRIDE="$dir/home/config" \
       "$dir/bin/fm-afk-return.sh" begin 2>&1) || fail "$scenario: return should clear: $out"
-    section=$(printf '%s\n' "$out" | sed -n '/^Tried and failed, or could not be fixed:$/,/^Landed, cleanup due:$/p')
+    section=$(printf '%s\n' "$out" | sed -n '/^Waiting:$/,/^Held:$/p')
     case "$scenario" in
       one)
         assert_contains "$section" "latched at $(date -u -r "$first" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "@$first" +%Y-%m-%dT%H:%M:%SZ) after 2 consecutive engine errors" \
@@ -1384,6 +1645,9 @@ test_unreadable_superseded_archive_keeps_return_gated
 test_missing_final_archive_keeps_retained_contract_gated
 test_return_brief_composes_from_record_store_and_held_set
 test_return_brief_lists_landed_work_awaiting_cleanup
+test_return_brief_files_and_next_action_precedence
+test_return_brief_excludes_pr_merged_before_away
+test_return_brief_reconciles_all_states_and_pr_records
 test_return_brief_points_at_the_drain_on_a_host_home_only
 test_return_brief_all_silent_window_does_not_point_at_drain
 test_return_keeps_catchup_gated_when_the_drain_cannot_record_outcomes
@@ -1398,6 +1662,8 @@ test_statusful_leftover_record_lets_catchup_clear
 test_launched_worker_without_a_first_status_line_does_not_gate_catchup
 test_return_guard_refuses_while_the_record_exists
 test_return_brief_health_leads_with_a_gap
+test_return_brief_lists_every_health_and_lifecycle_row
+test_return_brief_details_name_only_paths_that_exist
 test_return_brief_does_not_report_an_acked_watcher_down_marker_as_a_gap
 test_return_brief_reports_only_an_open_downtime_episode_as_a_gap
 test_return_brief_reports_an_engine_latch_in_the_window
