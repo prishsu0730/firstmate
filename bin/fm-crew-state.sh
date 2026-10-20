@@ -245,6 +245,10 @@ fi
 # not treated as finished-and-safe.
 emit_ship_status_done() {  # [extra-detail]
   local extra=${1:-} reason
+  if [ "$KIND" = scout ]; then
+    [ -s "${FM_DATA_OVERRIDE:-$FM_HOME/data}/$ID/report.md" ] || emit unknown status-log "scout completion lacks a saved nonempty report"
+    fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null 2>&1 || emit unknown status-log "scout completion lacks a valid task endpoint"
+  fi
   if reason=$(fm_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
     emit "done" status-log "$(status_line_note "$LOG_LINE")${extra:+${SEP}$extra}"
   fi
@@ -1325,13 +1329,9 @@ if [ "$KIND" != secondmate ]; then
       case "$LOG_STATE" in
         paused|done|failed|blocked|parked)
           if [ -n "$LOG_EPOCH" ] && [ -z "$BUSY_EPOCH" ] && [ "$LOG_STATE" = paused ]; then
-            # A busy verdict with no timestamped record (a rendered-tail harness) cannot
-            # order itself against the declaration; a paused worker waiting on a long
-            # command is what its instructions ask for, so it stays a quiet declared pause.
             if scout_finished_evidence; then
-              emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; no ordering evidence for the busy pane"
+              emit_ship_status_done "saved scout report; no ordering evidence for the busy pane"
             fi
-            emit paused status-log "$(status_line_note "$LOG_LINE")${SEP}pane busy (${BUSY_VERDICT#* }) with no ordering evidence"
           fi
           if [ -z "$LOG_EPOCH" ] || [ -z "$BUSY_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); timestamp evidence unavailable"
@@ -1340,7 +1340,7 @@ if [ "$KIND" != secondmate ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }), activity newer than status"
           fi
           if scout_finished_evidence; then
-            emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; busy hook no newer than status"
+            emit_ship_status_done "saved scout report; busy hook no newer than status"
           fi
           if [ "$LOG_STATE" = done ]; then
             emit_ship_status_done "busy hook older than status"
@@ -1352,7 +1352,7 @@ if [ "$KIND" != secondmate ]; then
       ;;
     idle)
       if scout_finished_evidence; then
-        emit "done" status-log "$(status_line_note "$LOG_LINE")${SEP}saved scout report; pane idle"
+        emit_ship_status_done "saved scout report; pane idle"
       fi
       ;;
     unknown)

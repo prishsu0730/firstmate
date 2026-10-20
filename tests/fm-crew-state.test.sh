@@ -2587,11 +2587,7 @@ test_no_run_grok_uses_isolated_fallback() {
   pass "grok still reads working through its isolated rendered-tail fallback"
 }
 
-# A harness whose busy verdict has no timestamped hook record (grok's rendered
-# tail) cannot order itself against a stamped declaration. A worker that follows
-# its instructions - append paused, then wait on a long command - must stay a
-# quiet declared pause, not a conflict that wakes firstmate.
-test_untimed_busy_pane_keeps_a_stamped_pause_quiet() {
+test_untimed_busy_pane_conflicts_with_pause() {
   reset_fakes
   local d out; d=$(new_case busy-grok-paused)
   make_repo_on_branch "$d/wt" fm/feat-h4
@@ -2604,12 +2600,18 @@ test_untimed_busy_pane_keeps_a_stamped_pause_quiet() {
   export FM_FAKE_BUSY_TEXT
   printf 'paused [at=%s]: waiting on CI\n' "$(date +%s)" > "$d/state/feat-h4.status"
   out=$(run_crew_state "$d" feat-h4)
-  assert_contains "$out" "state: paused" "an untimed busy pane must not turn a stamped pause into a conflict"
-  assert_contains "$out" "no ordering evidence" "the pause names why the busy pane did not override it"
+  assert_contains "$out" "state: conflict" "an untimed busy pane cannot order a stamped pause"
+  assert_contains "$out" "status-log says paused; pane says busy" "the conflict names both sources"
   printf 'blocked [at=%s]: stuck\n' "$(date +%s)" > "$d/state/feat-h4.status"
   out=$(run_crew_state "$d" feat-h4)
   assert_contains "$out" "state: conflict" "an untimed busy pane still contradicts a blocked declaration"
-  pass "an untimed busy pane keeps a stamped pause quiet"
+  fm_write_meta "$d/state/feat-h4.meta" "window=fm:fm-feat-h4" "worktree=$d/wt" "project=sample" "kind=scout" "harness=grok"
+  mkdir -p "$d/data/feat-h4"
+  printf 'finished report\n' > "$d/data/feat-h4/report.md"
+  printf 'paused [at=%s]: finished\n' "$(date +%s)" > "$d/state/feat-h4.status"
+  out=$(FM_HOME="$d" run_crew_state "$d" feat-h4)
+  assert_contains "$out" "state: done" "finished scout evidence survives an untimed busy pane"
+  pass "untimed busy conflicts with pauses except evidenced scout completion"
 }
 
 test_no_run_herdr_unknown_uses_backend_capture() {
@@ -2935,28 +2937,30 @@ test_single_owner_terminal_declaration_supersedes_stale_decision() {
   make_repo_on_branch "$d/wt" fm/task
   make_fakebin "$d" >/dev/null
   arm_idle_record "$d/state" task
+  mkdir -p "$d/data/task"
+  printf 'finished report\n' > "$d/data/task/report.md"
   for kind in scout ship; do
-    fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "kind=$kind" "harness=claude"
+    fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "project=sample" "kind=$kind" "harness=claude"
     for opener in needs-decision blocked; do
       for terminal in 'done' failed; do
         printf '%s [key=choice]: an earlier decision\n%s: final outcome\nContinuation prose.\n\n' \
           "$opener" "$terminal" > "$d/state/task.status"
-        out=$(run_crew_state "$d" task)
+        out=$(FM_HOME="$d" run_crew_state "$d" task)
         assert_contains "$out" "state: $terminal" "$kind terminal declaration supersedes stale $opener"
         assert_contains "$out" "final outcome" "the terminal declaration supplies the detail"
         printf 'note: cleanup complete\n' >> "$d/state/task.status"
-        out=$(run_crew_state "$d" task)
+        out=$(FM_HOME="$d" run_crew_state "$d" task)
         assert_contains "$out" "state: unknown" "$kind cleanup note does not revive a pre-terminal $opener"
         assert_not_contains "$out" "an earlier decision" "superseded decision detail stays absent after cleanup"
         expected=parked
         [ "$opener" != blocked ] || expected=blocked
         for key in choice new-choice; do
           printf '%s [key=%s]: reopened after completion\nnote: more cleanup\n' "$opener" "$key" >> "$d/state/task.status"
-          out=$(run_crew_state "$d" task)
+          out=$(FM_HOME="$d" run_crew_state "$d" task)
           assert_contains "$out" "state: $expected" "$kind retains a post-terminal $opener for $key"
           assert_contains "$out" "reopened after completion" "the reopened decision supplies the detail"
           printf 'resolved [key=%s]: answered\n' "$key" >> "$d/state/task.status"
-          out=$(run_crew_state "$d" task)
+          out=$(FM_HOME="$d" run_crew_state "$d" task)
           assert_contains "$out" "state: unknown" "matching resolution clears the reopened decision"
           assert_not_contains "$out" "an earlier decision" "closing a reopened decision cannot revive pre-terminal decisions"
         done
@@ -5568,6 +5572,42 @@ test_captured_completed_history() {
   pass 'captured completed status yields to synthetic subsequent development'
 }
 
+test_scout_done_requires_completion_evidence() {
+  reset_fakes
+  local d activity report endpoint gen out
+  d=$(new_case scout-done-evidence)
+  make_repo_on_branch "$d/wt" fm/task
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/data/task"
+  for activity in busy idle; do
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" task)
+    "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task "$activity" --gen "$gen" --source claude-hook --event user-prompt-submit
+    printf 'done [at=%s]: finished\n' "$(($(date +%s) + 30))" > "$d/state/task.status"
+    for report in missing empty saved; do
+      case "$report" in
+        missing) ;;
+        empty) : > "$d/data/task/report.md" ;;
+        saved) printf 'finished report\n' > "$d/data/task/report.md" ;;
+      esac
+      for endpoint in valid invalid ambiguous; do
+        fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=claude"
+        case "$endpoint" in
+          invalid) printf 'endpoint_task_id=other\n' >> "$d/state/task.meta" ;;
+          ambiguous) printf 'project=other\n' >> "$d/state/task.meta" ;;
+        esac
+        out=$(FM_HOME="$d" run_crew_state "$d" task)
+        if [ "$report:$endpoint" = saved:valid ]; then
+          assert_contains "$out" 'state: done' "$activity scout with completion evidence finishes"
+        else
+          assert_contains "$out" 'state: unknown' "$activity scout with $report report and $endpoint endpoint cannot finish"
+        fi
+      done
+    done
+    mv "$d/data/task/report.md" "$d/data/task/previous-report-$activity.md"
+  done
+  pass 'scout completion requires report and endpoint across busy and idle paths'
+}
+
 test_reliability_reconciles_status_and_activity() {
   reset_fakes
   local d now gen out
@@ -5629,6 +5669,7 @@ test_reliability_reconciles_status_and_activity() {
   pass 'status reconciliation respects evidence, identity, and newer activity'
 }
 
+test_scout_done_requires_completion_evidence
 test_reliability_reconciles_status_and_activity
 test_captured_axi_status_shapes
 test_captured_inventory_replay
@@ -5715,7 +5756,7 @@ test_permission_prompt_reads_as_named_blocker
 test_no_run_launch_prompt_parked_is_not_working
 test_no_run_footer_text_alone_is_not_working
 test_no_run_grok_uses_isolated_fallback
-test_untimed_busy_pane_keeps_a_stamped_pause_quiet
+test_untimed_busy_pane_conflicts_with_pause
 test_no_run_herdr_unknown_uses_backend_capture
 test_no_run_herdr_cli_failure_reads_unreachable_not_gone
 test_no_run_herdr_alive_with_failed_read_stays_live
