@@ -331,32 +331,34 @@ fm_control_backend_state_verified() {  # <backend>
 #     passes `--session <session>`, so the recheck starts and reads the session
 #     the RECORD names, through that session's own socket. The answer is about
 #     the task's endpoint and nothing else.
-#   tmux CANNOT. `list-windows -a` describes only the server the CURRENT
-#     process addresses (its TMUX_TMPDIR/socket), and a task's record does not
-#     carry the endpoint's socket identity - so a different but running server
-#     would answer "not anywhere" about a window it was never able to see.
-#     There is no read available here that closes that gap, so tmux returns
-#     `unproven` and both verbs refuse, deliberately, unless a reboot proves it.
-#
-# One more thing CAN prove tmux absence without a socket identity: a reboot.
-# A reboot ends every process on the machine, so a record whose last launch
-# (the epoch in its spawn_gen token) predates this boot cannot still have a live
-# agent behind it, on any server. That is the only extra proof; when the boot
-# time or the record's launch time cannot be read, tmux stays `unproven`.
+#   tmux can prove it only when the task record carries the endpoint's server
+#     identity (tmux_socket, tmux_server_pid, tmux_server_start, written at
+#     spawn). `list-windows -a` describes only the server the CURRENT process
+#     addresses, so without that identity a window absent from it may still be
+#     alive on another server, and a record without it stays `unproven`. With
+#     it, fm_backend_tmux_endpoint_absence_proof asks the recorded socket
+#     itself (-S): no server there, a restarted server, or the exact server
+#     without the window is `gone`; anything else is `unproven`.
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
-fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta-file>]
-  local backend=${1-} target=${2-} meta=${3-}
+fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta>]
+  local backend=${1-} target=${2-} meta=${3-} t_socket t_pid t_start
   fm_backend_source "$backend" \
     || { printf 'unproven\tbackend %s could not be loaded to prove anything about that endpoint' "'$backend'"; return 0; }
   case "$backend" in
     tmux)
-      if [ -n "$meta" ] && fm_control_record_predates_boot "$meta"; then
-        printf 'gone\t'
-        return 0
+      t_socket='' t_pid='' t_start=''
+      if [ -n "$meta" ] && [ -f "$meta" ]; then
+        t_socket=$(fm_meta_get "$meta" tmux_socket)
+        t_pid=$(fm_meta_get "$meta" tmux_server_pid)
+        t_start=$(fm_meta_get "$meta" tmux_server_start)
       fi
-      printf 'unproven\ttmux absence cannot be proven from a task record: the record does not carry the endpoint'"'"'s socket identity, a server-wide window inventory only describes the tmux server this process addresses (so a window absent from it may still be alive on another), and the record was not written before this machine booted'
+      if [ -n "$t_socket" ] && [ -n "$t_pid" ] && [ -n "$t_start" ]; then
+        fm_backend_tmux_endpoint_absence_proof "$target" "$t_socket" "$t_pid" "$t_start"
+      else
+        printf 'unproven\ttmux absence cannot be proven from this task record: it does not carry the endpoint'"'"'s tmux server identity (a record from before that was recorded), and a server-wide window inventory only describes the tmux server this process addresses, so a window absent from it may still be alive on another'
+      fi
       ;;
     herdr)
       # Start the RECORDED session's server (only the server - nothing is
@@ -373,48 +375,6 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta-file>]
       printf 'unproven\tbackend %s has no recovery-grade classifier, so absence cannot be proven on it at all' "'$backend'"
       ;;
   esac
-}
-
-# fm_control_boot_epoch: this machine's boot time in Unix seconds, or return 1
-# with nothing printed when it cannot be read. FM_BOOT_EPOCH_OVERRIDE (set, even
-# to an unreadable value) replaces the real reader so tests can fix the boot
-# time. macOS reports it through `sysctl -n kern.boottime` ("{ sec = N, ..."),
-# Linux through the btime line of /proc/stat.
-fm_control_boot_epoch() {
-  local raw='' epoch=''
-  if [ "${FM_BOOT_EPOCH_OVERRIDE+set}" = set ]; then
-    raw=$FM_BOOT_EPOCH_OVERRIDE
-  elif raw=$(sysctl -n kern.boottime 2>/dev/null) && [ -n "$raw" ]; then
-    raw=$(printf '%s' "$raw" | sed -n 's/^{ *sec = \([0-9][0-9]*\),.*/\1/p')
-  elif [ -r /proc/stat ]; then
-    raw=$(sed -n 's/^btime \([0-9][0-9]*\)$/\1/p' /proc/stat 2>/dev/null)
-  else
-    raw=''
-  fi
-  case "$raw" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  epoch=$((10#$raw))
-  [ "$epoch" -gt 0 ] || return 1
-  printf '%s\n' "$epoch"
-}
-
-# fm_control_record_predates_boot: success only when <meta-file> records its
-# last launch (the epoch in spawn_gen=s<epoch>.<pid>.<n>, rewritten by every
-# spawn and relaunch) strictly before this machine's boot time. Any unreadable
-# input is a failure, so the caller keeps refusing.
-fm_control_record_predates_boot() {  # <meta-file>
-  local meta=${1-} gen launched boot
-  gen=$(fm_meta_get "$meta" spawn_gen)
-  case "$gen" in
-    s[0-9]*.*) launched=${gen#s}; launched=${launched%%.*} ;;
-    *) return 1 ;;
-  esac
-  case "$launched" in
-    ''|*[!0-9]*) return 1 ;;
-  esac
-  boot=$(fm_control_boot_epoch) || return 1
-  [ "$((10#$launched))" -lt "$boot" ]
 }
 
 # The per-task wiring artifacts a harness leaves behind, so a relaunch that

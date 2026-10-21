@@ -36,28 +36,23 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent). For a local secondmate,
-#              the deliberate-stop marker suppresses automatic recovery until
-#              a successful explicit relaunch or secondmate respawn clears it.
-#              Watcher ticks and session-start sweeps respect the marker.
-#              An endpoint that reads
+#              Already-stopped is success (idempotent). An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
 #              proof (fm_control_endpoint_absence_verdict) before anything is
 #              claimed about it, because `missing` also covers an endpoint that
-#              is merely unreachable from this seat. That proof exists only on
-#              HERDR, whose reads are scoped to the session the record names:
+#              is merely unreachable from this seat. That proof exists on HERDR,
+#              whose reads are scoped to the session the record names, and on
+#              TMUX for a record carrying its server identity:
 #              proven gone reports `endpoint-gone` rather than
 #              `already-stopped`, because the endpoint this verb normally
 #              preserves did not survive; a pane that turns out to be there and
 #              idle is the ordinary `already-stopped`; one whose agent is back
 #              takes the ordinary interrupt-then-exit path. A tmux `missing`
-#              REFUSES: a task record carries no socket identity for its
-#              endpoint, so this verb cannot tell a destroyed window from one on
-#              a tmux server it cannot address, and it will not claim a stop it
-#              cannot see. The one exception is a record whose last launch
-#              predates this machine's boot: a reboot ends every agent, so that
-#              endpoint is proven gone (fm_control_boot_epoch owns the read; an
-#              unreadable boot time keeps the refusal).
+#              is proven gone only against the tmux server identity the task
+#              record carries (written at spawn); a record without it REFUSES,
+#              because this verb cannot tell a destroyed window from one on a
+#              tmux server it cannot address, and it will not claim a stop it
+#              cannot see.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME worktree - and the same endpoint whenever that endpoint
 #              still exists - on the same or a newly chosen
@@ -68,9 +63,9 @@
 #              names, and the task's record rebinds to it; that is how a task
 #              whose terminal was destroyed is reclaimed by the home that owns
 #              it, rather than being stranded with a parked approval nobody can
-#              answer. Reclaim of a tmux endpoint needs the proof `exit` gives
-#              above: a tmux `missing` cannot be proven absent from a task
-#              record, so it refuses unless the record predates this boot.
+#              answer. Reclaim is HERDR and TMUX for the reason `exit` gives above:
+#              a tmux `missing` is proven absent only from the server identity
+#              in the task record, so a record without it refuses.
 #              An explicit `default` model or effort clears that
 #              axis for the replacement. With no explicit axis, a secondmate
 #              re-resolves its durable config/secondmate-harness pin (harness
@@ -203,7 +198,6 @@ die() {  # <message>
 
 CONTROL_LOCK=
 CONTROL_LOCK_HELD=0
-LIVENESS_LOCK_HELD=0
 RELAUNCH_ACTIVE=0
 RELAUNCH_PHASE=start
 
@@ -217,9 +211,6 @@ control_cleanup() {
   # the next lifecycle command for this task writes the same path.
   if [ -n "${FM_COMPOSER_DIALOG_SINK:-}" ]; then
     rm -f "$FM_COMPOSER_DIALOG_SINK"
-  fi
-  if [ "$LIVENESS_LOCK_HELD" = 1 ]; then
-    fm_secondmate_liveness_unlock "$ID"
   fi
   if [ "$CONTROL_LOCK_HELD" = 1 ]; then
     CONTROL_LOCK_HELD=0
@@ -372,13 +363,6 @@ RECORDED_HARNESS=$(fm_meta_get "$META" harness)
 KIND=$(fm_meta_get "$META" kind)
 WT=$(fm_meta_get "$META" worktree)
 [ -n "$KIND" ] || KIND=ship
-if [ "$KIND" = secondmate ] && { [ "$VERB" = exit ] || [ "$VERB" = relaunch ]; }; then
-  # Serialize deliberate control against watcher and startup recovery.
-  # shellcheck source=bin/fm-secondmate-liveness-lib.sh
-  . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
-  fm_secondmate_liveness_lock "$ID" || die "secondmate $ID has a liveness check in progress; retry control"
-  LIVENESS_LOCK_HELD=1
-fi
 
 HARNESS=$(fm_control_harness_family "$RECORDED_HARNESS") \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
@@ -650,23 +634,6 @@ retire_busy_incarnation() {
   fi
 }
 
-STOP_MARK_CREATED=0
-mark_deliberate_stop() {
-  [ "$KIND" = secondmate ] && [ "$VERB" = exit ] || return 0
-  if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
-    printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
-    STOP_MARK_CREATED=1
-  fi
-}
-
-# Take back the marker this call created when the exit command provably never
-# reached the mate; a marker an earlier exit left, or a late confirmation, stays.
-unmark_undelivered_stop() {
-  [ "$STOP_MARK_CREATED" = 1 ] || return 0
-  STOP_MARK_CREATED=0
-  rm -f "$STATE/.secondmate-stopped-$ID" || true
-}
-
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
 # `already-stopped`, `endpoint-gone`, or `stopped`.
 do_exit() {
@@ -675,7 +642,6 @@ do_exit() {
   state=$(agent_state)
   case "$state" in
     dead)
-      mark_deliberate_stop
       printf 'already-stopped'
       return 0
       ;;
@@ -688,7 +654,6 @@ do_exit() {
       absence=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T" "$META")
       case "${absence%%$'\t'*}" in
         gone)
-          mark_deliberate_stop
           # Proven gone, so the agent that lived in it went with it: exit's
           # postcondition already holds and there is nothing to send. Its own
           # outcome rather than `already-stopped`, because the endpoint this
@@ -699,7 +664,6 @@ do_exit() {
           return 0
           ;;
         dead)
-          mark_deliberate_stop
           # The endpoint was only unreachable and is there after all, holding
           # no agent - a herdr pane whose session server was merely stopped is
           # the common case. Nothing is gone, so this is the ordinary
@@ -725,7 +689,6 @@ do_exit() {
       state=$(agent_state)
       case "$state" in
         dead)
-          mark_deliberate_stop
           retire_busy_incarnation
           printf 'stopped'
           return 0
@@ -766,11 +729,10 @@ do_exit() {
   # authoritative proof is the agent-state wait below. The retried Enter still
   # matters, because a slash command opens a completion popup on some TUIs that
   # swallows the first Enter.
-  mark_deliberate_stop
   verdict=$(fm_backend_send_text_submit "$BACKEND" "$T" "$cmd" "$EXIT_RETRIES" "$POLL" 1.2 "$LABEL") \
-    || { unmark_undelivered_stop; die "the exit command could not be sent to task $ID on $BACKEND"; }
+    || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
-    || { unmark_undelivered_stop; die "the exit command could not be sent to task $ID on $BACKEND"; }
+    || die "the exit command could not be sent to task $ID on $BACKEND"
   # The submitting Enter can open the picker. The agent is still alive, and
   # another Enter would confirm the selected row. A dead agent may leave the
   # same text behind; that is not a prompt still waiting.
@@ -1194,9 +1156,6 @@ do_relaunch() {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
   RELAUNCH_AGENT_CONFIRMED=1
-  if [ "$KIND" = secondmate ]; then
-    rm -f "$STATE/.secondmate-stopped-$ID" || die "secondmate $ID relaunched but its stop marker could not be cleared"
-  fi
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
