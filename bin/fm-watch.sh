@@ -144,8 +144,10 @@
 #                          mate is not in an active turn, so its watcher is dead
 #                          and nothing can enqueue a row; a proven-idle mate is
 #                          rung once first, then the parent is notified once per
-#                          further interval until the beacon is fresh; a missing
-#                          beacon stays silent
+#                          stale episode until the beacon is fresh; a missing
+#                          beacon stays silent, and so does a mate whose own
+#                          endpoint is provably stopped (dead or missing) while
+#                          no worker in its home has a live endpoint
 #   check: secondmate <id> auto-relaunched after <cause> (<where>)
 #                          the liveness tick probed a registered secondmate's
 #                          recorded endpoint, got the recovery-grade `dead` or
@@ -953,6 +955,33 @@ secondmate_ring_to_drain() {  # <task> <window>
   fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
 }
 
+# 0 iff <meta>'s recorded endpoint is provably stopped: no endpoint recorded, or
+# the backend's recovery-grade verdict is dead or missing. Alive, ambiguous,
+# unreadable, and unverified are not proof of a stop.
+endpoint_provably_stopped() {  # <meta>
+  local meta=$1 target state
+  target=$(fm_backend_target_of_meta "$meta")
+  [ -n "$target" ] || return 0
+  state=$(fm_backend_agent_state "$(fm_backend_of_meta "$meta")" "$target" 2>/dev/null || true)
+  case "$state" in dead|missing) return 0 ;; esac
+  return 1
+}
+
+# 0 iff some worker recorded in a secondmate home still has an endpoint that is
+# not provably stopped. A backlog entry or a leftover record of a stopped worker
+# is not live work, and a worker on a remote host cannot be probed from here, so
+# it counts as live.
+secondmate_home_has_live_worker() {  # <home>
+  local home=$1 wmeta
+  for wmeta in "$home/state"/*.meta; do
+    [ -e "$wmeta" ] || continue
+    [ "$(fm_meta_get "$wmeta" kind)" != secondmate ] || continue
+    [ -z "$(fm_meta_get "$wmeta" remote_host)" ] || return 0
+    endpoint_provably_stopped "$wmeta" || return 0
+  done
+  return 1
+}
+
 # Write <epoch> into a watcher-down marker through the same atomic replace the
 # other secondmate markers use. 0 iff the marker now holds it.
 secondmate_watcher_down_marker_write() {  # <marker> <epoch>
@@ -972,8 +1001,10 @@ secondmate_watcher_down_marker_write() {  # <marker> <epoch>
 # enqueues nothing, so an empty queue alone proves nothing. When the child's
 # watcher beacon is older than SECONDMATE_WATCHER_DOWN_SECS and the mate is not
 # inside an active turn, ring a proven-idle mate once so it can re-arm, then
-# raise one parent notification per further interval until the beacon is fresh
-# again. A missing beacon is no evidence and stays silent.
+# raise one parent notification for the episode; a fresh beacon ends it. A
+# missing beacon is no evidence and stays silent. A mate whose endpoint is
+# provably stopped and whose home has no live worker was stopped on purpose or
+# is the liveness tick's to recover, so nothing is waiting on its watcher.
 secondmate_watcher_down_check() {  # <task> <meta> <home> <now>
   local task=$1 meta=$2 home=$3 now=$4 bound=$SECONDMATE_WATCHER_DOWN_SECS
   local ring_marker="$STATE/.secondmate-watcher-down-ring-$task"
@@ -985,6 +1016,10 @@ secondmate_watcher_down_check() {  # <task> <meta> <home> <now>
   fi
   age=$(fm_path_age "$beat")
   if [ "$age" -lt "$bound" ]; then
+    rm -f "$ring_marker" "$alarm_marker"
+    return 0
+  fi
+  if endpoint_provably_stopped "$meta" && ! secondmate_home_has_live_worker "$home"; then
     rm -f "$ring_marker" "$alarm_marker"
     return 0
   fi
@@ -1002,9 +1037,7 @@ secondmate_watcher_down_check() {  # <task> <meta> <home> <now>
   fi
   alarmed=$(cat "$alarm_marker" 2>/dev/null || true)
   case "$alarmed" in ''|*[!0-9]*) alarmed= ;; esac
-  if [ -n "$alarmed" ] && [ "$now" -ge "$alarmed" ] && [ $((now - alarmed)) -lt "$bound" ]; then
-    return 0
-  fi
+  [ -z "$alarmed" ] || return 0
   notify_key="secondmate-watcher-down-$task-$now"
   reason="check: secondmate watcher down: mate=$task beat_age=${age}s"
   queued=$(fm_wake_queued_keys check)

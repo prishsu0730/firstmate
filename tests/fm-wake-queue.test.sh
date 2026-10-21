@@ -348,13 +348,14 @@ SH
 # wake ends on the watcher's own wake; a leg that must stay quiet ends only after
 # the parent's own beacon has moved on three distinct polls, so a negative
 # assertion never passes before a stall tick ran. The poll ceiling bounds a hang.
-watcher_down_leg() {  # <dir> <leg> wake|quiet
+watcher_down_leg() {  # <dir> <leg> wake|quiet [windows the fake tmux lists]
   local dir=$1 leg=$2 want=$3 beat="$1/state/.last-watcher-beat" pid i=0 seen=0 last='' now_m
+  local windows=${4-firstmate:fm-mate}
   rm -rf -- "$dir/state/.watch.lock" "$dir/state/.watcher-down"
   rm -f "$beat"
   touch "$dir/state/.secondmate-liveness-tick"
   PATH="$dir/fakebin:$PATH" FM_HOME="$dir" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$dir/state" \
-    FM_FAKE_TMUX_WINDOW='firstmate:fm-mate' FM_SECONDMATE_WATCHER_DOWN_SECS=5 \
+    FM_FAKE_TMUX_WINDOW="$windows" FM_SECONDMATE_WATCHER_DOWN_SECS=5 \
     FM_SECONDMATE_WAKE_STALL_SECS=1 FM_SECONDMATE_LIVENESS_SECS=99999999 FM_POLL=1 \
     FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$WATCH" > "$dir/watch-$leg.out" 2> "$dir/watch-$leg.err" &
@@ -403,7 +404,7 @@ test_secondmate_dead_child_watcher_alarms_parent_until_it_recovers() {
   cat > "$dir/fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
-  list-windows) printf '%s\n' 'firstmate:fm-mate' ;;
+  list-windows) printf '%s\n' 'fm-mate' ;;
   capture-pane) printf 'working\n' ;;
   display-message) printf '0\n' ;;
   *) exit 0 ;;
@@ -426,9 +427,9 @@ SH
   # Inside the interval the alarm does not repeat.
   watcher_down_leg "$dir" within quiet
 
-  # (d) A later interval while the beat stays stale alarms again.
+  # (d) A later interval while the beat stays stale does not alarm again.
   printf '%s\n' "$(( $(date +%s) - 100 ))" > "$state/.secondmate-watcher-down-alarm-mate"
-  watcher_down_leg "$dir" repeat wake
+  watcher_down_leg "$dir" repeat quiet
 
   # Recovery: a fresh beat ends the episode and clears its markers.
   : > "$state/.wake-queue"
@@ -436,7 +437,37 @@ SH
   watcher_down_leg "$dir" recovered quiet
   [ ! -e "$state/.secondmate-watcher-down-alarm-mate" ] \
     || fail "a recovered child watcher left its alarm marker in place"
-  pass "a dead child watcher with an empty queue alarms the parent per interval until it recovers"
+  pass "a dead child watcher with an empty queue alarms the parent once until it recovers"
+}
+
+# A secondmate stopped on purpose (no endpoint) must not alarm just because its
+# own watcher is gone, even with leftover worker records; the same stale beat
+# alarms once a worker in its home has a live endpoint.
+test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms() {
+  local dir state sub now
+  dir=$(make_case secondmate-watcher-down-stopped)
+  state="$dir/state"
+  sub="$dir/secondmate"
+  mkdir -p "$sub/state" "$sub/data" "$sub/bin"
+  printf '# Firstmate\n' > "$sub/AGENTS.md"
+  printf 'mate\n' > "$sub/.fm-secondmate-home"
+  printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
+    "$sub" > "$state/mate.meta"
+  printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\n' > "$sub/state/worker.meta"
+  : > "$sub/state/.wake-queue"
+  now=$(date +%s)
+  touch -t "$(date -r $((now - 3000)) +%Y%m%d%H%M.%S)" "$sub/state/.last-watcher-beat"
+
+  # Stopped mate, leftover worker record whose window is gone: quiet.
+  watcher_down_leg "$dir" stopped quiet ''
+  [ ! -e "$state/.secondmate-watcher-down-alarm-mate" ] \
+    || fail "a stopped idle mate left an alarm marker"
+
+  # Stopped mate, but its worker window is live: the stale beat alarms.
+  watcher_down_leg "$dir" live-worker wake 'firstmate:fm-worker'
+  [ "$(grep -c 'secondmate-watcher-down-mate-' "$state/.wake-queue" || true)" -eq 1 ] \
+    || fail "the live-worker alarm did not publish exactly one parent notification"
+  pass "a stopped idle mate stays quiet and a mate with a live worker alarms once"
 }
 
 # Stall-tick legs wait on the watcher's own record, never on a wall-clock
@@ -3607,6 +3638,7 @@ test_live_presentation_holder_is_deadlined_without_weakening_ack
 test_malformed_presentation_lock_reports_acquire_failure
 test_secondmate_foreign_queue_stall_tracks_progress_and_alerts_once
 test_secondmate_dead_child_watcher_alarms_parent_until_it_recovers
+test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms
 test_secondmate_declared_pause_rows_do_not_feed_stall_escalation
 test_secondmate_reprovisioned_queue_starts_a_fresh_interval
 test_secondmate_active_turn_defers_stall_until_the_turn_ends
