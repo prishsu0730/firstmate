@@ -743,6 +743,53 @@ test_pool_slot_claim_follows_the_spawn_outcome() {
   pass "a Treehouse slot claim names the launched task, refuses when unclaimable, and is dropped by a locked abort"
 }
 
+# A spawn must not put a second task record on a slot another record still
+# names. Treehouse hands a slot on once its worker has exited, so the record that
+# named it may be a harmless finished leftover or an unfinished task whose work
+# the slot still holds; only a proven-finished record lets the spawn claim it.
+test_pool_slot_named_by_another_record_refuses_unless_finished() {
+  local rec id other out status
+
+  id='pool-slot-shared-r1'
+  other='pool-slot-shared-old-r1'
+  rec=$(make_case slot-shared-unfinished "$id")
+  read_case_record "$rec"
+  lay_out_as_pool_slot
+  fm_write_meta "$HOME_DIR/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$POOL_DIR" "project=$PROJECT_DIR" "kind=scout"
+  printf 'paused [at=1]: waiting on a decision\n' > "$HOME_DIR/state/$other.status"
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn launched onto a slot an unfinished task record still names"
+  assert_contains "$out" "$other" "the refusal did not name the record holding the slot"
+  assert_contains "$out" "still named by unfinished task record" \
+    "spawn did not give the shared slot as the reason"
+  [ ! -e "$SLOT_CLAIM" ] && [ ! -L "$SLOT_CLAIM" ] \
+    || fail "spawn claimed a slot another unfinished record names: $(cat "$SLOT_CLAIM")"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "spawn published a record for a contested slot"
+  [ -f "$HOME_DIR/state/$other.meta" ] || fail "spawn removed the other task's record"
+
+  id='pool-slot-shared-r2'
+  other='pool-slot-shared-old-r2'
+  rec=$(make_case slot-shared-finished "$id")
+  read_case_record "$rec"
+  lay_out_as_pool_slot
+  fm_write_meta "$HOME_DIR/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$POOL_DIR" "project=$PROJECT_DIR" "kind=scout"
+  printf 'done [at=1]: report saved\n' > "$HOME_DIR/state/$other.status"
+  mkdir -p "$HOME_DIR/data/$other"
+  printf 'report\n' > "$HOME_DIR/data/$other/report.md"
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "spawn should launch past a proven-finished record"$'\n'"$out"
+  grep -Fxq -- "task=$id" "$SLOT_CLAIM" \
+    || fail "the slot claim does not name the spawned task: $(cat "$SLOT_CLAIM")"
+  [ -f "$HOME_DIR/state/$other.meta" ] || fail "spawn removed the finished task's record"
+  pass "a spawn refuses a slot another unfinished record names and claims one only a finished record names"
+}
+
 publish_feature_branch() { # <branch>
   git -C "$CASE_DIR/publisher" checkout --quiet -b "$1"
   printf 'only on %s\n' "$1" > "$CASE_DIR/publisher/feature-only.txt"
@@ -876,6 +923,7 @@ test_scout_base_branch_refused_on_gerrit_forge() {
 
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
+test_pool_slot_named_by_another_record_refuses_unless_finished
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching
 test_named_base_branch_starts_from_that_branch
