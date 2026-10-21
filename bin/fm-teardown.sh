@@ -111,7 +111,8 @@
 # that is finished and proven holds nothing in the slot, so it is skipped; and
 # when THIS record is the finished one, no claim says the slot is its own, and an
 # unfinished record names it, this teardown is records-only like a reassigned
-# slot. bin/fm-spawn.sh refuses the opposite hazard at the source, never claiming
+# slot (the forced child-home preflight keeps refusing that second case, because
+# child cleanup trusts only the claim). bin/fm-spawn.sh refuses the opposite hazard at the source, never claiming
 # a slot an unfinished record still names.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
@@ -3010,12 +3011,7 @@ preflight_descendant_treehouse_slots() {
       continue
     fi
     fm_backend_validate_task_endpoint "$meta" "$task_id" || return 1
-    owner_rc=0
-    require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" || owner_rc=$?
-    case "$owner_rc" in
-      0|"$TEARDOWN_SLOT_REASSIGNED_RC") ;;
-      *) return 1 ;;
-    esac
+    require_exclusive_worktree_slot_record "$meta" "$task_id" "$state" "$worktree" || return 1
     owner_rc=0
     require_owned_worktree_slot_record "$task_id" "$worktree" || owner_rc=$?
     case "$owner_rc" in
