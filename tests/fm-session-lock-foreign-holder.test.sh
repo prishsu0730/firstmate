@@ -58,6 +58,7 @@ wait_for_file() {  # <path> <what>
 # Start <binary> running a bounded idle loop in the background, recording its
 # own pid in <pidfile>. A child of the test shell, so it is not under any pane.
 start_idle() {  # <binary> <pidfile>
+  # shellcheck disable=SC2016 # the variables expand in the child shell.
   "$1" -c 'printf "%s\n" "$$" > "$0"; while [ "$SECONDS" -lt 120 ]; do sleep 1; done' "$2" &
   FIXTURE_PIDS+=("$!")
   wait_for_file "$2" "the idle process $2"
@@ -99,6 +100,7 @@ make_mate_home() {  # <dir> -> prints the mate home
 run_lock() {  # <home> <pane-pids> [status]
   local home=$1 panes=$2 sub=${3:-}
   rm -f "$home/state/run.out" "$home/state/run.rc"
+  # shellcheck disable=SC2016 # the variables expand in the child shell.
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID \
     FM_HOME="$home" FM_LOCK="$LOCK" FM_TEST_PANE_PIDS="$panes" PATH="$FAKEBIN:$PATH" \
     "$NAMED_CLAUDE" -c '"$FM_LOCK" ${1:+"$1"} > "$FM_HOME/state/run.out" 2>&1; printf "%s\n" "$?" > "$FM_HOME/state/run.rc"' _ "$sub"
@@ -108,6 +110,7 @@ run_lock() {  # <home> <pane-pids> [status]
 
 # Run one library expression as a separate bash with the real ps.
 lib_eval() {  # <expression>
+  # shellcheck disable=SC2016 # "$0" expands in the child shell.
   env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID PATH="$FAKEBIN:$PATH" \
     bash -c '. "$0"; '"$1" "$LIB"
 }
