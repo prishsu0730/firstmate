@@ -137,6 +137,15 @@
 #                          inbox and a fresh child beacon are not idle proof;
 #                          the foreign queue itself stays read-only, and one
 #                          parent notification covers each no-progress episode
+#   check: secondmate watcher down: mate=<id> beat_age=<seconds>s
+#                          a local secondmate's wake queue is empty but its own
+#                          state/.last-watcher-beat is older than
+#                          FM_SECONDMATE_WATCHER_DOWN_SECS (default 600) and the
+#                          mate is not in an active turn, so its watcher is dead
+#                          and nothing can enqueue a row; a proven-idle mate is
+#                          rung once first, then the parent is notified once per
+#                          further interval until the beacon is fresh; a missing
+#                          beacon stays silent
 #   check: secondmate <id> auto-relaunched after <cause> (<where>)
 #                          the liveness tick probed a registered secondmate's
 #                          recorded endpoint, got the recovery-grade `dead` or
@@ -355,6 +364,11 @@ BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
 # secondmate_wake_stall_tick, never a substitute for it.
 SECONDMATE_WAKE_STALL_SECS=${FM_SECONDMATE_WAKE_STALL_SECS:-}
 case "$SECONDMATE_WAKE_STALL_SECS" in ''|*[!0-9]*|0) SECONDMATE_WAKE_STALL_SECS=180 ;; esac
+# A local secondmate whose own watcher beacon is older than this, with an empty
+# wake queue and no active turn, has a dead watcher that can enqueue nothing;
+# the parent alarms once per interval of that silence.
+SECONDMATE_WATCHER_DOWN_SECS=${FM_SECONDMATE_WATCHER_DOWN_SECS:-}
+case "$SECONDMATE_WATCHER_DOWN_SECS" in ''|*[!0-9]*|0) SECONDMATE_WATCHER_DOWN_SECS=600 ;; esac
 # Secondmate ENDPOINT liveness (distinct from the wake-loop stall observation
 # above): on this cadence the watcher probes each registered mate's recorded
 # endpoint through fm-secondmate-liveness-lib.sh and relaunches only on the
@@ -939,6 +953,68 @@ secondmate_ring_to_drain() {  # <task> <window>
   fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
 }
 
+# Write <epoch> into a watcher-down marker through the same atomic replace the
+# other secondmate markers use. 0 iff the marker now holds it.
+secondmate_watcher_down_marker_write() {  # <marker> <epoch>
+  local marker=$1 epoch=$2 tmp
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  fi
+  tmp=$(mktemp "$STATE/.secondmate-watcher-down.XXXXXX") || return 1
+  if ! printf '%s\n' "$epoch" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! _fm_atomic_replace "$tmp" "$marker"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+# The empty-queue half of the stall check: a child whose own watcher died
+# enqueues nothing, so an empty queue alone proves nothing. When the child's
+# watcher beacon is older than SECONDMATE_WATCHER_DOWN_SECS and the mate is not
+# inside an active turn, ring a proven-idle mate once so it can re-arm, then
+# raise one parent notification per further interval until the beacon is fresh
+# again. A missing beacon is no evidence and stays silent.
+secondmate_watcher_down_check() {  # <task> <meta> <home> <now>
+  local task=$1 meta=$2 home=$3 now=$4 bound=$SECONDMATE_WATCHER_DOWN_SECS
+  local ring_marker="$STATE/.secondmate-watcher-down-ring-$task"
+  local alarm_marker="$STATE/.secondmate-watcher-down-alarm-$task"
+  local beat="$home/state/.last-watcher-beat" age w rung alarmed reason notify_key queued
+  if [ ! -e "$beat" ]; then
+    rm -f "$ring_marker" "$alarm_marker"
+    return 0
+  fi
+  age=$(fm_path_age "$beat")
+  if [ "$age" -lt "$bound" ]; then
+    rm -f "$ring_marker" "$alarm_marker"
+    return 0
+  fi
+  w=$(fm_backend_target_of_meta "$meta")
+  ! secondmate_in_active_turn "$w" "$age" || return 0
+  rung=$(cat "$ring_marker" 2>/dev/null || true)
+  case "$rung" in ''|*[!0-9]*) rung= ;; esac
+  if [ -z "$rung" ]; then
+    if secondmate_idle_ring_safe "$w" && secondmate_ring_to_drain "$task" "$w"; then
+      secondmate_watcher_down_marker_write "$ring_marker" "$now" || return 1
+      return 0
+    fi
+  elif [ "$now" -ge "$rung" ] && [ $((now - rung)) -lt "$bound" ]; then
+    return 0
+  fi
+  alarmed=$(cat "$alarm_marker" 2>/dev/null || true)
+  case "$alarmed" in ''|*[!0-9]*) alarmed= ;; esac
+  if [ -n "$alarmed" ] && [ "$now" -ge "$alarmed" ] && [ $((now - alarmed)) -lt "$bound" ]; then
+    return 0
+  fi
+  notify_key="secondmate-watcher-down-$task-$now"
+  reason="check: secondmate watcher down: mate=$task beat_age=${age}s"
+  queued=$(fm_wake_queued_keys check)
+  if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
+    fm_wake_append check "$notify_key" "$reason" || return 1
+  fi
+  secondmate_watcher_down_marker_write "$alarm_marker" "$now" || return 1
+  wake "$reason"
+}
+
 # Surface one durable parent check when the foreign queue's drain position has
 # not moved for the bounded interval. The progress marker records that position
 # as the same epoch-sequence row identity the stall receipts use, so the timer
@@ -988,6 +1064,7 @@ secondmate_wake_stall_tick() {
         [ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] || return 1
         rm -rf -- "$receipt_dir" || return 1
       fi
+      secondmate_watcher_down_check "$task" "$meta" "$home" "$now" || return 1
       continue
     fi
     IFS=$(printf '\t') read -r epoch seq _row_kind _row_key _row_payload <<EOF
