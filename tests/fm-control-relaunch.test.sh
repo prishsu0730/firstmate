@@ -1990,6 +1990,19 @@ test_tmux_reclaims_a_window_lost_in_a_reboot() {
   pass "tmux: a record written before the boot is proven gone, so both verbs reclaim the task"
 }
 
+test_boot_time_is_read_from_sysctl_output() {
+  local dir stub got
+  dir=$(new_case boot-reader rl68)
+  stub="$dir/sysctl-bin"
+  mkdir -p "$stub"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "echo '{ sec = 1792592168, usec = 856262 } Wed Oct 21 22:16:08 2026'" > "$stub/sysctl"
+  chmod +x "$stub/sysctl"
+  got=$(PATH="$stub:$PATH" fm_control_boot_epoch)
+  [ "$got" = 1792592168 ] || fail "the boot time must be the seconds field of kern.boottime, got '$got'"
+  pass "boot time: the reader returns the seconds field of macOS kern.boottime"
+}
+
 test_tmux_refuses_a_window_recorded_after_the_boot() {
   local dir
   dir=$(new_case tmux-after-boot rl65)
@@ -2611,6 +2624,7 @@ test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
 test_tmux_reclaims_a_window_lost_in_a_reboot
+test_boot_time_is_read_from_sysctl_output
 test_tmux_refuses_a_window_recorded_after_the_boot
 test_tmux_refuses_when_the_boot_time_cannot_be_read
 test_tmux_refuses_when_the_record_has_no_launch_time
