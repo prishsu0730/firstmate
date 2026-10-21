@@ -1876,12 +1876,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - REFUSES, always. A task record carries no socket identity for its
-  #           endpoint, and a server-wide inventory describes only the server
-  #           this process addresses, so no read available here can tell "gone"
-  #           from "on a server I cannot see". A tmux `missing` therefore stays
-  #           as deadlocked as it was before this change - deliberately, and
-  #           with the reason stated rather than guessed past.
+  #   tmux  - REFUSES, unless the task record predates this machine's boot. A
+  #           task record carries no socket identity for its endpoint, and a
+  #           server-wide inventory describes only the server this process
+  #           addresses, so no read available here can tell "gone" from "on a
+  #           server I cannot see" - but a reboot ended every agent, which the
+  #           record's launch time against the boot time does prove.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -1889,7 +1889,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # `relaunch` cannot reach two different answers about one endpoint.
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
   if [ "$RELAUNCH_STATE" = missing ]; then
-    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET")
+    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET" "$RELAUNCH_META")
     case "${RELAUNCH_ABSENCE%%$'\t'*}" in
       gone) RELAUNCH_STATE=missing ;;
       dead) RELAUNCH_STATE=dead ;;
@@ -3750,6 +3750,15 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
+  elif [ "$BACKEND" = tmux ]; then
+    # A tmux endpoint is only ever proven gone by a reboot (the record predates
+    # this boot), which also took the tmux server with it. Create ONE fresh
+    # window directly in the recorded worktree, so the published record rebinds
+    # to it just as the herdr reclaim below does.
+    SES=$(fm_backend_tmux_container_ensure)
+    T="$SES:$W"
+    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
+    WT_TARGET="$WID"
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -3757,11 +3766,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
-    # every read is scoped to the session the record names
-    # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
-    # secondmate were already refused, so there is no dispatch left to make.
+    # Herdr is the only backend that reaches here: the gate above rebinds only
+    # on a PROVEN-gone endpoint, and the only other proof
+    # (fm_control_endpoint_absence_verdict owns that argument) is a tmux record
+    # that predates this boot, handled by the branch above. Every secondmate
+    # was already refused, so there is no further dispatch to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
