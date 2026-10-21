@@ -331,23 +331,34 @@ fm_control_backend_state_verified() {  # <backend>
 #     passes `--session <session>`, so the recheck starts and reads the session
 #     the RECORD names, through that session's own socket. The answer is about
 #     the task's endpoint and nothing else.
-#   tmux CANNOT. `list-windows -a` describes only the server the CURRENT
-#     process addresses (its TMUX_TMPDIR/socket), and a task's record does not
-#     carry the endpoint's socket identity - so a different but running server
-#     would answer "not anywhere" about a window it was never able to see.
-#     There is no read available here that closes that gap, so tmux always
-#     returns `unproven` and both verbs refuse. tmux is left exactly as
-#     deadlocked as it was before this change - no worse - but deliberately.
+#   tmux can prove it only when the task record carries the endpoint's server
+#     identity (tmux_socket, tmux_server_pid, tmux_server_start, written at
+#     spawn). `list-windows -a` describes only the server the CURRENT process
+#     addresses, so without that identity a window absent from it may still be
+#     alive on another server, and a record without it stays `unproven`. With
+#     it, fm_backend_tmux_endpoint_absence_proof asks the recorded socket
+#     itself (-S): no server there, a restarted server, or the exact server
+#     without the window is `gone`; anything else is `unproven`.
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
-fm_control_endpoint_absence_verdict() {  # <backend> <target>
-  local backend=${1-} target=${2-}
+fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta>]
+  local backend=${1-} target=${2-} meta=${3-} t_socket t_pid t_start
   fm_backend_source "$backend" \
     || { printf 'unproven\tbackend %s could not be loaded to prove anything about that endpoint' "'$backend'"; return 0; }
   case "$backend" in
     tmux)
-      printf 'unproven\ttmux absence cannot be proven from a task record: the record does not carry the endpoint'"'"'s socket identity, and a server-wide window inventory only describes the tmux server this process addresses, so a window absent from it may still be alive on another'
+      t_socket='' t_pid='' t_start=''
+      if [ -n "$meta" ] && [ -f "$meta" ]; then
+        t_socket=$(fm_meta_get "$meta" tmux_socket)
+        t_pid=$(fm_meta_get "$meta" tmux_server_pid)
+        t_start=$(fm_meta_get "$meta" tmux_server_start)
+      fi
+      if [ -n "$t_socket" ] && [ -n "$t_pid" ] && [ -n "$t_start" ]; then
+        fm_backend_tmux_endpoint_absence_proof "$target" "$t_socket" "$t_pid" "$t_start"
+      else
+        printf 'unproven\ttmux absence cannot be proven from this task record: it does not carry the endpoint'"'"'s tmux server identity (a record from before that was recorded), and a server-wide window inventory only describes the tmux server this process addresses, so a window absent from it may still be alive on another'
+      fi
       ;;
     herdr)
       # Start the RECORDED session's server (only the server - nothing is

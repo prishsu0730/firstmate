@@ -59,6 +59,20 @@ make_tmux_stub() {  # <dir>
 #!/usr/bin/env bash
 set -u
 D=$FM_FAKE_DIR
+# A leading `-S <socket>` addresses one exact tmux server. `server` holds
+# "<socket>\t<pid>\t<start>" for the single live server (the one a plain call
+# reaches too); any other socket has no server, or with `socket-unreadable`
+# cannot be read. `windows-sock` is that server's own window inventory.
+sock=
+if [ "${1:-}" = -S ]; then
+  sock=${2:-}; shift 2
+  if [ -f "$D/socket-unreadable" ]; then
+    echo "error connecting to $sock (Permission denied)" >&2; exit 1
+  fi
+  if [ ! -f "$D/server" ] || [ "$(cut -f1 "$D/server")" != "$sock" ]; then
+    echo "error connecting to $sock (No such file or directory)" >&2; exit 1
+  fi
+fi
 case "${1:-}" in
   send-keys)
     shift
@@ -104,6 +118,13 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        *start_time*)
+          [ -f "$D/server" ] || continue
+          case "$a" in
+            *socket_path*) cat "$D/server" ;;
+            *) cut -f2,3 "$D/server" ;;
+          esac
+          exit 0 ;;
         *cursor_y*) printf '1\n'; exit 0 ;;
         *pane_current_command*) cat "$D/command"; printf '\n'; exit 0 ;;
         *pane_current_path*)
@@ -139,6 +160,7 @@ case "${1:-}" in
       echo 'lost server' >&2
       exit 1
     fi
+    if [ -n "$sock" ] && [ -f "$D/windows-sock" ]; then cat "$D/windows-sock"; exit 0; fi
     [ -f "$D/windows" ] && cat "$D/windows"; exit 0 ;;
   new-session)
     # Nothing in the relaunch path may ever create a session; recording the
@@ -1898,12 +1920,13 @@ strand_endpoint() {  # <case-dir> <id>
   : > "$1/fake/windows"
 }
 
-# Every tmux `missing` refuses on BOTH verbs, whatever produced it. tmux is the
-# one verified backend whose absence cannot be proven from a task record: the
-# record carries no socket identity for the endpoint, and any inventory
+# A tmux `missing` on a record WITHOUT the server identity refuses on BOTH
+# verbs, whatever produced it: such a record (written before spawn recorded the
+# identity) does not say which tmux server holds the endpoint, and any inventory
 # describes only the server this process happens to address. So a window that
 # is merely on a server this seat cannot reach is indistinguishable from one
-# that was destroyed, and neither verb will guess.
+# that was destroyed, and neither verb will guess. A record that carries the
+# identity is proven below.
 assert_tmux_missing_refuses() {  # <case-dir> <id> <what-was-staged>
   local dir=$1 id=$2 what=$3 out rc brief_before
 
@@ -1955,10 +1978,81 @@ test_tmux_refuses_when_the_server_is_gone() {
   dir=$(new_case tmux-noserver rl62)
   add_ship_task "$dir" rl62 claude
   # No server on the socket this process addresses. Another server may still be
-  # running the task's window, and the record cannot say which socket is its.
+  # running the task's window, and this record cannot say which socket is its.
   : > "$dir/fake/server-dead"
   assert_tmux_missing_refuses "$dir" rl62 "no tmux server on this socket"
   pass "tmux: a dead server on this socket refuses both verbs rather than proving absence"
+}
+
+# --- tmux: the record carries the server identity ----------------------------
+add_tmux_identity() {  # <case-dir> <id> <socket> <pid> <start>
+  {
+    echo "tmux_socket=$3"
+    echo "tmux_server_pid=$4"
+    echo "tmux_server_start=$5"
+  } >> "$1/home/state/$2.meta"
+}
+
+tmux_server_is() {  # <case-dir> <socket> <pid> <start>
+  printf '%s\t%s\t%s\n' "$2" "$3" "$4" > "$1/fake/server"
+}
+
+test_relaunch_rebinds_after_a_tmux_server_restart() {
+  local dir id=rl64 out rc wt_before
+  dir=$(new_case tmux-restarted "$id")
+  add_ship_task "$dir" "$id" claude
+  add_tmux_identity "$dir" "$id" /tmp/fm-test-tmux/default 100 1000
+  # The server restarted: same socket path, new pid and start time. Every window
+  # of the old server is gone, so this seat's inventory no longer lists it.
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 200 2000
+  strand_endpoint "$dir" "$id"
+  wt_before=$(meta_field "$dir" "$id" worktree)
+
+  out=$(run_spawn "$dir" "$id" --relaunch --harness claude); rc=$?
+  expect_code 0 "$rc" "a relaunch must proceed once the restarted tmux server proves the endpoint gone"$'\n'"$out"
+  [ "$(cat "$dir/fake/created-windows")" = "fm-$id" ] \
+    || fail "the relaunch should create exactly one fresh window, got: $(cat "$dir/fake/created-windows" 2>/dev/null)"
+  [ "$(meta_field "$dir" "$id" worktree)" = "$wt_before" ] \
+    || fail "the relaunch must keep the task's recorded worktree"
+  [ "$(meta_field "$dir" "$id" tmux_server_pid)" = 200 ] \
+    || fail "the relaunch must re-record the identity of the server it now lives on"
+  [ "$(meta_field "$dir" "$id" tmux_server_start)" = 2000 ] \
+    || fail "the relaunch must re-record the new server's start identity"
+  grep -qx 'claude' "$dir/fake/command" || fail "the replacement agent should be running"
+  pass "tmux: a relaunch rebinds into the same worktree once a server restart is proven"
+}
+
+test_tmux_identity_refuses_when_the_window_is_alive_or_unreadable() {
+  local dir id
+  dir=$(new_case tmux-alive rl65); id=rl65
+  add_ship_task "$dir" "$id" claude
+  add_tmux_identity "$dir" "$id" /tmp/fm-test-tmux/default 100 1000
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 100 1000
+  strand_endpoint "$dir" "$id"
+  printf '%s\n' "fm-$id" > "$dir/fake/windows-sock"
+  assert_tmux_missing_refuses "$dir" "$id" "window still alive on the recorded server"
+
+  dir=$(new_case tmux-unreadable rl66); id=rl66
+  add_ship_task "$dir" "$id" claude
+  add_tmux_identity "$dir" "$id" /tmp/fm-test-tmux/default 100 1000
+  : > "$dir/fake/socket-unreadable"
+  strand_endpoint "$dir" "$id"
+  assert_tmux_missing_refuses "$dir" "$id" "recorded socket unreadable"
+  pass "tmux: a live window or an unreadable socket still refuses both verbs"
+}
+
+test_spawn_publishes_the_tmux_server_identity_on_relaunch_adopt() {
+  local dir id=rl67 out rc
+  dir=$(new_case tmux-adopt "$id")
+  add_ship_task "$dir" "$id" claude
+  add_tmux_identity "$dir" "$id" /tmp/fm-test-tmux/default 100 1000
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 100 1000
+  printf 'zsh' > "$dir/fake/command"
+  out=$(run_spawn "$dir" "$id" --relaunch --harness claude); rc=$?
+  expect_code 0 "$rc" "adopting a live agent-free window must still relaunch"$'\n'"$out"
+  [ "$(meta_field "$dir" "$id" tmux_socket)" = /tmp/fm-test-tmux/default ] \
+    || fail "an adopting relaunch must keep the server identity on the record"
+  pass "tmux: an adopting relaunch keeps the server identity on the record"
 }
 
 test_reclaim_refuses_an_unreadable_endpoint() {
@@ -2551,6 +2645,9 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
+test_relaunch_rebinds_after_a_tmux_server_restart
+test_tmux_identity_refuses_when_the_window_is_alive_or_unreadable
+test_spawn_publishes_the_tmux_server_identity_on_relaunch_adopt
 test_reclaim_refuses_an_unreadable_endpoint
 test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server
