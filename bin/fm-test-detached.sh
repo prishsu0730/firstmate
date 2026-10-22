@@ -7,8 +7,10 @@
 #   fm-test-detached.sh [--name <run>] [--fresh] <fm-test-run.sh selection...>
 #   fm-test-detached.sh --status <run>
 #
-# The selection is anything `bin/fm-test-run.sh --list` accepts (--all, --family
-# <name>, --lane <lane>, --changed, or script paths). It is resolved once into a
+# Supported selections are --all, --family <name>, --lane <lane>,
+# --proven-isolated, --exclude-family <name>, or script paths. Execution options
+# and --changed (which implies an execution timeout) are refused. Selection
+# is resolved once into a
 # saved list, then each script runs one at a time through `bin/fm-test-run.sh
 # <script>`, so the runner's own semantics (markers, family isolation, placement
 # refusal under FM_TASK_ID) are unchanged. The command prints where the results
@@ -55,7 +57,11 @@ esac
 # The only tmux entry point in this script: always the private socket.
 tm() { env -u TMUX -u TMUX_PANE tmux -L "$SOCK" "$@"; }
 
-session_for() { printf 'fm-test-%s\n' "$1"; }
+session_for() {
+  local canonical
+  canonical=$(cd "$RUNS" && pwd -P) || return 1
+  printf 'fm-test-%s\n' "$(printf '%s/%s' "$canonical" "$1" | git hash-object --stdin)"
+}
 
 session_live() { tm has-session -t "=$(session_for "$1")" 2>/dev/null; }
 
@@ -120,6 +126,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ $# -gt 0 ] || die "give a selection for fm-test-run.sh (for example --all or tests/x.test.sh)"
+selection_args=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all|--proven-isolated|--family=*|--lane=*|--exclude-family=*) shift ;;
+    --family|--lane|--exclude-family)
+      [ $# -ge 2 ] || die "$1 needs a value"
+      shift 2 ;;
+    --) break ;;
+    -*) die "unsupported detached option: $1; use fm-test-run.sh directly" ;;
+    *) shift ;;
+  esac
+done
+set -- "${selection_args[@]}"
 command -v tmux > /dev/null 2>&1 || die "tmux is required and was not found on PATH"
 # The worker is launched as an argument vector, which tmux only honours from 3.0.
 tmux_major=$(tmux -V 2> /dev/null | sed -n 's/^[^0-9]*\([0-9][0-9]*\).*/\1/p')
@@ -135,6 +154,7 @@ esac
 dir="$RUNS/$name"
 head_sha=$(git -C "$ROOT" rev-parse HEAD 2> /dev/null || echo unknown)
 
+mkdir -p "$RUNS" || die "cannot create $RUNS"
 if session_live "$name"; then
   [ "$fresh" -eq 0 ] || die "run '$name' is still live; refusing --fresh"
   printf 'already running\nresults=%s\nstatus: %s --status %s\n' "$dir" "$SELF" "$name"

@@ -62,7 +62,10 @@ run_count() { # <marker file> -> lines (0 when absent)
   if [ -f "$1" ]; then awk 'END { print NR }' "$1"; else echo 0; fi
 }
 
-session_gone() { ! ptm has-session -t "=fm-test-$1" 2>/dev/null; }
+session_name() {
+  printf 'fm-test-%s\n' "$(printf '%s/%s' "$(cd "$STATE/test-runs" && pwd -P)" "$1" | git hash-object --stdin)"
+}
+session_gone() { ! ptm has-session -t "=$(session_name "$1")" 2>/dev/null; }
 has_line() { grep -q -- "$2" "$1/results.log" 2>/dev/null; }
 
 build_fixture() {
@@ -91,6 +94,11 @@ echo c >>"$MARK/c.runs"
 echo "not ok - c"
 exit 3
 EOF
+  cat >"$REPO/tests/d.test.sh" <<EOF
+#!/usr/bin/env bash
+while [ ! -e "$MARK/gate" ]; do sleep 0.1; done
+echo "ok - d"
+EOF
   chmod +x "$REPO"/tests/*.test.sh
   git -C "$REPO" add -A
   git -C "$REPO" -c user.name=t -c user.email=t@example.invalid commit -qm fixture
@@ -116,7 +124,7 @@ test_runs_detached_on_a_private_socket() {
   # The wrapper returned while the run is still live: a is done, b is gated.
   wait_for 30 has_line "$RUNDIR" 'tests/a.test.sh' || fail "script a never recorded a result"
   wait_for 30 test -f "$MARK/b.runs" || fail "script b never started"
-  ptm has-session -t "=fm-test-$RUNNAME" || fail "the run must live in a session on the private server"
+  ptm has-session -t "=$(session_name "$RUNNAME")" || fail "the run must live in a session on the private server"
   [ -S "$SOCK_DIR/tmux-$(id -u)/$SOCK" ] || fail "the private socket is missing under TMUX_TMPDIR"
   [ -z "$(find "$SOCK_DIR" -name default)" ] || fail "the wrapper created or used a default tmux server"
   out=$("$REPO/bin/fm-test-detached.sh" --status "$RUNNAME" 2>&1)
@@ -136,7 +144,7 @@ test_worker_environment() {
 test_cut_off_run_resumes_without_rerunning_finished_files() {
   local out rc
   # Simulate the restart: end the session while b is in flight.
-  ptm kill-session -t "=fm-test-$RUNNAME" || fail "could not end the run's session"
+  ptm kill-session -t "=$(session_name "$RUNNAME")" || fail "could not end the run's session"
   wait_for 30 session_gone "$RUNNAME" || fail "the session did not end"
   out=$("$REPO/bin/fm-test-detached.sh" --status "$RUNNAME" 2>&1)
   assert_contains "$out" "state=stopped finished=1/3" "a cut-off run must read as stopped"
@@ -197,7 +205,35 @@ test_shared_server_socket_is_refused() {
   pass "the shared tmux server's socket name is refused"
 }
 
+test_unsupported_options_are_refused() {
+  local option form out rc
+  for option in --fail-on-gate-skip --per-script-timeout-secs --max-wall-ms --json --jobs --changed; do
+    for form in "$option" "$option=value"; do
+      out=$("$REPO/bin/fm-test-detached.sh" --name unsupported tests/a.test.sh "$form" 2>&1) && rc=0 || rc=$?
+      expect_code 2 "$rc" "$form must be refused"
+      assert_contains "$out" "unsupported detached option" "$form must explain refusal"
+      assert_absent "$STATE/test-runs/unsupported" "refusal must leave no run record"
+    done
+  done
+  pass "execution options are refused before starting a run"
+}
+
+test_same_name_in_another_home_runs_independently() {
+  local out rc other="$FIXTURE/other-state"
+  out=$(SEL=(tests/d.test.sh); FM_STATE_OVERRIDE="$other" start 2>&1) && rc=0 || rc=$?
+  expect_code 0 "$rc" "same name in another home"
+  assert_contains "$out" "started in tmux session" "another home must start its own run"
+  wait_for 30 grep -q 'BEGIN .*tests/d.test.sh' "$other/test-runs/$RUNNAME/runner.log" || fail "another home did not execute d"
+  out=$(FM_STATE_OVERRIDE="$other" "$REPO/bin/fm-test-detached.sh" --status "$RUNNAME" 2>&1)
+  assert_contains "$out" "state=running" "another home must report its own running session"
+  ptm kill-session -t "=fm-test-$(printf '%s/%s' "$(cd "$other/test-runs" && pwd -P)" "$RUNNAME" | git hash-object --stdin)" || fail "cannot stop other home run"
+  ptm has-session -t "=$(session_name "$RUNNAME")" || fail "other home affected original run"
+  pass "same named runs in separate homes execute independently"
+}
+
+test_unsupported_options_are_refused
 test_runs_detached_on_a_private_socket
+test_same_name_in_another_home_runs_independently
 test_worker_environment
 test_cut_off_run_resumes_without_rerunning_finished_files
 test_complete_run_is_not_rerun
