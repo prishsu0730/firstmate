@@ -11,7 +11,7 @@
 set -u
 
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 command -v tmux >/dev/null 2>&1 || { echo "skip: tmux not found"; exit 0; }
 
@@ -60,6 +60,16 @@ wait_for() { # <seconds> <command...>
 
 run_count() { # <marker file> -> lines (0 when absent)
   if [ -f "$1" ]; then awk 'END { print NR }' "$1"; else echo 0; fi
+}
+
+wait_bounded() { # <child pid>; terminate a hung launcher after ten seconds
+  local child=$1 timer rc
+  (sleep 10; kill -TERM "$child" 2>/dev/null) &
+  timer=$!
+  wait "$child" && rc=0 || rc=$?
+  kill "$timer" 2>/dev/null || true
+  wait "$timer" 2>/dev/null || true
+  return "$rc"
 }
 
 session_name() {
@@ -248,17 +258,17 @@ with open(sys.argv[1], 'w') as lock:
 PY
   holder=$!
   wait_for 10 test -f "$MARK/locked" || fail "lock holder did not start"
-  (cd "$FIXTURE" && FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --name "$run" --fresh tests/d.test.sh >"$MARK/first.out" 2>&1) &
+  (cd "$FIXTURE" && exec env FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --name "$run" --fresh tests/d.test.sh >"$MARK/first.out" 2>&1) &
   first=$!
-  (cd "$FIXTURE" && FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --name "$run" tests/d.test.sh >"$MARK/second.out" 2>&1) &
+  (cd "$FIXTURE" && exec env FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --name "$run" tests/d.test.sh >"$MARK/second.out" 2>&1) &
   second=$!
   sleep 1
   assert_absent "$rel/test-runs/$run" "launchers must not prepare records while locked"
   : >"$MARK/unlock"
-  wait "$holder" || fail "lock holder failed"
-  wait "$first" && rc=0 || rc=$?
+  wait_bounded "$holder" || fail "lock holder failed or timed out"
+  wait_bounded "$first" && rc=0 || rc=$?
   case "$rc" in 0|2) ;; *) fail "fresh launcher failed unexpectedly" ;; esac
-  wait "$second" || fail "ordinary launcher failed"
+  wait_bounded "$second" || fail "ordinary launcher failed or timed out"
   wait_for 30 grep -q 'BEGIN .*tests/d.test.sh' "$rel/test-runs/$run/runner.log" || fail "relative-state worker did not execute"
   assert_equals 1 "$(grep -c '^BEGIN ' "$rel/test-runs/$run/runner.log")" "only one worker may launch"
   out=$(cd "$FIXTURE" && FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --status "$run")

@@ -55,7 +55,8 @@ case "$SOCK" in
 esac
 
 # The only tmux entry point in this script: always the private socket.
-tm() { env -u TMUX -u TMUX_PANE tmux -L "$SOCK" "$@"; }
+# A newly started server must not retain the launcher's run lock.
+tm() { env -u TMUX -u TMUX_PANE tmux -L "$SOCK" "$@" 9>&-; }
 
 session_for() {
   local canonical
