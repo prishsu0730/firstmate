@@ -330,7 +330,9 @@
 #   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
 #   task teardown removes only the current home's launch namespace.
 # Launch environment (config/launch-env-allowlist):
-#   Absent means unchanged ambient inheritance. A present readable regular file
+#   Absent means ambient inheritance subject to explicit launch assignments and
+#   clearing (see docs/configuration.md's worker launch environment contract).
+#   A present readable regular file
 #   opts every launch (ship, scout, secondmate, raw command, and relaunch) into
 #   /usr/bin/env -i followed by /bin/sh -c of the existing launch command.
 #   Each line is one POSIX environment name, never a value or shell expression;
@@ -5452,7 +5454,23 @@ if [ "$KIND" = secondmate ]; then
   # not enable them across the launch boundary (bin/fm-trace-context-lib.sh header).
   # Reuse the single frozen decision from the carrier resolution above so the
   # injected carrier and this on/off snapshot are guaranteed to agree.
-  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
+  # A secondmate pane can inherit another run's state from a long-lived terminal
+  # daemon. FM_HOME and the five relocation overrides are established explicitly;
+  # the names below are
+  # per-run state or secondary home pointers that nothing here re-establishes,
+  # so they are removed from the agent's environment instead of inherited.
+  # FM_TASK_ID is included because only ship and scout panes receive it, so an
+  # inherited one is another task's marker and would make bin/fm-test-run.sh
+  # refuse this home's own primary checkout.
+  sm_foreign_unset=
+  for sm_foreign_name in FM_PENDING_REPLY_DIR_OVERRIDE FM_SECONDMATE_PARENT_HOME \
+    FM_PROCEVENT_CLAIM_HOME FM_PROCEVENT_CLAIM_ROOT FM_PROCEVENT_CLAIM_STATE_ROOT \
+    FM_BOOTSTRAP_NETWORK FM_BOOTSTRAP_NETWORK_LOCK_PID FM_BOOTSTRAP_PARALLEL_DIR \
+    FM_SESSION_START_STAGE_FILE FM_SPAWN_NO_GUARD FM_TIMING_EPOCH_MS FM_TIMING_LOG \
+    FM_TASK_ID; do
+    sm_foreign_unset="$sm_foreign_unset -u $sm_foreign_name"
+  done
+  LAUNCH="env$sm_foreign_unset FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
 fi
 # Pane-scoped override: git in this worker reads our commit-msg strip without
 # rewriting the project's core.hooksPath. GIT_CONFIG_* takes precedence over
