@@ -1668,7 +1668,7 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 spawn_refuse_if_away_spend_cap() {
-  local cap live meta
+  local cap live meta task_id verdict kind remote_host
   [ "$RELAUNCH" -ne 1 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ -f "$STATE/.afk-contract" ] || return 0
@@ -1681,20 +1681,33 @@ spawn_refuse_if_away_spend_cap() {
   live=0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
-    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
+    kind=$(fm_meta_get "$meta" kind)
+    [ "$kind" != secondmate ] || continue
+    task_id=${meta##*/}
+    task_id=${task_id%.meta}
+    if ! fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1; then
+      # An endpoint that cannot be validated has unknown liveness, which counts.
+      live=$((live + 1))
+      continue
+    fi
+    verdict=unknown
+    remote_host=$(fm_meta_get "$meta" remote_host)
+    if [ -z "$remote_host" ]; then
+      verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
+    fi
+    case "$verdict" in dead|missing) continue ;; esac
     live=$((live + 1))
   done
   if [ "$live" -ge "$cap" ]; then
-    echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
+    echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live or have unknown liveness in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
     exit 1
   fi
 }
 # Spend cap (bin/fm-afk-contract.sh's spend_max_concurrent_workers): while an
 # away record exists (never a quiet-mode one, whose captain is present and
 # spends as attended: bin/fm-afk-contract.sh mode), a fresh ordinary spawn
-# refuses for BOTH actors once this home already holds that many ordinary task
-# records, counted the same way the return brief counts tasks live at return
-# (every state/*.meta whose kind is not secondmate). A relaunch replaces a
+# refuses for BOTH actors once this home holds that many ordinary workers
+# whose endpoints are live or whose liveness cannot be proven absent. A relaunch replaces a
 # worker that already counts, and a secondmate is a persistent home rather than
 # spend, so both are exempt. Checked before any endpoint, worktree, or record
 # exists, so a refusal costs nothing to unwind; rechecked after the task-set
