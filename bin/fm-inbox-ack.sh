@@ -74,9 +74,13 @@ for raw in "$@"; do
   esac
   src="$inbox/$id.msg"
   dst="$inbox/handled/$id.msg"
-  if [ -L "$src" ]; then
-    die "refusing $src: a symlink"
-  elif [ -f "$src" ]; then
+  for entry in "$src" "$dst"; do
+    if [ -e "$entry" ] || [ -L "$entry" ]; then
+      [ -f "$entry" ] && [ ! -L "$entry" ] \
+        || die "refusing $entry: not a regular non-symlink file"
+    fi
+  done
+  if [ -f "$src" ]; then
     [ ! -e "$dst" ] && [ ! -L "$dst" ] || die "refusing $src: $dst already exists"
     verdicts+=("move")
   elif [ -f "$dst" ] && [ ! -L "$dst" ]; then
