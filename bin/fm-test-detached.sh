@@ -7,11 +7,13 @@
 #   fm-test-detached.sh [--name <run>] [--fresh] <fm-test-run.sh selection...>
 #   fm-test-detached.sh --status <run>
 #
+# Requires tmux 3.0 or newer and python3 on PATH, plus the selected tests'
+# dependencies. --help prints this contract without starting a run.
+#
 # Supported selections are --all, --family <name>, --lane <lane>,
 # --proven-isolated, --exclude-family <name>, or script paths. Execution options
 # and --changed (which implies an execution timeout) are refused. Selection
-# is resolved once into a
-# saved list, then each script runs one at a time through `bin/fm-test-run.sh
+# is resolved once into a saved list, then each script runs one at a time through `bin/fm-test-run.sh
 # <script>`, so the runner's own semantics (markers, family isolation, placement
 # refusal under FM_TASK_ID) are unchanged. The command prints where the results
 # live and exits at once.
@@ -30,6 +32,14 @@
 # --name picks the record explicitly. A record made on a different commit, or a
 # changed selection, is refused; --fresh moves the old record aside to
 # <run>.prev-<epoch> and starts over. A run that is still live is never touched.
+# Recovery after a Mac restart requires rerunning the command; no boot-time
+# restart is installed. Keep the same state location and socket setting for
+# resume and status. --status reports running, stopped, or complete, result
+# counts, and failed scripts; its exit code does not report test success.
+# Session identity includes the canonical run-record location, so separate
+# homes can use the same run name. Relative state paths resolve at launch
+# against the caller's directory. Launch and --fresh record changes are
+# serialized by a per-run lock, which is not retained by the tmux server.
 #
 # tmux isolation: every tmux call goes to a PRIVATE server, `tmux -L
 # $FM_TEST_DETACHED_SOCKET` (default fm-test-runs), never the server the caller
