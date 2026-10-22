@@ -123,9 +123,19 @@ test_refusals() {
   pass "ack: refuses traversal, foreign dirs, symlinks, and collisions without moving anything"
 }
 
+test_bad_id_moves_nothing() {
+  local d rc=0
+  d=$(new_inbox t6)
+  bash "$ACK" --inbox "$d" 001 abc >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "a bad id after a good one should be refused"
+  [ -f "$d/001.msg" ] && [ ! -e "$d/handled/001.msg" ] || fail "a good id moved before a bad id was refused"
+  pass "ack: one bad id refuses the whole call and nothing moves"
+}
+
 test_moves_via_env_and_flag
 test_env_inbox_cannot_be_overridden
 test_several_ids
 test_rerun_is_safe
 test_missing_message
 test_refusals
+test_bad_id_moves_nothing
