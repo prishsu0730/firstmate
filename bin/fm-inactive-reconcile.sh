@@ -18,9 +18,9 @@
 # report pointer, without consulting fm-crew-state.sh. A ship `done:` is
 # published only when bin/fm-dod-lib.sh accepts the named head, so an
 # unpushed copy is not reported upstream as ready. The cadence path uses
-# fm-crew-state.sh, which applies the same gate: a no-mistakes done naming no
-# PR URL, and any done whose head lives only in the disposable copy, reads
-# blocked and is not a terminal inactive outcome.
+# fm-crew-state.sh, which applies the same acceptance contract owned by
+# bin/fm-dod-lib.sh: a refused done reads blocked and is not a terminal
+# inactive outcome.
 # A line still being appended (no trailing newline yet)
 # is left for the next poll. This is what keeps a mate's PR-ready, finding,
 # and failure outcomes from depending on the mate model appending them

@@ -25,7 +25,8 @@
 # mode a worker runs /no-mistakes itself, so there is no ungated handoff
 # `done: {summary}`: only the CI-ready `done: PR <url> checks green` is
 # accepted, or on a Gerrit project `done: PR <change url> published for review`;
-# a no-mistakes done naming no PR URL is refused with a plain reason. The
+# no-mistakes and direct-PR done notes naming no PR URL are refused with
+# mode-specific recovery advice, while local-only needs no URL. The
 # named head is the worker copy's HEAD, except that a done naming the task's
 # recorded pr= passes when the forge holds that head: a forge-reported
 # pr_head= in no-mistakes mode, or a recorded merge
@@ -545,8 +546,8 @@ fm_dod_note_reports_published_change() {  # <note>
 }
 
 # 0 when this ship done: is one the named-head gate must accept or refuse.
-# Every ship done: is gated in every mode; a no-mistakes done naming no PR URL
-# is refused by fm_dod_accept_ship_done. Empty mode is treated as no-mistakes,
+# Every ship done: in a supported mode is gated; fm_dod_accept_ship_done
+# owns the acceptance contract. Empty mode is treated as no-mistakes,
 # the unregistered-project default.
 fm_dod_should_gate_ship_done() {  # <kind> <mode> <line>
   local note
@@ -686,7 +687,8 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, or otherwise when its named
 # head - the worker copy's HEAD - is reachable outside that disposable copy. A
-# published-for-review report that names no Gerrit change is refused.
+# no-mistakes or direct-PR claim must name a PR URL; a published-for-review
+# report must name a Gerrit change. Local-only requires no URL.
 # There is no free-text SHA scan: a SHA that happens to appear in the note is
 # not the named head. 1 when
 # the claim is refused; stdout then holds a one-line reason and no other
