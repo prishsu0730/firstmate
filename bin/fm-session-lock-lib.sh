@@ -15,9 +15,9 @@
 # A third, read-only question sits beside them: is a live holder the process
 # Firstmate launched for this home? fm_session_lock_holder_launched answers it
 # from the home's recorded launch endpoint (the pane pids the caller resolves),
-# never from the holder's name or working directory, so a harness-shaped shared
-# daemon whose cwd is the home reads as foreign rather than as the home's own
-# session. It only classifies: nothing here refuses, reclaims, or kills.
+# with conservative detached-session exceptions documented at the helper.
+# A holder's name or working directory alone never proves endpoint ownership.
+# It only classifies: nothing here refuses, reclaims, or kills.
 # This file is sourced by scripts and has no side effects on source.
 
 # Cursor process identity is NOT expressible as a command-name pattern and is
@@ -316,10 +316,16 @@ fm_session_lock_pid_descends_from() {  # <pid> <ancestor-pid>
 
 # Was live holder pid $1 launched into this home's recorded endpoint? $2 is the
 # whitespace-separated pane pids the caller resolved from that record. Returns 0
-# when the holder is one of them or descends from one, 1 when none of them is in
-# its ancestry (a foreign holder), and 2 when no endpoint pid is known, which is
-# no evidence either way and must leave the caller's existing behavior alone.
-fm_session_lock_holder_launched() {  # <holder-pid> <endpoint-pids>
+# when the holder is one of them or descends from one, 1 when none is in its
+# ancestry and no detached-session safeguard applies, and 2 for unknown.
+# Optional state dir $3 enables those safeguards: existing self-ownership or a
+# recorded session id with a Claude-shaped holder keeps the verdict unknown.
+# A recycled Claude background helper chain can lose pane ancestry while the
+# legitimate holder stays alive; absence of ancestry alone must not alarm.
+# Missing endpoint evidence or an unreadable holder command with a recorded id
+# also returns unknown, preserving the caller's generic live-owner refusal.
+# Regression coverage: tests/fm-session-lock-foreign-holder.test.sh.
+fm_session_lock_holder_launched() {  # <holder-pid> <endpoint-pids> [<state>]
   local holder=$1 endpoints=${2:-} state=${3:-} endpoint known=0 comm args
   for endpoint in $endpoints; do
     case "$endpoint" in ''|*[!0-9]*) continue ;; esac

@@ -24,12 +24,13 @@
 # secondmate home is a FOREIGN holder - for example the Codex desktop app's
 # shared app-server daemon, which inherits the home as its cwd and records itself
 # in the lock, then shadows the real session Firstmate launched into the home's
-# endpoint. The launched process is identified from the parent's durable launch
+# endpoint. Launch endpoint resolution uses the parent's durable launch
 # record, never from the holder's name or cwd: .fm-secondmate-home names the
 # mate, .fm-secondmate-parent names the parent home, the parent's
 # state/<id>.meta names the tmux window Firstmate launched it into, and the
-# holder is the home's own session only when its parent chain reaches one of that
-# window's pane pids. A foreign holder is still refused - nothing is reclaimed
+# holder is classified by fm_session_lock_holder_launched in
+# bin/fm-session-lock-lib.sh, including its detached-session safeguards.
+# A foreign holder is still refused - nothing is reclaimed
 # and no process is ever signalled - but the refusal names its pid and command
 # with one next step for the captain, and the parent home gets one keyed
 # `blocked` line on this mate's status channel (published by this script, not
