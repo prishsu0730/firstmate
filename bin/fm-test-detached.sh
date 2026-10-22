@@ -151,10 +151,14 @@ fi
 case "$name" in
   ''|*[!A-Za-z0-9_-]*) die "run name '$name' may only use letters, digits, '_' and '-'" ;;
 esac
-dir="$RUNS/$name"
 head_sha=$(git -C "$ROOT" rev-parse HEAD 2> /dev/null || echo unknown)
 
 mkdir -p "$RUNS" || die "cannot create $RUNS"
+RUNS=$(cd "$RUNS" && pwd -P) || die "cannot resolve $RUNS"
+dir="$RUNS/$name"
+command -v python3 >/dev/null 2>&1 || die "python3 is required for run locking"
+exec 9>"$RUNS/.$name.lock" || die "cannot open the run lock"
+python3 -c 'import fcntl; fcntl.flock(0, fcntl.LOCK_EX)' <&9 || die "cannot lock the run"
 if session_live "$name"; then
   [ "$fresh" -eq 0 ] || die "run '$name' is still live; refusing --fresh"
   printf 'already running\nresults=%s\nstatus: %s --status %s\n' "$dir" "$SELF" "$name"

@@ -231,6 +231,43 @@ test_same_name_in_another_home_runs_independently() {
   pass "same named runs in separate homes execute independently"
 }
 
+test_relative_state_and_serialized_launch() {
+  local out rc first second holder rel="$FIXTURE/relative-state" run=serialized
+  mkdir -p "$rel/test-runs"
+  python3 - "$rel/test-runs/.$run.lock" "$MARK" <<'PY' &
+import fcntl
+import pathlib
+import sys
+import time
+with open(sys.argv[1], 'w') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    mark = pathlib.Path(sys.argv[2])
+    (mark / 'locked').touch()
+    while not (mark / 'unlock').exists():
+        time.sleep(0.05)
+PY
+  holder=$!
+  wait_for 10 test -f "$MARK/locked" || fail "lock holder did not start"
+  (cd "$FIXTURE" && FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --name "$run" --fresh tests/d.test.sh >"$MARK/first.out" 2>&1) &
+  first=$!
+  (cd "$FIXTURE" && FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --name "$run" tests/d.test.sh >"$MARK/second.out" 2>&1) &
+  second=$!
+  sleep 1
+  assert_absent "$rel/test-runs/$run" "launchers must not prepare records while locked"
+  : >"$MARK/unlock"
+  wait "$holder" || fail "lock holder failed"
+  wait "$first" && rc=0 || rc=$?
+  case "$rc" in 0|2) ;; *) fail "fresh launcher failed unexpectedly" ;; esac
+  wait "$second" || fail "ordinary launcher failed"
+  wait_for 30 grep -q 'BEGIN .*tests/d.test.sh' "$rel/test-runs/$run/runner.log" || fail "relative-state worker did not execute"
+  assert_equals 1 "$(grep -c '^BEGIN ' "$rel/test-runs/$run/runner.log")" "only one worker may launch"
+  out=$(cd "$FIXTURE" && FM_STATE_OVERRIDE=./relative-state "$REPO/bin/fm-test-detached.sh" --status "$run")
+  assert_contains "$out" 'state=running' "relative status must find the same session"
+  ptm kill-session -t "=fm-test-$(printf '%s/%s' "$rel/test-runs" "$run" | git hash-object --stdin)" || fail "cannot stop relative run"
+  pass "relative records survive detachment and launchers serialize record mutation"
+}
+
+test_relative_state_and_serialized_launch
 test_unsupported_options_are_refused
 test_runs_detached_on_a_private_socket
 test_same_name_in_another_home_runs_independently
