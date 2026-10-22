@@ -246,7 +246,7 @@ confirm_own_lock() {  # <recorded-pid>
 refuse_foreign_holder() {  # <recorded-pid>
   local pid=$1 endpoints cmd note rc=0 launched_rc=0
   endpoints=$(home_endpoint_pids 2>/dev/null) || return 0
-  fm_session_lock_holder_launched "$pid" "$endpoints" || launched_rc=$?
+  fm_session_lock_holder_launched "$pid" "$endpoints" "$STATE" || launched_rc=$?
   [ "$launched_rc" -eq 1 ] || return 0
   cmd=$(fm_session_lock_holder_command "$pid")
   echo "error: the session lock is held by a foreign process, not the session Firstmate launched for this home (pid $pid, command: ${cmd:-unknown}); operate read-only. Next step: confirm that process is not this home's session, stop it yourself (kill $pid), then rerun bin/fm-session-start.sh - Firstmate never stops it for you." >&2

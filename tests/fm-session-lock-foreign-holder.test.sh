@@ -242,6 +242,50 @@ test_unresolvable_endpoint_keeps_the_generic_refusal() {
   pass "foreign-holder: with no resolvable launch endpoint the generic live-owner refusal stands"
 }
 
+test_recycled_background_session_keeps_generic_refusal() {
+  local dir home pane holder host i
+  dir="$TMP_ROOT/recycled"
+  mkdir -p "$dir"
+  home=$(make_mate_home "$dir")
+  start_pane_with_holder "$dir" "$NAMED_CLAUDE"
+  pane=$(tr -d '[:space:]' < "$dir/pane-pid")
+  cat > "$dir/host.sh" <<'SH'
+printf '%s\n' "$$" > "$1/host-pid"
+"$2" -c 'printf "%s\n" "$$" > "$0/model-pid"; while [ "$SECONDS" -lt 120 ]; do sleep 1; done' "$1" &
+wait
+SH
+  bash -c '"$1" "$2/host.sh" "$2" "$1" </dev/null >/dev/null 2>&1 & exit 0' _ "$NAMED_CLAUDE" "$dir"
+  wait_for_file "$dir/host-pid" "the detached pty host"
+  wait_for_file "$dir/model-pid" "the detached model loop"
+  host=$(tr -d '[:space:]' < "$dir/host-pid")
+  holder=$(tr -d '[:space:]' < "$dir/model-pid")
+  FIXTURE_PIDS+=("$host" "$holder")
+  i=0
+  while [ "$(ps -o ppid= -p "$host" | tr -d ' ')" != 1 ] && [ "$i" -lt 100 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ "$(ps -o ppid= -p "$host" | tr -d ' ')" = 1 ] || fail "the pty host was not reparented"
+  if lib_eval "fm_session_lock_pid_descends_from $holder $pane"; then
+    fail "the detached model still descends from the pane"
+  fi
+  printf '%s\n' "$holder" > "$home/state/.lock"
+  printf 'background-session\n' > "$home/state/.lock-session"
+  lib_eval "fm_session_lock_inspect '$home/state' '$pane'; [ \"\$FM_LOCK_INSPECT_HOME_LAUNCHED\" = unknown ]" \
+    || fail "the detached session was not ancestry-uncertain"
+  run_lock "$home" "$pane"
+  expect_code 1 "$RUN_RC" "a competing session took the detached session's lock"
+  assert_contains "$RUN_OUT" "another live firstmate session holds the lock" "the generic refusal was lost"
+  assert_not_contains "$RUN_OUT" "foreign" "the detached session was called foreign"
+  run_lock "$home" "$pane" status
+  assert_contains "$RUN_OUT" "lock: held by live harness pid $holder" "status misclassified the detached session"
+  assert_not_contains "$RUN_OUT" "FOREIGN" "status called the detached session foreign"
+  [ "$(parent_status_lines "$dir")" = 0 ] || fail "the detached session raised a parent alarm"
+  [ "$(cat "$home/state/.lock")" = "$holder" ] || fail "the detached session's lock changed"
+  kill -0 "$holder" || fail "the detached session was stopped"
+  pass "foreign-holder: a recycled background session keeps the generic live-owner refusal"
+}
+
 test_holder_verdict_helper() {
   local dir pane child
   dir="$TMP_ROOT/verdict"
@@ -263,4 +307,5 @@ test_launched_holder_is_live_and_refusal_is_unchanged
 test_foreign_daemon_in_the_home_is_refused_loudly_once
 test_dead_holder_is_stale_and_reclaimed
 test_unresolvable_endpoint_keeps_the_generic_refusal
+test_recycled_background_session_keeps_generic_refusal
 test_holder_verdict_helper

@@ -320,13 +320,23 @@ fm_session_lock_pid_descends_from() {  # <pid> <ancestor-pid>
 # its ancestry (a foreign holder), and 2 when no endpoint pid is known, which is
 # no evidence either way and must leave the caller's existing behavior alone.
 fm_session_lock_holder_launched() {  # <holder-pid> <endpoint-pids>
-  local holder=$1 endpoints=${2:-} endpoint known=0
+  local holder=$1 endpoints=${2:-} state=${3:-} endpoint known=0 comm args
   for endpoint in $endpoints; do
     case "$endpoint" in ''|*[!0-9]*) continue ;; esac
     known=1
     fm_session_lock_pid_descends_from "$holder" "$endpoint" && return 0
   done
   [ "$known" -eq 1 ] || return 2
+  if [ -n "$state" ]; then
+    fm_session_lock_owned_by_self "$state" && return 2
+    if fm_session_lock_recorded_session_id "$state" >/dev/null; then
+      comm=$(ps -o comm= -p "$holder" 2>/dev/null) || return 2
+      args=$(ps -o args= -p "$holder" 2>/dev/null)
+      if fm_harness_process_matches "$comm" "$args" && [ "$FM_HARNESS_IS_CLAUDE" -eq 1 ]; then
+        return 2
+      fi
+    fi
+  fi
   return 1
 }
 
@@ -429,7 +439,7 @@ fm_session_lock_inspect() {  # <state> [<endpoint-pids>]
       FM_LOCK_INSPECT_STATE=held
       FM_LOCK_INSPECT_LIVE_HARNESS=true
       launched_rc=0
-      fm_session_lock_holder_launched "$pid" "$endpoints" || launched_rc=$?
+      fm_session_lock_holder_launched "$pid" "$endpoints" "$state" || launched_rc=$?
       if [ "$launched_rc" -eq 0 ]; then
         # shellcheck disable=SC2034 # Output global, read by lock status.
         FM_LOCK_INSPECT_HOME_LAUNCHED=true
