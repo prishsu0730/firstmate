@@ -1977,7 +1977,9 @@ fm_task_record_finished() {  # <state-dir> <task-id>
 # Sets FM_SLOT_BLOCKING_RECORDS to "<id> <field> <state-dir>" lines. Returns 1
 # with FM_LOCAL_FIRSTMATE_ERROR when the local homes cannot be enumerated, so a
 # caller refuses rather than treating an unreadable home as one with no tasks.
-# <self-id> is the one record that is never a conflict with itself.
+# Only <first-state>/<self-id>.meta is excluded by file identity; a same-named
+# task in another home still conflicts. Proven-finished worktree references are
+# ignored, but home references always block.
 fm_treehouse_slot_blocking_records() {  # <slot> <self-id> <first-state>
   local slot=$1 self=$2 first=$3 state_dir other other_id field path canon
   FM_SLOT_BLOCKING_RECORDS=()

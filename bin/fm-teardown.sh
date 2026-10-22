@@ -101,19 +101,19 @@
 # cleanup step, teardown verifies record exclusivity: no OTHER task record in
 # this home or any locally registered Firstmate home may name the same live path
 # in its worktree= or home=. One live path with two task records is the reuse
-# collision itself, whichever record is stale. The one exception is a slot whose
-# owner claim (below) names another task: this teardown is then records-only and
+# collision itself, except for the finished-record cases below. When a slot's
+# owner claim (below) names another task, this teardown is records-only and
 # touches nothing under the slot, so the scan is skipped rather than stranding
 # the stale record and, with it, the claimant's own teardown.
 # Two more cases keep a leftover record from stranding a task, both decided by
-# bin/fm-wake-lib.sh's fm_task_record_finished (last status done, plus a saved
-# scout report or a ship head already on a remote-tracking ref): another record
-# that is finished and proven holds nothing in the slot, so it is skipped; and
+# bin/fm-wake-lib.sh's fm_task_record_finished (which owns the completion proof):
+# another proven-finished record's worktree= reference is skipped; its home=
+# reference still blocks. And
 # when THIS record is the finished one, no claim says the slot is its own, and an
 # unfinished record names it, this teardown is records-only like a reassigned
 # slot (the forced child-home preflight keeps refusing that second case, because
-# child cleanup trusts only the claim). bin/fm-spawn.sh refuses the opposite hazard at the source, never claiming
-# a slot an unfinished record still names.
+# child cleanup trusts only the claim). Fresh Treehouse spawns use
+# fm_treehouse_slot_blocking_records before claiming a slot.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
 # have exited and its record been cleaned up, or it may live in a home this
