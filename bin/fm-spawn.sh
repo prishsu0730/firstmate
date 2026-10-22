@@ -330,7 +330,9 @@
 #   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
 #   task teardown removes only the current home's launch namespace.
 # Launch environment (config/launch-env-allowlist):
-#   Absent means unchanged ambient inheritance. A present readable regular file
+#   Absent means ambient inheritance subject to explicit launch assignments and
+#   clearing (see docs/configuration.md's worker launch environment contract).
+#   A present readable regular file
 #   opts every launch (ship, scout, secondmate, raw command, and relaunch) into
 #   /usr/bin/env -i followed by /bin/sh -c of the existing launch command.
 #   Each line is one POSIX environment name, never a value or shell expression;
@@ -5452,12 +5454,9 @@ if [ "$KIND" = secondmate ]; then
   # not enable them across the launch boundary (bin/fm-trace-context-lib.sh header).
   # Reuse the single frozen decision from the carrier resolution above so the
   # injected carrier and this on/off snapshot are guaranteed to agree.
-  # A secondmate pane can be created by a tmux server whose own global
-  # environment belongs to another run (the 2026-10-17 reboot: the server was
-  # started from inside the primary's startup network run, so every pane it
-  # created carried that run's FM_HOME, FM_STATE_OVERRIDE, FM_SPAWN_NO_GUARD,
-  # FM_BOOTSTRAP_NETWORK, and stage and timing files). FM_HOME and the five
-  # relocation overrides above are re-established explicitly; the names below are
+  # A secondmate pane can inherit another run's state from a long-lived terminal
+  # daemon. FM_HOME and the five relocation overrides are established explicitly;
+  # the names below are
   # per-run state or secondary home pointers that nothing here re-establishes,
   # so they are removed from the agent's environment instead of inherited.
   # FM_TASK_ID is included because only ship and scout panes receive it, so an
