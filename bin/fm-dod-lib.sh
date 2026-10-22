@@ -704,7 +704,11 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   case "$mode" in
     no-mistakes|direct-PR|'')
       if [ -z "$url" ] && ! fm_dod_note_reports_published_change "$(status_line_note "$line")"; then
-        printf '%s\n' "no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green"
+        if [ "$mode" = direct-PR ]; then
+          printf '%s\n' "no PR link yet: push your branch and open a PR, then report done: PR <url>"
+        else
+          printf '%s\n' "no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green"
+        fi
         return 1
       fi ;;
   esac

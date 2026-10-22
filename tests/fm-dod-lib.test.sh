@@ -102,6 +102,13 @@ test_pr_delivery_done_without_pr_url_is_refused() {
           "no PR link yet:"*) ;;
           *) fail "PR-less refusal was not the plain message: $reason" ;;
         esac
+        if [ "$mode" = direct-PR ]; then
+          [ "$reason" = 'no PR link yet: push your branch and open a PR, then report done: PR <url>' ] \
+            || fail "direct-PR refusal gave incorrect recovery advice: $reason"
+        else
+          [ "$reason" = 'no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green' ] \
+            || fail "no-mistakes refusal gave incorrect recovery advice: $reason"
+        fi
       done
     done
   done
