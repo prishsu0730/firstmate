@@ -15,10 +15,11 @@
 # ask rule stops on at every message (an ask match beats any allow rule).
 #
 # Safety: the inbox must be an existing real directory named `<task>.inbox`
-# whose handled/ is also a real directory; ids are digits only; the message
-# must be a regular file, not a symlink. Anything else is refused with exit 2
-# and nothing moves. A message already in handled/ is a quiet success, so a
-# re-run is safe. A message found nowhere is exit 1.
+# whose handled/ is also a real directory. Before any move, all ids must be
+# digits only, every existing source or handled entry a regular non-symlink
+# file, and no id present in both places; violations exit 2 without moving.
+# A message already in handled/ succeeds. A message found nowhere gives exit
+# 1; other valid messages still move.
 set -u
 
 die() { printf 'fm-inbox-ack: %s\n' "$*" >&2; exit 2; }
@@ -63,7 +64,9 @@ esac
 [ -d "$inbox/handled" ] && [ ! -L "$inbox/handled" ] \
   || die "refusing $inbox/handled: missing or not a real directory"
 
-rc=0
+# Pass 1 validates every id before anything moves, so one bad id refuses the
+# whole call. Pass 2 acts on the verdicts recorded here.
+verdicts=()
 for raw in "$@"; do
   id=${raw%.msg}
   case "$id" in
@@ -71,17 +74,41 @@ for raw in "$@"; do
   esac
   src="$inbox/$id.msg"
   dst="$inbox/handled/$id.msg"
-  if [ -L "$src" ]; then
-    die "refusing $src: a symlink"
-  elif [ -f "$src" ]; then
+  for entry in "$src" "$dst"; do
+    if [ -e "$entry" ] || [ -L "$entry" ]; then
+      [ -f "$entry" ] && [ ! -L "$entry" ] \
+        || die "refusing $entry: not a regular non-symlink file"
+    fi
+  done
+  if [ -f "$src" ]; then
     [ ! -e "$dst" ] && [ ! -L "$dst" ] || die "refusing $src: $dst already exists"
-    mv -n -- "$src" "$dst" || die "could not move $src"
-    printf 'handled: %s\n' "$id"
+    verdicts+=("move")
   elif [ -f "$dst" ] && [ ! -L "$dst" ]; then
-    printf 'already handled: %s\n' "$id"
+    verdicts+=("handled")
   else
-    printf 'fm-inbox-ack: no message %s in %s\n' "$id" "$inbox" >&2
-    rc=1
+    verdicts+=("missing")
   fi
+done
+
+rc=0
+n=0
+for raw in "$@"; do
+  id=${raw%.msg}
+  src="$inbox/$id.msg"
+  dst="$inbox/handled/$id.msg"
+  case "${verdicts[$n]}" in
+    move)
+      mv -n -- "$src" "$dst" || die "could not move $src"
+      printf 'handled: %s\n' "$id"
+      ;;
+    handled)
+      printf 'already handled: %s\n' "$id"
+      ;;
+    *)
+      printf 'fm-inbox-ack: no message %s in %s\n' "$id" "$inbox" >&2
+      rc=1
+      ;;
+  esac
+  n=$((n + 1))
 done
 exit "$rc"
