@@ -790,6 +790,36 @@ test_pool_slot_named_by_another_record_refuses_unless_finished() {
   pass "a spawn refuses a slot another unfinished record names and claims one only a finished record names"
 }
 
+test_pool_slot_same_id_in_another_home_refuses() {
+  local rec id child out status before field
+  for field in worktree home; do
+    id="pool-slot-same-id-$field"
+    rec=$(make_case "slot-same-id-$field" "$id")
+    read_case_record "$rec"
+    lay_out_as_pool_slot
+    child="$CASE_DIR/secondmate-home"
+    mkdir -p "$child/state" "$child/data"
+    printf '%s\n' "- mate - fixture (home: $child; scope: test; projects: project; added 2026-01-01)" \
+      > "$HOME_DIR/data/secondmates.md"
+    fm_write_meta "$child/state/$id.meta" \
+      "$field=$POOL_DIR" "project=$PROJECT_DIR" "kind=scout"
+    printf 'paused [at=1]: waiting on a decision\n' > "$child/state/$id.status"
+    before=$(git -C "$POOL_DIR" rev-parse HEAD)
+    out=$(run_spawn "$id" --scout)
+    status=$?
+    [ "$status" -ne 0 ] || fail "spawn ignored a same-named task in another home ($field)"
+    assert_contains "$out" "still named by unfinished task record" \
+      "spawn did not refuse the conflicting record"
+    assert_contains "$out" "$child/state" "refusal did not identify the other home"
+    [ ! -e "$SLOT_CLAIM" ] || fail "spawn claimed the contested slot"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "spawn published a conflicting record"
+    [ -f "$child/state/$id.meta" ] || fail "spawn removed the other home's record"
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] \
+      || fail "spawn reset the contested slot"
+  done
+  pass "same-named tasks in another home block both slot-reference fields"
+}
+
 publish_feature_branch() { # <branch>
   git -C "$CASE_DIR/publisher" checkout --quiet -b "$1"
   printf 'only on %s\n' "$1" > "$CASE_DIR/publisher/feature-only.txt"
@@ -924,6 +954,7 @@ test_scout_base_branch_refused_on_gerrit_forge() {
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_pool_slot_named_by_another_record_refuses_unless_finished
+test_pool_slot_same_id_in_another_home_refuses
 test_linked_spawning_home_rejects_primary_before_refresh
 test_stale_pool_base_refreshes_before_branching
 test_named_base_branch_starts_from_that_branch

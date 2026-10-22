@@ -1987,7 +1987,7 @@ fm_treehouse_slot_blocking_records() {  # <slot> <self-id> <first-state>
     for other in "$state_dir"/*.meta; do
       [ -f "$other" ] && [ ! -L "$other" ] || continue
       other_id=$(basename "$other" .meta)
-      [ "$other_id" != "$self" ] || continue
+      [ "$other_id" = "$self" ] && [ "$other" -ef "$first/$self.meta" ] && continue
       for field in worktree home; do
         path=$(sed -n "s/^$field=//p" "$other" | tail -n 1)
         [ -n "$path" ] || continue
