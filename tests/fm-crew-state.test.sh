@@ -2327,7 +2327,7 @@ test_other_branch_run_ignored() {
   make_repo_on_branch "$d/wt" fm/feat-g
   make_fakebin "$d" >/dev/null
   fm_write_meta "$d/state/feat-g.meta" "window=fm:fm-feat-g" "worktree=$d/wt" "kind=ship" "mode=direct-PR" "harness=claude"
-  printf 'done: implemented, ready to validate\n' > "$d/state/feat-g.status"
+  printf 'done: PR https://example.test/o/r/pull/1 implemented\n' > "$d/state/feat-g.status"
   FM_FAKE_AXI_STATUS="$(run_running fm/some-other)"
   FM_FAKE_RUNS_LIST="$(cat <<'EOF'
   running    fm/some-other aaaaaaa  2026-07-02 22:10
@@ -2896,7 +2896,7 @@ test_single_owner_terminal_declaration_supersedes_stale_decision() {
     fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "kind=$kind" "mode=direct-PR" "harness=claude"
     for opener in needs-decision blocked; do
       for terminal in 'done' failed; do
-        printf '%s [key=choice]: an earlier decision\n%s: final outcome\nContinuation prose.\n\n' \
+        printf '%s [key=choice]: an earlier decision\n%s: PR https://example.test/o/r/pull/1 final outcome\nContinuation prose.\n\n' \
           "$opener" "$terminal" > "$d/state/task.status"
         out=$(run_crew_state "$d" task)
         assert_contains "$out" "state: $terminal" "$kind terminal declaration supersedes stale $opener"

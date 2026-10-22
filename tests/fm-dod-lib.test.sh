@@ -83,22 +83,29 @@ test_moved_branch_without_named_head_is_refused() {
   pass "a moved remote branch that lacks the named head is refused"
 }
 
-test_no_mistakes_done_without_pr_url_is_refused() {
-  local repo wt reason rc mode
+test_pr_delivery_done_without_pr_url_is_refused() {
+  local repo wt reason rc mode pushed line
   repo="$TMP_ROOT/preval-repo"
   wt="$TMP_ROOT/preval-wt"
   fm_git_worktree "$repo" "$wt" fm/preval
   git -C "$wt" commit -q --allow-empty -m 'only in the disposable copy'
-  for mode in no-mistakes ''; do
-    rc=0
-    reason=$(accept_done ship "$mode" "$wt" "$repo" 'done: implementation complete') || rc=$?
-    [ "$rc" -eq 1 ] || fail "no-mistakes (mode '$mode') done: without a PR URL was accepted (exit $rc)"
-    case "$reason" in
-      "no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green") ;;
-      *) fail "PR-less refusal was not the plain message: $reason" ;;
-    esac
+  for pushed in no yes; do
+    if [ "$pushed" = yes ]; then
+      git -C "$wt" update-ref refs/remotes/origin/fm/preval "$(git -C "$wt" rev-parse HEAD)"
+    fi
+    for mode in no-mistakes direct-PR ''; do
+      for line in 'done: implementation complete' 'done [key=fix]: implementation complete' 'done: [key=fix] implementation complete'; do
+        rc=0
+        reason=$(accept_done ship "$mode" "$wt" "$repo" "$line") || rc=$?
+        [ "$rc" -eq 1 ] || fail "mode '$mode' without a PR URL was accepted (pushed=$pushed, exit $rc)"
+        case "$reason" in
+          "no PR link yet:"*) ;;
+          *) fail "PR-less refusal was not the plain message: $reason" ;;
+        esac
+      done
+    done
   done
-  pass "no-mistakes done: without a PR URL is refused with a plain message"
+  pass "PR delivery done: without a PR URL is refused before and after push"
 }
 
 test_no_mistakes_done_with_pr_url_is_accepted() {
@@ -114,7 +121,7 @@ test_no_mistakes_done_with_pr_url_is_accepted() {
   pass "no-mistakes done: with a PR URL is accepted"
 }
 
-test_direct_pr_done_without_pr_url_still_follows_head_gate() {
+test_direct_pr_done_with_pr_url_follows_head_gate() {
   local repo wt sha
   repo="$TMP_ROOT/dpr-repo"
   wt="$TMP_ROOT/dpr-wt"
@@ -126,7 +133,7 @@ test_direct_pr_done_without_pr_url_still_follows_head_gate() {
   git -C "$wt" update-ref refs/remotes/origin/fm/dpr "$sha"
   accept_done ship direct-PR "$wt" "$repo" 'done: PR https://example.test/o/r/pull/3' \
     || fail "direct-PR pushed done: was refused"
-  pass "direct-PR done: behavior is unchanged"
+  pass "direct-PR done: with a PR URL still requires a pushed head"
 }
 
 test_local_only_linked_branch_is_accepted() {
@@ -185,7 +192,7 @@ test_free_text_sha_is_not_the_named_head() {
   git -C "$wt" update-ref refs/remotes/origin/main "$old"
   git -C "$wt" commit -q --allow-empty -m 'actual fix'
   new=$(git -C "$wt" rev-parse HEAD)
-  reason=$(accept_done ship direct-PR "$wt" "$repo" "done: reverted $old and fixed the retry")
+  reason=$(accept_done ship direct-PR "$wt" "$repo" "done: PR https://example.test/o/r/pull/3 reverted $old and fixed the retry")
   rc=$?
   [ "$rc" -eq 1 ] || fail "free-text SHA on origin/main made an unpushed HEAD accept"
   case "$reason" in
@@ -461,9 +468,9 @@ EOF
 
 test_scout_done_is_not_gated
 test_unpushed_ship_done_is_refused
-test_no_mistakes_done_without_pr_url_is_refused
+test_pr_delivery_done_without_pr_url_is_refused
 test_no_mistakes_done_with_pr_url_is_accepted
-test_direct_pr_done_without_pr_url_still_follows_head_gate
+test_direct_pr_done_with_pr_url_follows_head_gate
 test_remote_containing_named_head_is_accepted
 test_moved_branch_without_named_head_is_refused
 test_free_text_sha_is_not_the_named_head

@@ -702,7 +702,7 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     return 0
   fi
   case "$mode" in
-    no-mistakes|'')
+    no-mistakes|direct-PR|'')
       if [ -z "$url" ] && ! fm_dod_note_reports_published_change "$(status_line_note "$line")"; then
         printf '%s\n' "no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green"
         return 1
