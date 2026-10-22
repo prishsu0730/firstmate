@@ -3863,10 +3863,10 @@ else
     # it stands up a DIFFERENT home's own workspace by design - so it asks for
     # the per-home container instead of inheriting this launcher's.
     HERDR_LABEL_HOME=$FM_HOME
-    HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    HERDR_LAUNCHER_RELATIONSHIP='launcher-home'
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
-      HERDR_LAUNCHER_RELATIONSHIP=other-home
+      HERDR_LAUNCHER_RELATIONSHIP='other-home'
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
@@ -4556,6 +4556,20 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Written under the Treehouse project lock held from before slot allocation
   # through metadata publication, so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    # A slot another task record still names, whose task is not proven finished,
+    # may still hold that task's work: claiming it would leave two records on one
+    # copy and strand both teardowns. Treehouse offers no way to ask for a
+    # different slot, so refuse here, before the claim, leaving that record the
+    # slot's only owner. A record proven finished (see fm_task_record_finished)
+    # is a harmless leftover and the claim below replaces its claim.
+    if ! fm_treehouse_slot_blocking_records "$WT" "$ID" "$STATE"; then
+      echo "error: could not check which task records name Treehouse pool slot $WT ($FM_LOCAL_FIRSTMATE_ERROR); refusing to launch a worker onto a slot that may belong to another task; inspect window $T" >&2
+      exit 1
+    fi
+    if [ "${#FM_SLOT_BLOCKING_RECORDS[@]}" -gt 0 ]; then
+      echo "error: Treehouse pool slot $WT is still named by unfinished task record ${FM_SLOT_BLOCKING_RECORDS[0]%% *} (${FM_SLOT_BLOCKING_RECORDS[0]}); refusing to launch task $ID onto a slot another task's work may still live in. Finish or tear down that task (bin/fm-crew-state.sh ${FM_SLOT_BLOCKING_RECORDS[0]%% *}), then spawn again; inspect window $T" >&2
+      exit 1
+    fi
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
       exit 1

@@ -101,10 +101,19 @@
 # cleanup step, teardown verifies record exclusivity: no OTHER task record in
 # this home or any locally registered Firstmate home may name the same live path
 # in its worktree= or home=. One live path with two task records is the reuse
-# collision itself, whichever record is stale. The one exception is a slot whose
-# owner claim (below) names another task: this teardown is then records-only and
+# collision itself, except for the finished-record cases below. When a slot's
+# owner claim (below) names another task, this teardown is records-only and
 # touches nothing under the slot, so the scan is skipped rather than stranding
 # the stale record and, with it, the claimant's own teardown.
+# Two more cases keep a leftover record from stranding a task, both decided by
+# bin/fm-wake-lib.sh's fm_task_record_finished (which owns the completion proof):
+# another proven-finished record's worktree= reference is skipped; its home=
+# reference still blocks. And
+# when THIS record is the finished one, no claim says the slot is its own, and an
+# unfinished record names it, this teardown is records-only like a reassigned
+# slot (the forced child-home preflight keeps refusing that second case, because
+# child cleanup trusts only the claim). Fresh Treehouse spawns use
+# fm_treehouse_slot_blocking_records before claiming a slot.
 # That scan alone cannot prove THIS record is the current owner, because the task
 # that took the slot next may leave no record it can reach - its own worker may
 # have exited and its record been cleaned up, or it may live in a home this
@@ -2373,6 +2382,23 @@ require_exclusive_worktree_slot_record() {
         [ -n "$other_path" ] || continue
         other_slot=$(canonical_existing_dir "$other_path") || continue
         [ "$other_slot" = "$slot" ] || continue
+        # A finished record with proof its work is saved elsewhere holds nothing
+        # in the slot: returning the slot cannot lose its work, so it is not a
+        # hazard and must not strand this record behind it.
+        if [ "$field" = worktree ] && fm_task_record_finished "$state_dir" "$other_id"; then
+          continue
+        fi
+        # The mirror case: THIS record is finished and proven, no claim says the
+        # slot is its own, and an unfinished record names it. That record may be
+        # the slot's live user, so this teardown is records-only and leaves the
+        # slot, its processes, and its copy alone, as for a reassigned slot.
+        if [ "$FM_TREEHOUSE_SLOT_OWNER" != mine ] \
+           && fm_task_record_finished "$record_state" "$record_id"; then
+          FM_TREEHOUSE_SLOT_OWNER_ID=$other_id
+          FM_TREEHOUSE_SLOT_OWNER_HOME=$(dirname "$state_dir")
+          echo "warning: task $record_id is finished and its recorded worktree $slot is still named by unfinished task $other_id; $record_id's cleanup is records-only and leaves that slot, its processes, and its copy untouched." >&2
+          return "$TEARDOWN_SLOT_REASSIGNED_RC"
+        fi
         echo "REFUSED: task $record_id's recorded worktree $slot is also task $other_id's recorded $field." >&2
         echo "Returning that pool slot would kill $other_id's processes and reset its copy, so nothing was changed - not even with --force." >&2
         echo "Reconcile whichever record is wrong (bin/fm-crew-state.sh $record_id; bin/fm-crew-state.sh $other_id), then re-run teardown." >&2
@@ -2385,7 +2411,18 @@ require_exclusive_worktree_slot_record() {
 require_exclusive_task_worktree_slot() {
   local slot
   slot=$(teardown_live_slot_path) || return 0
-  require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot"
+  local rc=0
+  require_exclusive_worktree_slot_record "$META" "$ID" "$STATE" "$slot" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    "$TEARDOWN_SLOT_REASSIGNED_RC")
+      TEARDOWN_SLOT_REASSIGNED=1
+      TEARDOWN_SLOT_REASSIGNED_TO=$FM_TREEHOUSE_SLOT_OWNER_ID
+      TEARDOWN_SLOT_REASSIGNED_HOME=$FM_TREEHOUSE_SLOT_OWNER_HOME
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 # Positive slot ownership, read from the claim the task that took the slot wrote
