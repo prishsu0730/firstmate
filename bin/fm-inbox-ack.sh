@@ -15,11 +15,11 @@
 # ask rule stops on at every message (an ask match beats any allow rule).
 #
 # Safety: the inbox must be an existing real directory named `<task>.inbox`
-# whose handled/ is also a real directory; ids are digits only; the message
-# must be a regular file, not a symlink. Anything else is refused with exit 2
-# and nothing moves: every id is checked before the first one is moved. A
-# message already in handled/ is a quiet success, so a re-run is safe. A
-# message found nowhere is exit 1.
+# whose handled/ is also a real directory. Before any move, all ids must be
+# digits only, every existing source or handled entry a regular non-symlink
+# file, and no id present in both places; violations exit 2 without moving.
+# A message already in handled/ succeeds. A message found nowhere gives exit
+# 1; other valid messages still move.
 set -u
 
 die() { printf 'fm-inbox-ack: %s\n' "$*" >&2; exit 2; }
