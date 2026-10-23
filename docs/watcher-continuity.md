@@ -225,6 +225,8 @@ If a durable row arrived after the announcement, the arm opens a fresh pending d
 The one exception is a Claude Stop auto-arm whose ledger proves that same generation was already delivered as a rewake to the same live session.
 The hook hands that generation to the ordinary arm or to the supervision host's park, whose watcher cycles inherit it.
 That re-arm keeps the generation announced and waits, so an acknowledgement the session cannot run produces one notice rather than a rewake on every Stop.
+A Codex foreground checkpoint skips the announced-episode reopen transition, so an already-announced generation stays announced while the checkpoint continues its bounded supervision.
+Its ordinary arm check still announces a never-announced generation, including one made pending by a durable queue append during the checkpoint.
 
 ### Generation reuse
 

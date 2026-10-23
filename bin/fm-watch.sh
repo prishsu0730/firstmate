@@ -2666,7 +2666,9 @@ recovery_already_delivered() {
   fm_recovery_marker_read "$WATCHER_DOWNTIME_MARKER" || return 1
   [ "$FM_RECOVERY_MARKER_TOKEN" = "announced:downtime:$FM_WATCH_DELIVERED_RECOVERY" ]
 }
-if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] && ! recovery_already_delivered; then
+if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] \
+  && [ "${FM_WATCH_FOREGROUND_CHECKPOINT:-0}" != 1 ] \
+  && ! recovery_already_delivered; then
   if ! fm_recovery_marker_reopen_announced "$WATCHER_DOWNTIME_MARKER"; then
     echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
     exit 1
