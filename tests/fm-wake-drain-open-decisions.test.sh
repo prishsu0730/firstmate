@@ -282,9 +282,30 @@ test_full_listing_is_read_only_and_bounded() {
   grep -F 'choose a REST or RPC endpoint' "$out" >/dev/null || fail "drain after listing did not present the appended decision"
 }
 
+test_full_listing_exceeds_ordinary_byte_cap() {
+  local dir state out i
+  dir=$(make_case full-listing-cap)
+  state="$dir/state"
+  out="$dir/drain.out"
+  for i in $(seq 1 30); do
+    printf 'needs-decision [key=api-shape]: decision number %02d with a deliberately descriptive explanation\n' "$i" > "$state/task$i.status"
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  grep -F 'task30' "$out" >/dev/null || fail "full listing omitted later decisions beyond the ordinary byte cap"
+  if grep -F 'more omitted (byte cap)' "$out" >/dev/null; then
+    fail "full listing reported omitted decisions despite its full-list contract"
+  fi
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "ordinary drain failed"
+  grep -F 'more omitted (byte cap)' "$out" >/dev/null || fail "ordinary drain no longer applies its byte cap"
+  pass "full listing includes decisions beyond the ordinary drain byte cap"
+}
+
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
 test_full_listing_is_read_only_and_bounded
+test_full_listing_exceeds_ordinary_byte_cap
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_later_unrelated_terminal_line_does_not_close_it
