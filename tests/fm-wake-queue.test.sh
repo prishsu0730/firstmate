@@ -453,7 +453,7 @@ test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms() {
   printf 'mate\n' > "$sub/.fm-secondmate-home"
   printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
     "$sub" > "$state/mate.meta"
-  printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\n' > "$sub/state/worker.meta"
+  printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\nremote_host=lab-host\n' > "$sub/state/worker.meta"
   : > "$sub/state/.wake-queue"
   now=$(date +%s)
   touch -t "$(date -r $((now - 3000)) +%Y%m%d%H%M.%S)" "$sub/state/.last-watcher-beat"
