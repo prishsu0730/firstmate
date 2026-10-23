@@ -374,7 +374,7 @@ SECONDMATE_LIVENESS_MAX_ATTEMPTS=${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-}
 case "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_MAX_ATTEMPTS=3 ;; esac
 SECONDMATE_LIVENESS_WINDOW_SECS=${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-}
 case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WINDOW_SECS=3600 ;; esac
-# A crew that declared a pause is idling on a known external wait, so its stale
+# A crew that declared a pause is idling on a known wait, so its stale
 # pane is absorbed rather than wedge-escalated.
 # A captain-held or paused crew whose agent has confidently exited uses the same
 # bounded cadence, while a live or ambiguously read agent surfaces on first sight
@@ -382,10 +382,9 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # declaration alone, because its endpoint liveness is deliberately never read
 # (pause_state_class owns that split).
 # An undated `paused:` wait whose reason says it waits on main / firstmate is owed
-# by the supervisor, not the outside world, so it re-surfaces after MAIN_WAIT_SECS
-# (one hour; status_pause_recheck_secs owns it) and
-# repeats on that gap, never every tick.
-# These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
+# by the supervisor, not the outside world; status_pause_recheck_secs owns its
+# shorter initial and repeat gap, never every tick.
+# Other cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten wait cannot rot
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
@@ -1881,9 +1880,9 @@ captain_call_declaration() {  # <task> <call-identity>
 }
 
 # 0 when <declaration> has already been alarmed for this window inside the
-# current PAUSE_RESURFACE_SECS. A pure read: recording an alarm is the caller's,
+# current gap selected by status_pause_recheck_secs. A pure read: recording an alarm is the caller's,
 # so the throttle is never advanced by a sighting it just absorbed.
-stale_wait_throttled() {  # <window-key> <declaration>
+stale_wait_throttled() {  # <window-key> <declaration> [status-line]
   local throttle="$STATE/.paused-resurfaced-$1" repeat_secs
   repeat_secs=$(status_pause_recheck_secs "${3-}" "$PAUSE_RESURFACE_SECS")
   [ "$(cat "$throttle" 2>/dev/null || true)" = "$2" ] \
