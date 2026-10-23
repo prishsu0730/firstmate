@@ -397,7 +397,7 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
     bytes=$(( ${#line} + 1 ))
-    if [ "$OPEN_DECISIONS_FULL" != true ] && [ $((used + bytes)) -gt "$global_bytes" ]; then
+    if [ $((used + bytes)) -gt "$global_bytes" ]; then
       omitted=$((omitted + 1))
       continue
     fi
