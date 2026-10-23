@@ -11,6 +11,13 @@
 # Claude session id below matches the id recorded beside a live lock. Neither
 # signal ever fails open: no id, no sidecar, an untrusted id, or a different
 # recorded id leaves the ancestry verdict exactly as it was.
+#
+# A third, read-only question sits beside them: is a live holder the process
+# Firstmate launched for this home? fm_session_lock_holder_launched answers it
+# from the home's recorded launch endpoint (the pane pids the caller resolves),
+# with conservative detached-session exceptions documented at the helper.
+# A holder's name or working directory alone never proves endpoint ownership.
+# It only classifies: nothing here refuses, reclaims, or kills.
 # This file is sourced by scripts and has no side effects on source.
 
 # Cursor process identity is NOT expressible as a command-name pattern and is
@@ -289,6 +296,62 @@ EOF
   fm_harness_pid_alive "$lock_pid"
 }
 
+# True when pid $1 is pid $2 or a descendant of it, walking the holder's own
+# parent chain (up to 16 hops, the same bound and `ps -o ppid=` read as the
+# harness walk above). Pure ancestry, no harness-name test: the endpoint pane
+# process is a shell, not a harness. An unreadable chain or one that ends
+# without meeting $2 is false.
+fm_session_lock_pid_descends_from() {  # <pid> <ancestor-pid>
+  local pid=$1 ancestor=$2
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  case "$ancestor" in ''|*[!0-9]*) return 1 ;; esac
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
+    [ "$pid" = "$ancestor" ] && return 0
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -ge 1 ] || return 1
+  done
+  return 1
+}
+
+# Was live holder pid $1 launched into this home's recorded endpoint? $2 is the
+# whitespace-separated pane pids the caller resolved from that record. Returns 0
+# when the holder is one of them or descends from one, 1 when none is in its
+# ancestry and no detached-session safeguard applies, and 2 for unknown.
+# Optional state dir $3 enables those safeguards: existing self-ownership or a
+# recorded session id with a Claude-shaped holder keeps the verdict unknown.
+# A recycled Claude background helper chain can lose pane ancestry while the
+# legitimate holder stays alive; absence of ancestry alone must not alarm.
+# Missing endpoint evidence or an unreadable holder command with a recorded id
+# also returns unknown, preserving the caller's generic live-owner refusal.
+# Regression coverage: tests/fm-session-lock-foreign-holder.test.sh.
+fm_session_lock_holder_launched() {  # <holder-pid> <endpoint-pids> [<state>]
+  local holder=$1 endpoints=${2:-} state=${3:-} endpoint known=0 comm args
+  for endpoint in $endpoints; do
+    case "$endpoint" in ''|*[!0-9]*) continue ;; esac
+    known=1
+    fm_session_lock_pid_descends_from "$holder" "$endpoint" && return 0
+  done
+  [ "$known" -eq 1 ] || return 2
+  if [ -n "$state" ]; then
+    fm_session_lock_owned_by_self "$state" && return 2
+    if fm_session_lock_recorded_session_id "$state" >/dev/null; then
+      comm=$(ps -o comm= -p "$holder" 2>/dev/null) || return 2
+      args=$(ps -o args= -p "$holder" 2>/dev/null)
+      if fm_harness_process_matches "$comm" "$args" && [ "$FM_HARNESS_IS_CLAUDE" -eq 1 ]; then
+        return 2
+      fi
+    fi
+  fi
+  return 1
+}
+
+# One-line command of pid $1 for a diagnostic: `ps -o args=` folded onto a
+# single bounded line, or empty when the process is gone.
+fm_session_lock_holder_command() {  # <pid>
+  ps -o args= -p "$1" 2>/dev/null | LC_ALL=C tr '\t\r\n' '   ' | cut -c1-200
+}
+
 # True when state dir $1 records a live verified harness outside this process's
 # contiguous harness ancestry that was not recorded by this same trusted Claude
 # session. Sets FM_SESSION_LOCK_FOREIGN_OWNER_PID for a diagnostic caller.
@@ -325,6 +388,13 @@ EOF
 #   FM_LOCK_INSPECT_STATE         free|held|stale|unreadable|unknown
 #   FM_LOCK_INSPECT_PID           recorded pid, or empty
 #   FM_LOCK_INSPECT_LIVE_HARNESS  true|false|unknown
+#   FM_LOCK_INSPECT_HOME_LAUNCHED true|false|unknown
+#
+# HOME_LAUNCHED answers only for a held lock and only when the caller passes the
+# home's recorded endpoint pane pids as $2: true when the holder is the process
+# Firstmate launched for the home, false when it is a foreign holder outside that
+# endpoint, unknown otherwise. It never changes STATE, so a foreign holder still
+# reads as held and callers that pass no endpoint see exactly the old answer.
 #
 # held: the recorded pid is a live verified harness.
 # stale: the recorded pid is gone.
@@ -335,8 +405,12 @@ EOF
 FM_LOCK_INSPECT_STATE=unknown
 FM_LOCK_INSPECT_PID=
 FM_LOCK_INSPECT_LIVE_HARNESS=unknown
-fm_session_lock_inspect() {  # <state>
-  local state=$1 lock pid
+# shellcheck disable=SC2034 # Output global, read by lock status.
+FM_LOCK_INSPECT_HOME_LAUNCHED=unknown
+fm_session_lock_inspect() {  # <state> [<endpoint-pids>]
+  local state=$1 endpoints=${2:-} lock pid launched_rc
+  # shellcheck disable=SC2034 # Output global, read by lock status.
+  FM_LOCK_INSPECT_HOME_LAUNCHED=unknown
   # shellcheck disable=SC2034 # Output globals, read by lock status and inbox ready.
   FM_LOCK_INSPECT_STATE=unknown
   # shellcheck disable=SC2034 # Output globals, read by lock status and inbox ready.
@@ -370,6 +444,15 @@ fm_session_lock_inspect() {  # <state>
     if fm_harness_pid_alive "$pid"; then
       FM_LOCK_INSPECT_STATE=held
       FM_LOCK_INSPECT_LIVE_HARNESS=true
+      launched_rc=0
+      fm_session_lock_holder_launched "$pid" "$endpoints" "$state" || launched_rc=$?
+      if [ "$launched_rc" -eq 0 ]; then
+        # shellcheck disable=SC2034 # Output global, read by lock status.
+        FM_LOCK_INSPECT_HOME_LAUNCHED=true
+      elif [ "$launched_rc" -eq 1 ]; then
+        # shellcheck disable=SC2034 # Output global, read by lock status.
+        FM_LOCK_INSPECT_HOME_LAUNCHED=false
+      fi
     else
       FM_LOCK_INSPECT_STATE=unknown
       FM_LOCK_INSPECT_LIVE_HARNESS=false

@@ -982,7 +982,9 @@ The text is static and never executed or expanded; secondmate charters never tak
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, scouts, and secondmates, including relaunches.
-With no file, ambient inheritance remains unfiltered: selected harness markers are cleared, while the provider, long-lived terminal daemon, and shell initialization determine which other variables reach the worker.
+With no file, ambient inheritance remains unfiltered apart from Firstmate's launch assignments and explicit clearing of selected harness markers and foreign secondmate state.
+Secondmate launches and relaunches explicitly select their own operational home and clear inherited relocation overrides, secondary home pointers, and per-run startup, timing, guard-bypass, and task state, whether the allowlist is absent or enabled.
+The provider, long-lived terminal daemon, and shell initialization determine which other variables reach the worker.
 
 Do not assume every worker inherits the invoking Firstmate process's current environment.
 The file is inherited into secondmate homes through the [primary-authoritative configuration contract](../.agents/skills/secondmate-provisioning/SKILL.md).
@@ -1040,6 +1042,7 @@ The filter runs at the worker command boundary, after the terminal daemon and pa
 This is not a sandbox: it cannot revoke same-user access to credential files, prevent tools or later shells from loading credentials again, or isolate processes from the same user's other processes.
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh).
+[`tests/fm-spawn-secondmate-env-isolation.test.sh`](../tests/fm-spawn-secondmate-env-isolation.test.sh) covers secondmate home isolation under a polluted pane environment for Codex and Claude, with the allowlist absent and enabled.
 
 ### Compact adviser setting
 

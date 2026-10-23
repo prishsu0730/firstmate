@@ -22,9 +22,11 @@
 # (secondmate ledger-first publish of a child done). A ship `done:` is not
 # accepted while the named head exists only in the worker's disposable copy.
 # The check tests that head, not whether some branch moved. In no-mistakes
-# mode the pre-validation `done: {summary}` is the pipeline handoff and is
-# not gated; only the later CI-ready `done: PR <url> checks green` is, or on a
-# Gerrit project the later `done: PR <change url> published for review`. The
+# mode a worker runs /no-mistakes itself, so there is no ungated handoff
+# `done: {summary}`: only the CI-ready `done: PR <url> checks green` is
+# accepted, or on a Gerrit project `done: PR <change url> published for review`;
+# no-mistakes and direct-PR done notes naming no PR URL are refused with
+# mode-specific recovery advice, while local-only needs no URL. The
 # named head is the worker copy's HEAD, except that a done naming the task's
 # recorded pr= passes when the forge holds that head: a forge-reported
 # pr_head= in no-mistakes mode, or a recorded merge
@@ -436,9 +438,7 @@ This project's review server is Gerrit: it has no pull requests and no forge CI 
 Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and skip nothing else: \`review\`, \`test\`, \`document\`, and \`lint\` are the whole point of the run.
 Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate.
-That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
+When you believe it is complete and committed, run /no-mistakes yourself; do not append a \`done:\` before the run, because a \`done:\` that names no published change is refused.
 
 EOF
       fm_nm_driving_block "$forge"
@@ -494,9 +494,8 @@ EOF
 Delivery contract: mode=no-mistakes
 Ship branch: $branch
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
-That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
+When you believe it is complete and committed, run /no-mistakes yourself; the pipeline owns the push, so never push from this copy.
+Do not append a \`done:\` before the run: a \`done:\` that names no PR URL is refused.
 ${nm_base}
 EOF
       fm_nm_driving_block "$forge"
@@ -547,17 +546,16 @@ fm_dod_note_reports_published_change() {  # <note>
 }
 
 # 0 when this ship done: is one the named-head gate must accept or refuse.
-# no-mistakes pre-validation done: is the pipeline handoff and is not gated.
-# Empty mode is treated as no-mistakes, the unregistered-project default.
+# Every ship done: in a supported mode is gated; fm_dod_accept_ship_done
+# owns the acceptance contract. Empty mode is treated as no-mistakes,
+# the unregistered-project default.
 fm_dod_should_gate_ship_done() {  # <kind> <mode> <line>
   local note
   [ "$1" = ship ] || return 1
   [ "$(status_line_verb "$3")" = "done" ] || return 1
   note=$(status_line_note "$3")
   case "$2" in
-    direct-PR|local-only) return 0 ;;
-    no-mistakes|'')
-      fm_dod_note_reports_ci_ready "$note" || fm_dod_note_reports_published_change "$note" ;;
+    direct-PR|local-only|no-mistakes|'') return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -689,7 +687,8 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, or otherwise when its named
 # head - the worker copy's HEAD - is reachable outside that disposable copy. A
-# published-for-review report that names no Gerrit change is refused.
+# no-mistakes or direct-PR claim must name a PR URL; a published-for-review
+# report must name a Gerrit change. Local-only requires no URL.
 # There is no free-text SHA scan: a SHA that happens to appear in the note is
 # not the named head. 1 when
 # the claim is refused; stdout then holds a one-line reason and no other
@@ -699,10 +698,22 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
   local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
+  url=
   if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
     && fm_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
     return 0
   fi
+  case "$mode" in
+    no-mistakes|direct-PR|'')
+      if [ -z "$url" ] && ! fm_dod_note_reports_published_change "$(status_line_note "$line")"; then
+        if [ "$mode" = direct-PR ]; then
+          printf '%s\n' "no PR link yet: push your branch and open a PR, then report done: PR <url>"
+        else
+          printf '%s\n' "no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green"
+        fi
+        return 1
+      fi ;;
+  esac
   if [ -z "$wt" ] || [ ! -d "$wt" ]; then
     printf '%s\n' "named head cannot be verified: worktree missing"
     return 1
