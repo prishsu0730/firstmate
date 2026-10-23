@@ -1104,7 +1104,8 @@ secondmate_liveness_tick() {
           reason="check: secondmate $id auto-relaunched after $FM_SM_LIVE_CAUSE ($FM_SM_LIVE_WHERE)"
           notify_key="secondmate-relaunch-$id-$now"
         elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
-          err=$FM_SM_LIVE_REASON
+          reason="check: secondmate $id auto-relaunch skipped: $FM_SM_LIVE_REASON"
+          notify_key="secondmate-relaunch-skipped-$id-$now"
         else
           reason="check: secondmate $id auto-relaunch failed after $FM_SM_LIVE_CAUSE: $(fm_sm_live_first_line "$FM_SM_LIVE_OUT")"
           notify_key="secondmate-relaunch-failed-$id-$now"

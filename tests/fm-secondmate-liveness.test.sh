@@ -439,6 +439,13 @@ test_timed_relaunch_bounds_its_wait_on_the_relaunch_lock() {
       if fm_secondmate_liveness_relaunch "$2" sm1 1; then rc=0; else rc=$?; fi
       printf "%s|%s|%s|%s" "$rc" "$FM_SM_LIVE_STATUS" "$((SECONDS - start))" "$FM_SM_LIVE_REASON"' \
       _ "$ROOT" "$w/home/state/sm1.meta" 2>&1)
+  PATH="$tmuxfb:$fb:$BASE_PATH" TMUX='' FM_BACKEND=tmux FM_HOME="$w/home" \
+    FM_TEST_PANE_CMD=missing FM_TMUX_CALL_LOG="$log" \
+    bash -c '. "$1/bin/fm-watch.sh"
+      SECONDMATE_LIVENESS_TIMEOUT=1
+      wake() { printf "%s\n" "$1" > "$FM_HOME/wake-delivered"; }
+      secondmate_liveness_tick' _ "$ROOT" \
+    || fail "watcher failed to report a skipped relaunch"
   kill "$holder" 2>/dev/null || true
   wait "$holder" 2>/dev/null || true
 
@@ -452,6 +459,12 @@ test_timed_relaunch_bounds_its_wait_on_the_relaunch_lock() {
   assert_not_contains "$(cat "$log")" "kill-window" "a timed relaunch that never got the relaunch lock must not kill"
   [ ! -s "$w/home/state/.secondmate-relaunch-sm1" ] \
     || fail "a relaunch skipped on the lock bound must not spend attempt budget: $(cat "$w/home/state/.secondmate-relaunch-sm1")"
+  assert_grep 'secondmate-relaunch-skipped-sm1-' "$w/home/state/.wake-queue" \
+    "watcher must queue a durable notification for the skipped mate"
+  assert_grep "check: secondmate sm1 auto-relaunch skipped: relaunch lock $w/home/state/.secondmate-relaunch.lock still held by pid $holder after 1s; endpoint left missing" \
+    "$w/home/state/.wake-queue" "queued notification must name the mate and lock blocker"
+  assert_grep 'check: secondmate sm1 auto-relaunch skipped:' "$w/home/wake-delivered" \
+    "watcher must deliver the queued skip outcome"
   pass "relaunch: a timed relaunch skips instead of waiting past its bound on a held relaunch lock"
 }
 
