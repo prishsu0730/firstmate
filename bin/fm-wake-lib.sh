@@ -1189,12 +1189,76 @@ fm_lock_note_holder() {  # <lockdir>
   FM_LOCK_OWNER_DIR=
 }
 
+# Handles a recovery mutex that is already taken: waits out a live holder (1),
+# preserves one that cannot be proven dead (2), or reclaims a dead one and takes
+# it. Returns 0 only when this caller now owns <lockdir>.recovery.
+fm_lock_resolve_taken_recovery() {  # <steal-lock> <observed-pid> <current-pid>
+  local lockdir=$1 pid=$2 current=$3 recovery="$1.recovery" recovery_owner rc recovery_pid recovery_target
+  recovery_pid=$(cat "$recovery/pid" 2>/dev/null || true)
+  FM_LOCK_OWNER_DIR=
+  if [ ! -e "$recovery" ] && [ ! -L "$recovery" ]; then
+    FM_LOCK_HELD_PID=$pid
+    [ -w "$(dirname "$recovery")" ] && return 1
+    fm_lock_refuse_recovery "$recovery"
+    return 2
+  fi
+  if [ -L "$recovery" ]; then
+    recovery_target=$(readlink "$recovery" 2>/dev/null || true)
+    recovery_owner=$(fm_lock_link_owner "$recovery" 2>/dev/null || true)
+    if [ -n "$recovery_target" ] && [ -n "$recovery_owner" ] \
+      && [ ! -e "$recovery_owner" ] && [ ! -L "$recovery_owner" ]; then
+      if [ "$(readlink "$recovery" 2>/dev/null || true)" = "$recovery_target" ]; then
+        rm -f "$recovery" 2>/dev/null || true
+      fi
+      FM_LOCK_HELD_PID=$pid
+      return 1
+    fi
+  fi
+  if [ -n "$recovery_pid" ] && [ "$recovery_pid" != "$current" ] \
+    && fm_pid_alive "$recovery_pid"; then
+    FM_LOCK_HELD_PID=$recovery_pid
+    return 1
+  fi
+  if fm_lock_mid_acquire_is_fresh "$recovery" "$recovery_pid"; then
+    FM_LOCK_HELD_PID=$recovery_pid
+    return 1
+  fi
+  case "$recovery_pid" in
+    ''|*[!0-9]*|0) ;;
+    *)
+      if [ "$recovery_pid" != "$current" ] && kill -0 -"$recovery_pid" 2>/dev/null; then
+        FM_LOCK_HELD_PID=$recovery_pid
+        return 1
+      fi
+      ;;
+  esac
+  if [ -n "$recovery_pid" ] && [ "$recovery_pid" = "$current" ]; then
+    fm_lock_remove_path "$recovery" || true
+  else
+    if fm_lock_reclaim_dead_recovery "$recovery" "$recovery_pid" "$current"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [ "$rc" -eq 2 ]; then
+      FM_LOCK_HELD_PID=$pid
+      fm_lock_refuse_recovery "$recovery"
+      return 2
+    fi
+  fi
+  if ! fm_lock_try_create "$recovery"; then
+    fm_lock_note_holder "$recovery"
+    return 1
+  fi
+  return 0
+}
+
 # A dead <lock>.steal is recovered under the single fixed <lock>.steal.recovery
 # mutex, never a further .steal suffix, so recovery tiers stay bounded. A live
 # recovery holder or its surviving process group is waited out (returns 1);
 # 2 means only that recovery cannot proceed and the mutex is preserved.
 fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
-  local lockdir=$1 pid=$2 current=$3 recovery recovery_owner primary_owner cur rc recovery_pid recovery_target
+  local lockdir=$1 pid=$2 current=$3 recovery recovery_owner primary_owner cur rc
   if [ -n "$pid" ] && [ "$pid" = "$current" ]; then
     fm_lock_remove_path "$lockdir" || true
     if fm_lock_try_create "$lockdir"; then
@@ -1214,62 +1278,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
 
   recovery="$lockdir.recovery"
   if ! fm_lock_try_create "$recovery"; then
-    recovery_pid=$(cat "$recovery/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
-    if [ ! -e "$recovery" ] && [ ! -L "$recovery" ]; then
-      FM_LOCK_HELD_PID=$pid
-      [ -w "$(dirname "$recovery")" ] && return 1
-      fm_lock_refuse_recovery "$recovery"
-      return 2
-    fi
-    if [ -L "$recovery" ]; then
-      recovery_target=$(readlink "$recovery" 2>/dev/null || true)
-      recovery_owner=$(fm_lock_link_owner "$recovery" 2>/dev/null || true)
-      if [ -n "$recovery_target" ] && [ -n "$recovery_owner" ] \
-        && [ ! -e "$recovery_owner" ] && [ ! -L "$recovery_owner" ]; then
-        if [ "$(readlink "$recovery" 2>/dev/null || true)" = "$recovery_target" ]; then
-          rm -f "$recovery" 2>/dev/null || true
-        fi
-        FM_LOCK_HELD_PID=$pid
-        return 1
-      fi
-    fi
-    if [ -n "$recovery_pid" ] && [ "$recovery_pid" != "$current" ] \
-      && fm_pid_alive "$recovery_pid"; then
-      FM_LOCK_HELD_PID=$recovery_pid
-      return 1
-    fi
-    if fm_lock_mid_acquire_is_fresh "$recovery" "$recovery_pid"; then
-      FM_LOCK_HELD_PID=$recovery_pid
-      return 1
-    fi
-    case "$recovery_pid" in
-      ''|*[!0-9]*|0) ;;
-      *)
-        if [ "$recovery_pid" != "$current" ] && kill -0 -"$recovery_pid" 2>/dev/null; then
-          FM_LOCK_HELD_PID=$recovery_pid
-          return 1
-        fi
-        ;;
-    esac
-    if [ -n "$recovery_pid" ] && [ "$recovery_pid" = "$current" ]; then
-      fm_lock_remove_path "$recovery" || true
-    else
-      if fm_lock_reclaim_dead_recovery "$recovery" "$recovery_pid" "$current"; then
-        rc=0
-      else
-        rc=$?
-      fi
-      if [ "$rc" -eq 2 ]; then
-        FM_LOCK_HELD_PID=$pid
-        fm_lock_refuse_recovery "$recovery"
-        return 2
-      fi
-    fi
-    if ! fm_lock_try_create "$recovery"; then
-      fm_lock_note_holder "$recovery"
-      return 1
-    fi
+    fm_lock_resolve_taken_recovery "$lockdir" "$pid" "$current" || return "$?"
   fi
   recovery_owner=${FM_LOCK_OWNER_DIR:-}
 
