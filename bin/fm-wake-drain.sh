@@ -435,7 +435,9 @@ EOF
 print_unread_status_section() {
   local snapshot=${1:-} unread task line shown=0
 
-  if [ -n "$snapshot" ]; then
+  if [ "$OPEN_DECISIONS_READONLY" = true ]; then
+    open=$(scan_open_decisions "$STATE") || return 1
+  elif [ -n "$snapshot" ]; then
     unread=$(scan_unread_surface_snapshot "$STATE" "$snapshot") || return 1
   else
     unread=$(scan_unread_surface_lines "$STATE") || return 1

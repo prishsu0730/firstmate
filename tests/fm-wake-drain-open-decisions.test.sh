@@ -251,8 +251,23 @@ test_unchanged_decision_is_summarized_after_first_presentation() {
   pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
 }
 
+test_full_listing_does_not_advance_cursor() {
+  local dir state out cursor
+  dir=$(make_case readonly-listing)
+  state="$dir/state"
+  out="$dir/drain.out"
+  cursor="$state/.task1.open-decisions-cursor"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task1.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  [ ! -e "$cursor" ] || fail "full listing advanced the decision cursor"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after the listing failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "drain after listing did not present the decision"
+}
+
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
+test_full_listing_does_not_advance_cursor
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_later_unrelated_terminal_line_does_not_close_it
