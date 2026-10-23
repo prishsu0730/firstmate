@@ -366,6 +366,38 @@
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
 #   See docs/configuration.md for provider/Git setup and supported limits.
+#   On backend=orca the destination is an Orca terminal whose environment comes
+#   from the Orca app and shell startup, not this home, so a nonempty allowlist
+#   without the source below prints a stderr warning and launches unchanged.
+# Orca environment source (config/launch-env-tmux-session):
+#   Optional local file containing one exact tmux session name (letters, digits,
+#   underscores or hyphens). Only fresh Orca spawns use it; other backends are
+#   unchanged. It requires config/launch-env-allowlist and refuses without one,
+#   so tmux's automatic update-environment names (SSH_AUTH_SOCK) never ride
+#   along. Before allocation, each allowlisted name is read from that session's
+#   local environment (tmux -u show-environment -t =<session> <name>), never
+#   tmux's server-global or the invoking process's environment; -u keeps values
+#   intact under absent or C locales. A missing name, unreadable session, or
+#   malformed selector refuses before the Orca worktree or terminal exists,
+#   while an explicit -NAME record deliberately leaves that name unset. Launch
+#   keeps env -i and the operational floor, replaces destination expansion of
+#   allowlisted names with the snapshotted values, and sets
+#   GIT_CONFIG_NOSYSTEM=1 so a system credential helper cannot answer for the
+#   worker. Values are shell-quoted only in the owner-only staged launch file,
+#   never terminal input, and the pane deletes that file as sourcing starts,
+#   before the worker executes; a deletion failure refuses the worker launch and
+#   keeps the interactive shell, even with errexit set (a Bash 3.2 or dash
+#   errexit pane still exits if spawn reclaims the file in the instant between
+#   the pane's existence check and its source). Spawn waits up to 30
+#   seconds for that deletion; if the pane never ran the command or could not
+#   delete the file, or HUP, INT or TERM interrupts spawn first, spawn removes
+#   it unless the pane already did, refuses the worker launch, and leaves the
+#   Orca terminal open.
+#   The selector is not inherited into secondmate homes. This is not a
+#   filesystem sandbox; project and harness sandbox
+#   settings still own access to personal credential files.
+# Codex permission mode: docs/configuration.md owns config/codex-permission-mode.
+#
 # Claude permission mode (config/claude-permission-mode):
 #   One token selecting the permission flag every claude launch (ship, scout,
 #   secondmate, and relaunch) carries. Absent or `bypass` selects
@@ -671,6 +703,32 @@ case "$CODEX_APPROVAL_MODE" in
   approve-for-me) CODEX_APPROVAL_FLAG='--approve-for-me' ;;
   *) CODEX_APPROVAL_FLAG='--dangerously-bypass-approvals-and-sandbox' ;;
 esac
+# Resolve the opt-in Codex posture before any spawn or relaunch mutation.
+# docs/configuration.md owns config/codex-permission-mode and its limits.
+CODEX_PERMISSION_MODE=bypass
+if ! CODEX_PERM_PRESENT=$(fm_config_source_present "$CONFIG/codex-permission-mode"); then
+  exit 1
+fi
+if [ "$CODEX_PERM_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/codex-permission-mode" ] || [ ! -r "$CONFIG/codex-permission-mode" ]; then
+    echo "error: config/codex-permission-mode must be a readable regular file holding bypass or restricted" >&2
+    exit 1
+  fi
+  CODEX_PERMISSION_MODE=$(cat "$CONFIG/codex-permission-mode") || exit 1
+  case "$CODEX_PERMISSION_MODE" in
+  bypass | restricted) ;;
+  *)
+    echo "error: config/codex-permission-mode must contain bypass or restricted" >&2
+    exit 1
+    ;;
+  esac
+fi
+# Restricted replaces whichever approval flag was selected above, and the task
+# record reports it so approval failover never treats the launch as bypass.
+if [ "$CODEX_PERMISSION_MODE" = restricted ]; then
+  CODEX_APPROVAL_MODE=restricted
+  CODEX_APPROVAL_FLAG='--sandbox workspace-write --ask-for-approval on-request'
+fi
 # config/lavish-axi-host is the primary-owned per-machine address for the
 # shared Lavish server. Read it once per launch and refuse malformed values so
 # every worker reaches the same server instead of starting a second one.
