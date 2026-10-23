@@ -4,10 +4,6 @@
 # line, a nonzero exit, and no state change.
 set -u
 
-# The runner may source shared helpers while selecting/executing tests. This
-# standalone process must load them into its own shell.
-unset FM_TEST_LIB_SOURCED FM_TEST_FIXTURES_SOURCED
-
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
 
