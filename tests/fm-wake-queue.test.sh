@@ -452,7 +452,7 @@ test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms() {
   printf 'mate\n' > "$sub/.fm-secondmate-home"
   printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
     "$sub" > "$state/mate.meta"
-  printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\nremote_host=lab-host\n' > "$sub/state/worker.meta"
+  printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\n' > "$sub/state/worker.meta"
   : > "$sub/state/.wake-queue"
   : > "$sub/state/.last-watcher-beat"
   fm_touch_epoch "$(( $(date +%s) - 3000 ))" "$sub/state/.last-watcher-beat"
@@ -463,6 +463,8 @@ test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms() {
     || fail "a stopped idle mate left an alarm marker"
 
   # Stopped mate, but its worker window is live: the stale beat alarms.
+  printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\nremote_host=lab-host\n' \
+    > "$sub/state/worker.meta"
   watcher_down_leg "$dir" live-worker wake 'firstmate:fm-worker'
   [ "$(grep -c 'secondmate-watcher-down-mate-' "$state/.wake-queue" || true)" -eq 1 ] \
     || fail "the live-worker alarm did not publish exactly one parent notification"
