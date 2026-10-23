@@ -551,7 +551,9 @@ scope_fixture() {  # <name> [with-heading]
     printf '1. not a brief item, outside the Task\n'
     [ "$heading" = yes ] && printf '# Scope map\nWrite the map.\n'
   } > "$SCOPE_DATA/$SCOPE_ID/brief.md"
-  : > "$SCOPE_STATE/$SCOPE_ID.meta"
+  # The recorded PR head satisfies the named-head gate, so only the scope map decides.
+  SCOPE_DONE='done [at=1]: PR https://example.test/o/r/pull/1 checks green'
+  fm_write_meta "$SCOPE_STATE/$SCOPE_ID.meta" pr=https://example.test/o/r/pull/1 "pr_head=$SCOPE_SHA"
 }
 
 scope_accept() {  # <done line>
@@ -572,7 +574,7 @@ test_partial_scope_map_refuses_done() {
   local reason rc
   scope_fixture scope-partial
   printf 'I1: %s\n' "$SCOPE_SHA" > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
-  reason=$(scope_accept 'done [at=1]: implemented')
+  reason=$(scope_accept "$SCOPE_DONE")
   rc=$?
   [ "$rc" -eq 1 ] || fail "partial scope map accepted done: (exit $rc)"
   assert_contains "$reason" "I2 has no mapping" "refusal did not name the unmapped intent item"
@@ -584,7 +586,7 @@ test_partial_scope_map_refuses_done() {
 test_missing_scope_map_refuses_done() {
   local reason rc
   scope_fixture scope-absent
-  reason=$(scope_accept 'done [at=1]: implemented')
+  reason=$(scope_accept "$SCOPE_DONE")
   rc=$?
   [ "$rc" -eq 1 ] || fail "done: was accepted with no scope map (exit $rc)"
   assert_contains "$reason" "I1 has no mapping" "refusal did not name the first item"
@@ -599,8 +601,8 @@ test_full_scope_map_accepts_done() {
     printf -- '- `I2`: two.txt\n'
     printf 'S1: n/a - nothing to change for this constraint\n'
   } > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
-  scope_accept 'done [at=1]: implemented' >/dev/null \
-    || fail "full scope map refused done: $(scope_accept 'done [at=1]: implemented')"
+  scope_accept "$SCOPE_DONE" >/dev/null \
+    || fail "full scope map refused done: $(scope_accept "$SCOPE_DONE")"
   pass "a full scope map accepts done:"
 }
 
@@ -612,7 +614,7 @@ test_scope_map_ref_must_be_on_the_branch() {
     printf 'I2: %s\n' "$(git -C "$SCOPE_WT" rev-parse main)"
     printf 'S1: n/a\n'
   } > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
-  reason=$(scope_accept 'done [at=1]: implemented')
+  reason=$(scope_accept "$SCOPE_DONE")
   rc=$?
   [ "$rc" -eq 1 ] || fail "unchanged file and base commit were accepted (exit $rc)"
   assert_contains "$reason" "I1 maps to README.md" "an unchanged file was accepted as covering an item"
@@ -623,7 +625,7 @@ test_scope_map_ref_must_be_on_the_branch() {
 
 test_brief_without_scope_map_heading_is_not_gated() {
   scope_fixture scope-legacy no
-  scope_accept 'done [at=1]: implemented' >/dev/null \
+  scope_accept "$SCOPE_DONE" >/dev/null \
     || fail "a brief with no Scope map section was gated"
   pass "a brief without the Scope map section is not gated"
 }
