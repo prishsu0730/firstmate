@@ -481,7 +481,9 @@ print_open_decisions_section() {
   tab=$(printf '\t')
 
   OPEN_DECISIONS_PENDING=
-  if [ -n "$snapshot" ]; then
+  if [ "$OPEN_DECISIONS_READONLY" = true ]; then
+    open=$(scan_open_decisions "$STATE") || return 1
+  elif [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
   else
     open=$(scan_open_decisions_incremental "$STATE") || return 1
