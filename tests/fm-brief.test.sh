@@ -1403,6 +1403,28 @@ test_worker_role_scope
 # Rule 2 governs file edits rather than pool administration, so every crewmate
 # scaffold must prohibit the administrative act itself. The rule is emitted from
 # one shared string so the ship and scout copies cannot drift apart.
+test_ship_scaffold_carries_the_scope_map_section() {
+  local home id brief mode
+  home="$TMP_ROOT/scope-map-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-scope-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode "$mode" >/dev/null 2>&1 \
+      || fail "fm-brief.sh --mode $mode exited non-zero"
+    brief="$home/data/$id/brief.md"
+    assert_grep '# Scope map' "$brief" "$mode ship brief lacks the Scope map section"
+    assert_grep "bin/fm-scope-map.sh' items '$home/data/$id/brief.md'" "$brief" \
+      "$mode ship brief does not tell the worker how to list its items"
+    assert_grep "bin/fm-scope-map.sh' check '$home/data/$id/brief.md' '$home/data/$id/scope-map.md'" "$brief" \
+      "$mode ship brief does not tell the worker how to check its map"
+  done
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-scope-scout alpha --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh --scout exited non-zero"
+  assert_no_grep '# Scope map' "$home/data/brief-scope-scout/brief.md" \
+    "a scout brief was handed a scope map it never owes"
+  pass "ship scaffolds carry the Scope map section and scouts do not"
+}
+
 test_crewmate_scaffolds_forbid_pool_administration() {
   local home id brief mode ship_rule scout_rule
   home="$TMP_ROOT/pool-admin-home"
@@ -1502,3 +1524,4 @@ test_branch_prefix_is_refused_where_it_does_not_apply
 test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
+test_ship_scaffold_carries_the_scope_map_section

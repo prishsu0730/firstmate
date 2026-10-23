@@ -17,6 +17,9 @@
 # --base-branch; empty means the repository default. A named base is the branch
 # the worker starts from, never pushes to, and targets with its pull request, and
 # fm_base_branch_valid refuses it where no pull request carries the work.
+# Every ship `done:`, including the no-mistakes pre-validation handoff, is also
+# refused while its brief's scope map leaves an item uncovered
+# (fm_dod_accept_scope_map; bin/fm-scope-map-lib.sh owns the contract).
 # Callers of the gate are bin/fm-crew-state.sh (current-state done),
 # bin/fm-pr-check.sh (PR registration), and bin/fm-inactive-reconcile.sh
 # (secondmate ledger-first publish of a child done). A ship `done:` is not
@@ -116,6 +119,8 @@
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-nm-run-lib.sh"
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-brief-heading-lib.sh"
+# shellcheck source=bin/fm-scope-map-lib.sh
+. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-scope-map-lib.sh"
 
 fm_brief_worker_role() {  # <state-dir> <task-id> <code-root>
   local state=$1 task_id=$2 root=$3
@@ -683,6 +688,29 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
   [ "$mode" = local-only ] && fm_dod_ref_contains "$project" refs/heads "$sha"
 }
 
+# 0 unless a ship done: leaves an item of its brief uncovered by the task's
+# scope map. Only a brief carrying the "# Scope map" section is checked, and only
+# when the caller names the task (<state> and <id>); stdout then holds a one-line
+# reason on refusal.
+fm_dod_accept_scope_map() {  # <kind> <worktree> <line> <state> <id> <meta>
+  local kind=$1 wt=$2 line=$3 state=$4 id=$5 meta=$6 data brief problems
+  [ "$kind" = ship ] && [ "$(status_line_verb "$line")" = "done" ] || return 0
+  [ -n "$state" ] && [ -n "$id" ] || return 0
+  if [ -n "${FM_DATA_OVERRIDE:-}" ]; then
+    data=$FM_DATA_OVERRIDE
+  elif [ -n "${FM_HOME:-}" ]; then
+    data=$FM_HOME/data
+  else
+    data=$(dirname "$state")/data
+  fi
+  brief=$data/$id/brief.md
+  fm_scope_map_enforced "$brief" || return 0
+  problems=$(fm_scope_map_problems "$brief" "$(fm_scope_map_path "$data" "$id")" "$wt" \
+    "$(fm_dod_meta_value "$meta" base_branch)") && return 0
+  printf '%s\n' "scope map incomplete, so done is refused: $(printf '%s' "$problems" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
+  return 1
+}
+
 # 0 when <line> is not a ship done: to gate, when it names the task's recorded
 # PR whose head the forge holds, when it names a Gerrit change whose current
 # patch set carries the worker copy's HEAD tree, or otherwise when its named
@@ -697,6 +725,7 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
   local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit
+  fm_dod_accept_scope_map "$kind" "$wt" "$line" "$state" "$id" "$meta" || return 1
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   url=
   if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
