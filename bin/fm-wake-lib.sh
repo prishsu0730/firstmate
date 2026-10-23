@@ -1125,6 +1125,15 @@ fm_lock_holder_absent() {  # <pid> <current-pid>
   return 0
 }
 
+# Puts a quarantined holder record back unless something took its place, then
+# drops the quarantine directory.
+fm_lock_restore_quarantined_holder() {  # <holder> <quarantine>
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+    mv -- "$2/holder" "$1" 2>/dev/null || true
+  fi
+  rmdir "$2" 2>/dev/null || true
+}
+
 # Returns 0 after removing a recovery mutex whose holder and process group are
 # provably gone (or whose pid-less holder record is past the mid-acquire grace),
 # 1 when another process changed it first, and 2 when absence cannot be proven.
@@ -1153,10 +1162,7 @@ fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pi
   fi
   moved_pid=$(cat "$quarantine/holder/pid" 2>/dev/null || true)
   if [ "$moved_pid" != "$observed" ]; then
-    if [ ! -e "$holder" ] && [ ! -L "$holder" ]; then
-      mv -- "$quarantine/holder" "$holder" 2>/dev/null || true
-    fi
-    rmdir "$quarantine" 2>/dev/null || true
+    fm_lock_restore_quarantined_holder "$holder" "$quarantine"
     return 1
   fi
   case "$moved_pid" in
@@ -1166,10 +1172,7 @@ fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pi
     *) fm_lock_holder_absent "$moved_pid" "$current" || moved_pid=live ;;
   esac
   if [ "$moved_pid" = fresh ] || [ "$moved_pid" = live ]; then
-    if [ ! -e "$holder" ] && [ ! -L "$holder" ]; then
-      mv -- "$quarantine/holder" "$holder" 2>/dev/null || true
-    fi
-    rmdir "$quarantine" 2>/dev/null || true
+    fm_lock_restore_quarantined_holder "$holder" "$quarantine"
     return 1
   fi
   if [ "$holder" != "$recovery" ] && fm_lock_points_to_owner "$recovery" "$holder"; then
