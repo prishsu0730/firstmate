@@ -393,14 +393,13 @@ test_secondmate_dead_child_watcher_alarms_parent_until_it_recovers() {
   printf 'window=firstmate:fm-mate\nkind=secondmate\nharness=claude\nbackend=tmux\nhome=%s\n' \
     "$sub" > "$state/mate.meta"
   : > "$sub/state/.wake-queue"
-  now=$(date +%s)
-
   # (b) A fresh child beat with an empty queue is healthy.
   touch "$sub/state/.last-watcher-beat"
   watcher_down_leg "$dir" fresh quiet
 
   # (c) A stale beat while the mate is inside an active turn stays quiet.
-  touch -t "$(date -r $((now - 3000)) +%Y%m%d%H%M.%S)" "$sub/state/.last-watcher-beat"
+  : > "$sub/state/.last-watcher-beat"
+  fm_touch_epoch "$(( $(date +%s) - 3000 ))" "$sub/state/.last-watcher-beat"
   cat > "$dir/fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -444,7 +443,7 @@ SH
 # own watcher is gone, even with leftover worker records; the same stale beat
 # alarms once a worker in its home has a live endpoint.
 test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms() {
-  local dir state sub now
+  local dir state sub
   dir=$(make_case secondmate-watcher-down-stopped)
   state="$dir/state"
   sub="$dir/secondmate"
@@ -455,8 +454,8 @@ test_secondmate_stopped_idle_mate_stays_quiet_but_live_worker_alarms() {
     "$sub" > "$state/mate.meta"
   printf 'window=firstmate:fm-worker\nkind=ship\nharness=claude\nbackend=tmux\nremote_host=lab-host\n' > "$sub/state/worker.meta"
   : > "$sub/state/.wake-queue"
-  now=$(date +%s)
-  touch -t "$(date -r $((now - 3000)) +%Y%m%d%H%M.%S)" "$sub/state/.last-watcher-beat"
+  : > "$sub/state/.last-watcher-beat"
+  fm_touch_epoch "$(( $(date +%s) - 3000 ))" "$sub/state/.last-watcher-beat"
 
   # Stopped mate, leftover worker record whose window is gone: quiet.
   watcher_down_leg "$dir" stopped quiet ''
