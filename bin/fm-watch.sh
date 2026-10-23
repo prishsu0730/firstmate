@@ -149,6 +149,9 @@
 #                          the same verdict authorized recovery but the
 #                          relaunch itself failed; the attempt is ledgered and
 #                          counts toward the bound below
+#   check: secondmate <id> auto-relaunch skipped: <reason>
+#                          recovery was authorized but could not start; no
+#                          attempt is spent, and the reason names the blocker
 #   check: secondmate <id> auto-relaunch paused after <n> attempts in <s>s; ...
 #                          a mate that kept dying exceeded its bounded relaunch
 #                          budget and is parked until a probe reads it live
@@ -1059,8 +1062,9 @@ EOF
 # probe rules, the kill ordering, and the guarded relaunch). On a bounded
 # cadence each registered mate's recorded endpoint is probed once; only a
 # recovery-grade `dead` or `missing` verdict relaunches, every relaunch
-# (success or failure) becomes exactly one durable `check` wake row, and every
-# other verdict lands only in the triage log. The tick finishes every mate
+# (success, failure, or a skip after relaunch authorization) becomes exactly
+# one durable `check` wake row; inconclusive probe verdicts land only in the
+# triage log. The tick finishes every mate
 # before it wakes once on the first outcome, so one dead mate never delays
 # another's recovery; the drain surfaces every queued row. A mate that keeps
 # dying is parked after SECONDMATE_LIVENESS_MAX_ATTEMPTS ledgered attempts
