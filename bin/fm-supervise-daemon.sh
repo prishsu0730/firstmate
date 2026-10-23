@@ -103,6 +103,8 @@
 #                                   kinds.
 #          FM_STALE_ESCALATE_SECS   idle seconds before a stale pane escalates
 #                                   as a possible wedge (default 240)
+#          FM_MAIN_WAIT_SECS        seconds before an undated paused: wait on main/firstmate
+#                                   is rechecked (default 3600; fm-classify-lib.sh)
 #          FM_PAUSE_RESURFACE_SECS  seconds a declared wait stays declared,
 #                                   idle or busy, before it re-surfaces as a
 #                                   recheck (default 14400, four hours); an
@@ -1283,6 +1285,7 @@ housekeeping() {  # <state>
     marker_epoch=$(cat "$marker" 2>/dev/null || echo "$now")
     case "$marker_epoch" in ''|*[!0-9]*) marker_epoch=$now ;; esac
     age=$(( now - marker_epoch ))
+    pause_secs=$(status_pause_recheck_secs "$last" "${FM_PAUSE_RESURFACE_SECS:-$FM_PAUSE_RESURFACE_SECS_DEFAULT}")
     due="$state/.subsuper-pause-until-due-$key"
     until=
     bounded_until=0
@@ -1318,6 +1321,8 @@ housekeeping() {  # <state>
         elif [ -n "$last" ] && status_is_paused "$last"; then
           if [ "$bounded_until" -eq 1 ]; then
             pause_reason="paused ${age}s (awaiting external, the declared time is beyond the recheck cadence; confirm the wait still holds): $win"
+          elif status_paused_awaits_firstmate "$last"; then
+            pause_reason="paused ${age}s (waiting on main, the next move is firstmate's; act on it or answer the worker): $win"
           else
             pause_reason="paused ${age}s (awaiting external, recheck whether the wait still holds): $win"
           fi
