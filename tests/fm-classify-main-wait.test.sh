@@ -71,6 +71,10 @@ test_watcher_main_wait_sibling_cadences() (
   # shellcheck source=bin/fm-watch.sh
   . "$ROOT/bin/fm-watch.sh"
   wake() { :; }
+  wake || fail "test wake must return without exiting"
+  fm_wake_append() { printf '%s\n' "$*" >> "$state/alarms"; }
+  fm_wake_append stale test:fm-waiter probe
+  [ "$(cat "$state/alarms")" = 'stale test:fm-waiter probe' ] || fail "test wake recorder lost its arguments"
   key=test_fm-waiter
   for line in \
     "paused: waiting for main's go" \
@@ -87,7 +91,6 @@ test_watcher_main_wait_sibling_cadences() (
     [ "$whom" = "$expected" ] || fail "wrong dependency: $line"
     for age in 3500 3700; do
       set_mtime "$(( $(date +%s) - age ))" "$state/waiter.status"
-      fm_wake_append() { printf '%s\n' "$*" >> "$state/alarms"; }
       : > "$state/alarms"
       wedge_defer_wait test:fm-waiter "$state/since" working 600 "$record"
       if [ "$expected" = supervisor ] && [ "$age" -eq 3700 ]; then
