@@ -50,6 +50,11 @@ ACK_FINGERPRINTS=
 ACK_NOTICE_FINGERPRINTS=
 PRESENTATION_LOCK_TIMEOUT=${FM_STATUS_PRESENTATION_LOCK_TIMEOUT:-10}
 BRANCH_OUTCOMES_RC=0
+OPEN_DECISIONS_FULL=${FM_DRAIN_FULL_OPEN_DECISIONS:+true}
+OPEN_DECISIONS_FULL=${OPEN_DECISIONS_FULL:-false}
+OPEN_DECISIONS_READONLY=false
+OPEN_DECISIONS_PRESENTED="$STATE/.open-decisions-presented"
+OPEN_DECISIONS_PENDING=
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
 
 # --- per-actor consume (docs/watcher-continuity.md "Per-actor acknowledgement") --
@@ -228,7 +233,10 @@ case "${1:-}" in
     case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
     [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
     ;;
-  *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION]" >&2; exit 2 ;;
+  --all-open-decisions)
+    [ "$#" -eq 1 ] || { echo "wake drain: --all-open-decisions takes no other arguments" >&2; exit 2; }
+    ;;
+  *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --all-open-decisions]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -467,17 +475,29 @@ EOF
 # common case.
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
-  local output='' used=0 shown=0 omitted=0 bytes
+  local output='' used=0 shown=0 omitted=0 unchanged=0 bytes raw tab recorded=''
+  tab=$(printf '\t')
 
+  OPEN_DECISIONS_PENDING=
   if [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
   else
     open=$(scan_open_decisions_incremental "$STATE") || return 1
   fi
-  [ -n "$open" ] || return 0
+  [ -n "$open" ] || { OPEN_DECISIONS_PENDING=none; return 0; }
 
-  while IFS=$(printf '\t') read -r task key verb note; do
+  while IFS=$tab read -r task key verb note; do
     [ -n "$task" ] || continue
+    raw="$task$tab$key$tab$verb$tab$note"
+    # A decision already presented in an earlier drain and unchanged since is
+    # only counted; a new or edited one (any field differs) prints in full.
+    if [ "$OPEN_DECISIONS_FULL" != true ] && [ -f "$OPEN_DECISIONS_PRESENTED" ] \
+      && grep -Fxq -- "$raw" "$OPEN_DECISIONS_PRESENTED" 2>/dev/null; then
+      unchanged=$((unchanged + 1))
+      recorded="$recorded$raw
+"
+      continue
+    fi
     line="$task"
     [ "$key" = default ] || line="$line [key=$key]"
     line="$line $verb: $note"
@@ -488,6 +508,7 @@ print_open_decisions_section() {
     line=$FM_LINE_CAP_LINE
     bytes=$(( ${#line} + 1 ))
     if [ $((used + bytes)) -gt "$global_bytes" ]; then
+      # Not recorded as presented, so the next drain prints it.
       omitted=$((omitted + 1))
       continue
     fi
@@ -495,15 +516,29 @@ print_open_decisions_section() {
 "
     used=$((used + bytes))
     shown=$((shown + 1))
+    recorded="$recorded$raw
+"
   done <<EOF
 $open
 EOF
 
-  [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || return 0
-  printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
-  printf '%s' "$output" || return 1
-  if [ "$omitted" -gt 0 ]; then
-    printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+  # The presented record is replaced by the caller only after these bytes reach
+  # stdout; the listing mode never touches it.
+  if [ "$OPEN_DECISIONS_READONLY" != true ]; then
+    OPEN_DECISIONS_PENDING=$(mktemp "$STATE/.open-decisions-presented.XXXXXX") || return 1
+    printf '%s' "$recorded" > "$OPEN_DECISIONS_PENDING" || return 1
+  fi
+
+  [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || [ "$unchanged" -gt 0 ] || return 0
+  if [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ]; then
+    printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
+    printf '%s' "$output" || return 1
+    if [ "$omitted" -gt 0 ]; then
+      printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
+    fi
+  fi
+  if [ "$unchanged" -gt 0 ]; then
+    printf 'OPEN DECISIONS: %d unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions\n' "$unchanged" || return 1
   fi
   # Answerer-closes hint, printed at exactly the moment an answer gets written:
   # the send that answers a listed decision also closes it, so closure never
@@ -511,6 +546,26 @@ EOF
   # bin/fm-send.sh header).
   printf "OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'\n" || return 1
 }
+
+# Commit the presented record once the section's bytes reached stdout. "none"
+# means no decision is open, which clears the record so a reopened one prints.
+commit_open_decisions_presented() {
+  case "$OPEN_DECISIONS_PENDING" in
+    '') return 0 ;;
+    none) rm -f -- "$OPEN_DECISIONS_PRESENTED" ;;
+    *) mv -f -- "$OPEN_DECISIONS_PENDING" "$OPEN_DECISIONS_PRESENTED" ;;
+  esac
+  OPEN_DECISIONS_PENDING=
+}
+
+# Read-only listing of every open decision in full: it touches no wake row and
+# leaves the presented record alone, so it is safe to run any time.
+if [ "${1:-}" = --all-open-decisions ]; then
+  OPEN_DECISIONS_FULL=true
+  OPEN_DECISIONS_READONLY=true
+  print_open_decisions_section
+  exit $?
+fi
 
 # Print the RECORD DIVERGENCE section: every captain call whose two records
 # contradict each other - the status log says a key was resolved outright while
@@ -768,12 +823,14 @@ print_status_sections() {
   # leave the receipt behind so the next drain can recover the presentation.
   if ! command cat "$prepared"; then
     rm -f -- "$prepared"
+    [ -z "$OPEN_DECISIONS_PENDING" ] || [ "$OPEN_DECISIONS_PENDING" = none ] || rm -f -- "$OPEN_DECISIONS_PENDING"
     return 1
   fi
   if ! status_commit_presentation_snapshot "$STATE" "$acknowledged"; then
     rm -f -- "$prepared"
     return 1
   fi
+  commit_open_decisions_presented || true
   rm -f -- "$prepared"
 }
 

@@ -215,7 +215,44 @@ test_over_long_decision_note_is_capped_with_a_marker() {
   pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
 }
 
+test_unchanged_decision_is_summarized_after_first_presentation() {
+  local dir state out
+  dir=$(make_case unchanged)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task1.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first drain failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "first drain did not print the decision in full"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  if grep -F 'pick REST or RPC' "$out" >/dev/null; then
+    fail "an unchanged decision was re-printed in full: $(cat "$out")"
+  fi
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" | grep -F -- '--all-open-decisions' >/dev/null \
+    || fail "second drain is missing the unchanged summary line: $(cat "$out")"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "--all-open-decisions did not list the decision in full"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after the listing failed"
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" >/dev/null || fail "the read-only listing disturbed the presented record"
+
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "full-mode drain failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "full mode (session start) did not print the decision in full"
+
+  printf 'needs-decision [key=api-shape]: pick REST, RPC, or GraphQL\n' >> "$state/task1.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after a change failed"
+  grep -F 'pick REST, RPC, or GraphQL' "$out" >/dev/null || fail "a changed decision did not print in full again: $(cat "$out")"
+
+  printf 'needs-decision [key=second]: brand new\n' > "$state/task2.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after a new decision failed"
+  grep -F 'brand new' "$out" >/dev/null || fail "a new decision did not print in full"
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" >/dev/null || fail "the older decision was not summarized beside the new one"
+  pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
+}
+
 test_buried_decision_still_surfaces
+test_unchanged_decision_is_summarized_after_first_presentation
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_later_unrelated_terminal_line_does_not_close_it
