@@ -251,8 +251,8 @@ test_unchanged_decision_is_summarized_after_first_presentation() {
   pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
 }
 
-test_full_listing_does_not_advance_cursor() {
-  local dir state out cursor presented cursor_before presented_before
+test_full_listing_is_read_only_and_bounded() {
+  local dir state out cursor presented cursor_before presented_before probe bytes
   dir=$(make_case readonly-listing)
   state="$dir/state"
   out="$dir/drain.out"
@@ -269,10 +269,14 @@ test_full_listing_does_not_advance_cursor() {
   cp "$presented" "$presented_before"
 
   printf 'needs-decision [key=api-shape]: choose a REST or RPC endpoint\n' >> "$state/task1.status"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  probe="$dir/read-probe"
+  FM_OPEN_DECISIONS_READ_PROBE="$probe" FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
   grep -F 'choose a REST or RPC endpoint' "$out" >/dev/null || fail "full listing did not fold the appended decision"
   cmp -s "$cursor_before" "$cursor" || fail "full listing changed the durable decision cursor"
   cmp -s "$presented_before" "$presented" || fail "full listing changed the presented record"
+  bytes=$(awk -F '\t' 'END { print $2 + 0 }' "$probe")
+  [ "$bytes" -eq "$(printf 'needs-decision [key=api-shape]: choose a REST or RPC endpoint\n' | wc -c | tr -d ' ')" ] \
+    || fail "full listing read $bytes bytes instead of only the appended span"
 
   FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after the listing failed"
   grep -F 'choose a REST or RPC endpoint' "$out" >/dev/null || fail "drain after listing did not present the appended decision"
@@ -280,7 +284,7 @@ test_full_listing_does_not_advance_cursor() {
 
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
-test_full_listing_does_not_advance_cursor
+test_full_listing_is_read_only_and_bounded
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_later_unrelated_terminal_line_does_not_close_it

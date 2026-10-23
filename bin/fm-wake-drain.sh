@@ -480,7 +480,7 @@ print_open_decisions_section() {
 
   OPEN_DECISIONS_PENDING=
   if [ "$OPEN_DECISIONS_READONLY" = true ]; then
-    open=$(scan_open_decisions "$STATE") || return 1
+    open=$(scan_open_decisions_incremental "$STATE" true) || return 1
   elif [ -n "$snapshot" ]; then
     open=$(scan_open_decisions_snapshot "$STATE" "$snapshot") || return 1
   else
