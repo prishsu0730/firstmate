@@ -16,14 +16,12 @@
 #
 # Map: `<fm data>/<task-id>/scope-map.md`, one line per item, `KEY: ref ...`.
 # A ref is a commit SHA (7 to 40 hex characters) the branch carries beyond its
-# base, or a file path the branch changed against its base. `KEY: n/a <reason>`
-# says the item needs no change and keeps the reason where firstmate reads it.
+# base, or a file path the branch changed against its base.
 # This is a presence-and-resolution check, not a judge: it never reads whether a
 # change actually satisfies an item.
 #
-# When the worktree is not a readable git copy, or its base cannot be resolved
-# (a merged branch), refs are checked only as far as that allows; presence of a
-# line for every item is always required.
+# When the worktree is not a readable git copy, checking fails closed. When its
+# base cannot be resolved (a merged branch), refs are checked against HEAD.
 
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-brief-heading-lib.sh"
@@ -136,16 +134,23 @@ fm_scope_map_ref_resolves() {  # <worktree> <base> <ref>
 # A missing brief, a brief without items, or a brief that does not opt in is
 # complete by definition.
 fm_scope_map_problems() {  # <brief> <map> [<worktree> [<base-branch>]]
-  local brief=$1 map=$2 wt=${3:-} base_branch=${4:-} base='' refs=0 bad=0
+  local brief=$1 map=$2 wt=${3:-} base_branch=${4:-} base='' bad=0
   local key text entries ref value token
   fm_scope_map_enforced "$brief" || return 0
   local items
   items=$(fm_scope_map_items "$brief")
   [ -n "$items" ] || return 0
-  if [ -n "$wt" ] && git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
-    refs=1
-    base=$(fm_scope_map_base "$wt" "$base_branch")
+  if [ -z "$wt" ] || ! git -C "$wt" rev-parse --git-dir >/dev/null 2>&1; then
+    while IFS=$'\t' read -r key text; do
+      [ -n "$key" ] || continue
+      printf '%s\n' "$key cannot be checked without a git worktree ($text)"
+      bad=1
+    done <<EOF
+$items
+EOF
+    return 1
   fi
+  base=$(fm_scope_map_base "$wt" "$base_branch")
   entries=$(fm_scope_map_entries "$map")
   while IFS=$'\t' read -r key text; do
     [ -n "$key" ] || continue
@@ -155,15 +160,6 @@ fm_scope_map_problems() {  # <brief> <map> [<worktree> [<base-branch>]]
       bad=1
       continue
     fi
-    if printf '%s' "$value" | grep -Eiq '^n/a([[:space:]]*[-:][[:space:]]*|[[:space:]]+)[^[:space:]]'; then
-      continue
-    fi
-    if printf '%s' "$value" | grep -Eiq '^n/a$'; then
-      printf '%s\n' "$key says n/a without a reason ($text)"
-      bad=1
-      continue
-    fi
-    [ "$refs" = 1 ] || continue
     for token in $(printf '%s' "$value" | tr ',' ' '); do
       ref=$token
       if ! fm_scope_map_ref_resolves "$wt" "$base" "$ref"; then
@@ -186,7 +182,7 @@ $FM_SCOPE_MAP_HEADING
 Your \`done:\` is refused until every numbered or bulleted item under \`## Captain's intent\` and \`## Firstmate spec\` maps to a change on your branch.
 1. List the items and their keys: \`'$root/bin/fm-scope-map.sh' items '$data/$id/brief.md'\`
 2. Write \`$data/$id/scope-map.md\`, one line per item, like \`I1: <commit sha>\` or \`S2: bin/some-file.sh\`.
-   A ref is a commit your branch carries or a file your branch changed. Use \`S3: n/a <reason>\` only when an item truly needs no change; firstmate reads the reason.
+   Every item needs a commit your branch carries or a file your branch changed.
 3. Run \`'$root/bin/fm-scope-map.sh' check '$data/$id/brief.md' '$data/$id/scope-map.md'\` from your worktree and fix every line it prints before you report done.
 This is a presence check only; it does not judge whether a change satisfies an item.
 EOF

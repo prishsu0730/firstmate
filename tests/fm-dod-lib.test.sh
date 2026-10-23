@@ -599,7 +599,7 @@ test_full_scope_map_accepts_done() {
     printf 'I1: %s\n' "$SCOPE_SHA"
     # shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
     printf -- '- `I2`: two.txt\n'
-    printf 'S1: n/a - nothing to change for this constraint\n'
+    printf 'S1: two.txt\n'
   } > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
   scope_accept "$SCOPE_DONE" >/dev/null \
     || fail "full scope map refused done: $(scope_accept "$SCOPE_DONE")"
@@ -619,7 +619,7 @@ test_scope_map_ref_must_be_on_the_branch() {
   [ "$rc" -eq 1 ] || fail "unchanged file and base commit were accepted (exit $rc)"
   assert_contains "$reason" "I1 maps to README.md" "an unchanged file was accepted as covering an item"
   assert_contains "$reason" "I2 maps to" "a base commit was accepted as covering an item"
-  assert_contains "$reason" "S1 says n/a without a reason" "n/a without a reason was accepted"
+  assert_contains "$reason" "S1 maps to n/a" "an n/a mapping was accepted"
   pass "scope map refs must be commits or files on the branch"
 }
 
@@ -651,10 +651,24 @@ test_scope_map_cli_lists_and_checks() {
     fail "check passed a partial map"
   fi
   assert_grep "I2 has no mapping" "$TMP_ROOT/scope-cli.out" "check did not report the unmapped item"
-  printf 'I2: two.txt\nS1: n/a covered by I1\n' >> "$map"
+  printf 'I2: two.txt\nS1: two.txt\n' >> "$map"
   (cd "$SCOPE_WT" && "$ROOT/bin/fm-scope-map.sh" check "$brief" "$map") >/dev/null \
     || fail "check refused a full map"
   pass "fm-scope-map.sh lists items and checks the map"
+}
+
+test_scope_map_cli_refuses_without_git_worktree() {
+  local brief map
+  scope_fixture scope-no-worktree
+  brief=$SCOPE_DATA/$SCOPE_ID/brief.md
+  map=$SCOPE_DATA/$SCOPE_ID/scope-map.md
+  printf 'I1: one.txt\nI2: two.txt\nS1: two.txt\n' > "$map"
+  if "$ROOT/bin/fm-scope-map.sh" check "$brief" "$map" "$TMP_ROOT/not-a-repo" > "$TMP_ROOT/scope-no-worktree.out"; then
+    fail "check accepted mappings without a git worktree"
+  fi
+  assert_grep "cannot be checked without a git worktree" "$TMP_ROOT/scope-no-worktree.out" \
+    "check did not explain the missing git worktree"
+  pass "fm-scope-map.sh refuses when no git worktree is available"
 }
 
 test_scope_items_number_only_top_level_brief_items
@@ -665,5 +679,6 @@ test_scope_map_ref_must_be_on_the_branch
 test_brief_without_scope_map_heading_is_not_gated
 test_scope_map_only_gates_ship_done_lines
 test_scope_map_cli_lists_and_checks
+test_scope_map_cli_refuses_without_git_worktree
 
 echo "all fm-dod-lib tests passed"
