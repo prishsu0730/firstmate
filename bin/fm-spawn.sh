@@ -3160,7 +3160,12 @@ if [ "$KIND" = secondmate ]; then
     BRIEF="$DATA/$ID/brief.md"
   fi
 else
-  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  PROJ_DIR_RESOLVED=$(resolve_project_dir_arg "$PROJ")
+  if [ ! -d "$PROJ_DIR_RESOLVED" ]; then
+    echo "error: spawn refused: project directory '$PROJ' is not an existing directory; pass the project's folder path (for example projects/<name> or an absolute path), not a bare repo name" >&2
+    exit 1
+  fi
+  PROJ_ABS="$(cd "$PROJ_DIR_RESOLVED" && pwd)"
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
