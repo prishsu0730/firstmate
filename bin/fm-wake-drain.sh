@@ -509,7 +509,7 @@ print_open_decisions_section() {
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
     bytes=$(( ${#line} + 1 ))
-    if [ $((used + bytes)) -gt "$global_bytes" ]; then
+    if [ "$OPEN_DECISIONS_FULL" != true ] && [ $((used + bytes)) -gt "$global_bytes" ]; then
       # Not recorded as presented, so the next drain prints it.
       omitted=$((omitted + 1))
       continue
