@@ -120,6 +120,25 @@
 # retains the lock until the accepted merge authority is persisted against the
 # still-matching task metadata.
 #
+# A task that carries an allowed-file list (bin/fm-brief.sh --allowed-files)
+# has one more refusal: the live pull request's changed files, read at the head
+# this run just verified, must all be inside that list, and each file outside it
+# is named. The list is a private task record that no CI job or no-mistakes step
+# can read, so this guarded merge path is the one place the boundary can bind a
+# merge. bin/fm-file-boundary.sh owns the list and the comparison; a task with
+# no list never reaches it, so its merge is exactly what it was. A list that
+# cannot be checked on this forge or read at this time refuses rather than
+# passing, as does a recorded list that has gone missing. The refusal fires only
+# when the task being merged, or the task recorded for this pull request, has a
+# list: merging a pull request that another task with a boundary owns under a
+# task id that has none refuses, so naming the wrong id cannot skip the
+# boundary, while an unbounded pull request that no bounded task claims is
+# untouched. A task record in state/ that cannot be read refuses that same scan
+# instead of being skipped, because it might be the owner. A boundary whose
+# list, brief marker, and data directory are all gone is still found through the
+# state/<id>.file-boundary marker bin/fm-brief.sh writes, and refuses. Which pull request the task may merge stays the job of the
+# recorded pull request identity check below.
+#
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
 # URL, nor --sha or --match-head-commit because the head comes only from the
@@ -1089,6 +1108,67 @@ require_released_captain_hold() {
   esac
 }
 
+# The one file-boundary refusal, run after the live verification so the file
+# list is read at the head the merge is then bound to (FM_PR_MERGE_HEAD), and
+# before the away record is held so no forge read happens under that lock. It
+# applies to a task with a recorded boundary, and to a pull request that another
+# task with a boundary owns: bin/fm-file-boundary.sh recorded says which, and
+# exit 1 there means no boundary. A task with neither is not touched.
+require_file_boundary() {
+  local recorded_status=0 check_status=0 output probe other other_id other_status owner_status
+  # The checker resolves the same home and state directory this merge uses.
+  file_boundary() {
+    FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-file-boundary.sh" "$@"
+  }
+  # A pull request owned by another task that has a boundary is not merged under
+  # a task id that has none; that would skip the boundary by naming the wrong id.
+  # A task record that cannot be read refuses: it might be that owner, so it is
+  # not skipped. Only a record that was read and does not name this PR is.
+  for other in "$STATE"/*.meta; do
+    [ -e "$other" ] || [ -L "$other" ] || continue
+    other_id=${other##*/}
+    other_id=${other_id%.meta}
+    [ "$other_id" != "$ID" ] || continue
+    owner_status=0
+    if [ -f "$other" ] && [ -r "$other" ]; then
+      grep -qxF "pr=$URL" "$other" 2>/dev/null || owner_status=$?
+    else
+      owner_status=2
+    fi
+    case "$owner_status" in
+      0) ;;
+      1) continue ;;
+      *)
+        echo "error: refusing to merge $URL: the task record of $other_id cannot be read, so whether it owns this pull request and has a file boundary cannot be told: $other" >&2
+        return 1
+        ;;
+    esac
+    other_status=0
+    file_boundary recorded "$other_id" >/dev/null 2>&1 || other_status=$?
+    [ "$other_status" -eq 1 ] && continue
+    echo "error: refusing to merge $URL: it is bound to task $other_id, which has a file boundary; merge it as task $other_id" >&2
+    return 1
+  done
+  probe=$(file_boundary recorded "$ID" 2>&1) || recorded_status=$?
+  case "$recorded_status" in
+    0) ;;
+    1) return 0 ;;
+    *)
+      echo "error: refusing to merge $URL: the file boundary recorded for task $ID cannot be read" >&2
+      [ -z "$probe" ] || printf '%s\n' "$probe" >&2
+      return 1
+      ;;
+  esac
+  output=$(file_boundary check "$ID" --pr "$URL" --head "$FM_PR_MERGE_HEAD" 2>&1) \
+    || check_status=$?
+  if [ "$check_status" -ne 0 ]; then
+    printf 'error: refusing to merge %s: the file boundary recorded for task %s is not met\n' "$URL" "$ID" >&2
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf 'verified: %s\n' "$output" >&2
+}
+
 FM_PR_MERGE_AUTHORITY=
 # The authority read. bin/fm-merge-authority-lib.sh owns what the away-posture
 # record's presence means; this function owns what a merge run may do about it,
@@ -1377,6 +1457,7 @@ case "$PROVIDER" in
       fi
       exit 1
     fi
+    require_file_boundary || exit 1
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
@@ -1428,6 +1509,7 @@ case "$PROVIDER" in
     ;;
   gitlab)
     gitlab_verify_mergeable || exit 1
+    require_file_boundary || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;

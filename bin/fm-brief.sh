@@ -14,7 +14,7 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit> [--shape squash]] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit> [--shape squash]] [--allowed-files <file>] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
@@ -67,6 +67,25 @@
 # Definition of done then targets that branch with its pull request.
 # bin/fm-dod-lib.sh's fm_base_branch_valid owns which deliveries accept one.
 # Refused on --secondmate.
+# --allowed-files <file> gives a ship task its own file boundary: <file> holds
+# one repo-relative path or glob per line (blank lines and `#` comment lines are
+# ignored; an absolute path, a `..` segment, and a list with no entry are
+# refused). The normalized list is copied to data/<task-id>/allowed-files, which
+# bin/fm-file-boundary.sh owns reading and whose header owns the glob syntax,
+# and a "# Allowed files" section tells the worker to run that checker before it
+# reports done or pushes, and to stop with a blocked status naming any file
+# outside the list. The section opens with a `File boundary: required` line, so
+# a list that is later lost is found missing instead of read as no boundary
+# (bin/fm-file-boundary.sh owns that rule). A second marker,
+# state/<task-id>.file-boundary, is written beside the task's other state, so a
+# data directory lost whole still reads as a lost boundary. The records are not
+# written into state/<task-id>.meta because bin/fm-spawn.sh publishes that file
+# at spawn and owns its field set. A marker already present for the task id is
+# refused with or without the flag, because a boundary recorded for an earlier
+# task of that id must not be silently kept or dropped: trash it by hand once
+# that task is finished. Without the flag, and with no such marker, the brief is
+# byte-for-byte what it was.
+# Refused on --scout and --secondmate: neither makes a branch to bound.
 # --forge names the project's forge, defaults to none, and is orthogonal to --mode
 # exactly as the registry's `forge=` token is. It is the captain's confirmed
 # registry binding, read from data/projects.md at intake and passed here; this
@@ -201,6 +220,8 @@ FORGE=none
 FORGE_SET=0
 SHAPE=
 SHAPE_SET=0
+ALLOWED_FILES_SRC=
+ALLOWED_FILES_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -214,6 +235,7 @@ for a in "$@"; do
       base-branch) BASE_BRANCH=$a; BASE_BRANCH_SET=1 ;;
       forge) FORGE=$a; FORGE_SET=1 ;;
       shape) SHAPE=$a; SHAPE_SET=1 ;;
+      allowed-files) ALLOWED_FILES_SRC=$a; ALLOWED_FILES_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -234,6 +256,8 @@ for a in "$@"; do
     --forge=*) FORGE=${a#--forge=}; FORGE_SET=1 ;;
     --shape) want_value=shape ;;
     --shape=*) SHAPE=${a#--shape=}; SHAPE_SET=1 ;;
+    --allowed-files) want_value="allowed-files" ;;
+    --allowed-files=*) ALLOWED_FILES_SRC=${a#--allowed-files=}; ALLOWED_FILES_SET=1 ;;
     # yolo never reaches the worker: it is firstmate's merge authority, not a
     # brief input. Refuse it loudly so it is never silently dropped here and then
     # believed to have been recorded.
@@ -300,6 +324,44 @@ if [ "$BASE_BRANCH_SET" -eq 1 ]; then
   fi
   fm_base_branch_valid "$BASE_BRANCH" "$MODE" "$FORGE" "fm-brief.sh --base-branch" || exit 1
 fi
+# The file boundary is read and validated before anything is written, so an
+# unusable list never leaves a partial scaffold behind.
+ALLOWED_FILES_BODY=
+if [ "$ALLOWED_FILES_SET" -eq 1 ]; then
+  if [ "$KIND" != ship ]; then
+    echo "error: --allowed-files applies only to ship briefs; a scout makes no branch and a secondmate charter is not a delivery contract" >&2
+    exit 1
+  fi
+  [ -n "$ALLOWED_FILES_SRC" ] && [ -f "$ALLOWED_FILES_SRC" ] && [ -r "$ALLOWED_FILES_SRC" ] || {
+    echo "error: --allowed-files needs a readable file (got '$ALLOWED_FILES_SRC')" >&2
+    exit 1
+  }
+  while IFS= read -r allowed_line || [ -n "$allowed_line" ]; do
+    allowed_line=${allowed_line%$'\r'}
+    allowed_line=${allowed_line#"${allowed_line%%[![:space:]]*}"}
+    allowed_line=${allowed_line%"${allowed_line##*[![:space:]]}"}
+    case "$allowed_line" in
+      ''|'#'*) continue ;;
+    esac
+    while :; do
+      case "$allowed_line" in
+        ./*) allowed_line=${allowed_line#./} ;;
+        *) break ;;
+      esac
+    done
+    [ -n "$allowed_line" ] || continue
+    case "/$allowed_line/" in
+      //*|*/../*)
+        echo "error: --allowed-files entries must be repo-relative paths with no '..' segment (got '$allowed_line')" >&2
+        exit 1 ;;
+    esac
+    ALLOWED_FILES_BODY="${ALLOWED_FILES_BODY}${allowed_line}"$'\n'
+  done < "$ALLOWED_FILES_SRC"
+  [ -n "$ALLOWED_FILES_BODY" ] || {
+    echo "error: --allowed-files list has no entries: $ALLOWED_FILES_SRC" >&2
+    exit 1
+  }
+fi
 ID=${POS[0]}
 BRANCH="$BRANCH_PREFIX$ID"
 if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
@@ -345,6 +407,11 @@ append_brief_include() {
 
 BRIEF="$DATA/$ID/brief.md"
 [ -e "$BRIEF" ] && { echo "error: $BRIEF already exists" >&2; exit 1; }
+FILE_BOUNDARY_MARKER="$STATE/$ID.file-boundary"
+if [ -e "$FILE_BOUNDARY_MARKER" ] || [ -L "$FILE_BOUNDARY_MARKER" ]; then
+  echo "error: $FILE_BOUNDARY_MARKER already exists: a file boundary was recorded for an earlier task with id $ID; trash that marker once the task is finished, then run this again" >&2
+  exit 1
+fi
 mkdir -p "$DATA/$ID"
 
 ASK_USER_BLOCK=
@@ -671,6 +738,46 @@ esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 
+# The task's file boundary: the validated list is recorded beside the brief for
+# bin/fm-file-boundary.sh, and the worker is told to run that checker. Empty
+# when no list was given, so a brief without one is unchanged; when present the
+# block carries its own trailing blank line, like WAIT_BLOCK.
+ALLOWED_BLOCK=
+if [ -n "$ALLOWED_FILES_BODY" ]; then
+  ALLOWED_RECORD="$DATA/$ID/allowed-files"
+  [ ! -e "$ALLOWED_RECORD" ] && [ ! -L "$ALLOWED_RECORD" ] || {
+    echo "error: $ALLOWED_RECORD already exists" >&2
+    exit 1
+  }
+  # The state marker goes first: a failure between the two writes leaves a
+  # boundary with no list, which the checker refuses, never a list with no mark.
+  mkdir -p "$STATE"
+  printf 'File boundary: required\n' > "$FILE_BOUNDARY_MARKER"
+  printf '%s' "$ALLOWED_FILES_BODY" > "$ALLOWED_RECORD"
+  ALLOWED_ENV="FM_HOME=$(shell_quote "$FM_HOME")"
+  [ -z "${FM_DATA_OVERRIDE:-}" ] || ALLOWED_ENV="$ALLOWED_ENV FM_DATA_OVERRIDE=$(shell_quote "$DATA")"
+  [ -z "${FM_STATE_OVERRIDE:-}" ] || ALLOWED_ENV="$ALLOWED_ENV FM_STATE_OVERRIDE=$(shell_quote "$STATE")"
+  ALLOWED_CMD="$ALLOWED_ENV $(shell_quote "$FM_ROOT/bin/fm-file-boundary.sh") check $(shell_quote "$ID")"
+  ALLOWED_LIST=
+  while IFS= read -r allowed_line; do
+    [ -n "$allowed_line" ] || continue
+    ALLOWED_LIST="${ALLOWED_LIST:+$ALLOWED_LIST$'\n'}- \`$allowed_line\`"
+  done <<ALLOWED_ENTRIES
+$ALLOWED_FILES_BODY
+ALLOWED_ENTRIES
+  ALLOWED_BLOCK="# Allowed files
+File boundary: required
+This task has its own file boundary: change only files matched by the list below, one repo-relative path or glob per entry (\`*\` and \`?\` stay inside one directory, \`**\` crosses directories, and \`**/\` also matches none).
+$ALLOWED_LIST
+
+Before you append \`done:\` - which hands the branch to the pipeline that pushes it - and before any push you make yourself, run:
+   \`$ALLOWED_CMD\`
+If it exits non-zero, do not push and do not report done. Exit 1 means files are outside the list: append \`blocked [at=<epoch>]: files outside the allowed list: {the file names it printed}\` and stop; firstmate decides whether the boundary or the change moves. Any other non-zero exit means the check could not run: append \`blocked [at=<epoch>]: file boundary check failed: {its error text}\` and stop.
+A file you believe the task needs beyond the list is the same case: name it in that blocked line instead of changing it.
+
+"
+fi
+
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -715,7 +822,7 @@ $ASK_USER_BLOCK
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 $SHARED_INFRA_RULE
 
-$WAIT_BLOCK$INBOX_SECTION
+$ALLOWED_BLOCK$WAIT_BLOCK$INBOX_SECTION
 
 # Project memory
 A project's \`AGENTS.md\` or \`CLAUDE.md\` is loaded into every agent session in that project, so edit it only to correct information that is factually wrong - including information your own change made wrong - and never to add knowledge because it is missing.
