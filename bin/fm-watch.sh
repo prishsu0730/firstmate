@@ -1325,8 +1325,13 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
     if until=$(status_paused_until "$last"); then
       [ "$(date +%s)" -lt "$until" ] || return 1
     fi
-    wait_record 'declared wait' 'awaiting external' \
-      external 'confirm the wait still holds' "$statusf"
+    if status_paused_awaits_firstmate "$last"; then
+      wait_record 'declared wait' 'waiting on main' \
+        supervisor 'act on it or answer the worker' "$statusf"
+    else
+      wait_record 'declared wait' 'awaiting external' \
+        external 'confirm the wait still holds' "$statusf"
+    fi
     return 0
   fi
   [ -e "$CONFIG/wedge-defer-parked-gate" ] || return 1
@@ -1378,7 +1383,7 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
 # demand-inspection history it had already earned.
 wedge_defer_wait() {  # <window> <since-file> <triage-label> <idle-age> <wait-record>
   local win=$1 since_file=$2 label=$3 age=$4 record=$5
-  local kind subject whom action anchor key mtime wage min_age waited us ok
+  local kind subject whom action anchor key mtime wage min_age waited us ok repeat_secs
   us=$(printf '\037')
   IFS=$us read -r kind subject whom action anchor <<EOF
 $record
@@ -1410,6 +1415,10 @@ EOF
     triage_log "absorbed $label ($kind, never rechecked while the away-posture record exists): $win"
     return 0
   fi
+  repeat_secs=$PAUSE_RESURFACE_SECS
+  if [ -n "$anchor" ]; then
+    repeat_secs=$(status_pause_recheck_secs "$(status_declared_wait_line "$anchor")" "$PAUSE_RESURFACE_SECS")
+  fi
   mtime=''
   [ -n "$anchor" ] && mtime=$(stat_mtime "$anchor")
   case "$mtime" in
@@ -1425,14 +1434,14 @@ EOF
     *)
       wage=$(( $(date +%s) - mtime ))
       [ "$wage" -ge 0 ] || wage=0
-      min_age=$PAUSE_RESURFACE_SECS; waited=", waiting ${wage}s"
+      min_age=$repeat_secs; waited=", waiting ${wage}s"
       ;;
   esac
   clear_write_tracking "$key"
   date +%s > "$since_file"
   resurface_absorbed "$win" "$STATE/.waiting-resurfaced-$key" "$wage" \
     "stale: $win (idle ${age}s${waited} - $kind, $subject, rechecked on a long cadence not a wedge; $action)" \
-    '' "$min_age"
+    '' "$min_age" "$repeat_secs"
   triage_log "absorbed $label ($kind explains the quiet, idle ${age}s): $win"
   return 0
 }
@@ -1875,9 +1884,10 @@ captain_call_declaration() {  # <task> <call-identity>
 # current PAUSE_RESURFACE_SECS. A pure read: recording an alarm is the caller's,
 # so the throttle is never advanced by a sighting it just absorbed.
 stale_wait_throttled() {  # <window-key> <declaration>
-  local throttle="$STATE/.paused-resurfaced-$1"
+  local throttle="$STATE/.paused-resurfaced-$1" repeat_secs
+  repeat_secs=$(status_pause_recheck_secs "${3-}" "$PAUSE_RESURFACE_SECS")
   [ "$(cat "$throttle" 2>/dev/null || true)" = "$2" ] \
-    && [ "$(age_of "$throttle")" -lt "$PAUSE_RESURFACE_SECS" ]
+    && [ "$(age_of "$throttle")" -lt "$repeat_secs" ]
 }
 
 # The same bound, for a stale window whose last line IS captain-relevant. That
@@ -1948,10 +1958,10 @@ surface_nonterminal_stale() {  # <window> <hash>
         throttled=0
       else
         STALE_WAIT_DECLARATION="$STALE_WAIT_DECLARATION:due"
-        stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+        stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
       fi
     else
-      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
     fi
   elif status_is_captain_held "$last"; then
     declared=0
@@ -1960,7 +1970,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     if captain_held_silenced "$last"; then
       throttled=0
     else
-      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
     fi
   elif captain_call_stale_bound "$key" "$task"; then
     bounded=0
