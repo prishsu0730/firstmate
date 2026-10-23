@@ -1793,7 +1793,6 @@ if [ "$RELAUNCH" -eq 0 ]; then
   fi
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
-  [ "$BACKEND" != tmux ] || fm_backend_tmux_clear_stale_client_env
   if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
     echo "error: backend=orca does not support --secondmate spawns yet" >&2
     exit 1
@@ -2843,26 +2842,6 @@ effort_flag_for_harness() {
 }
 
 case "$LAUNCH" in
-*__MUSEBIN__*)
-  MUSE_BIN=$(resolve_muse_binary) || exit 1
-  MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
-  MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
-  MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
-  if ! muse_credential_present "$MUSE_AUTH_FILE"; then
-    if [ -n "${META_API_KEY:-}" ]; then
-      echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
-    else
-      echo "error: muse has no worker-reachable credential; META_API_KEY cannot be proven present in the $BACKEND worker environment and '$MUSE_AUTH_FILE' is absent or empty. Store the fleet credential with 'muse login' or 'muse auth set --api-key-stdin'." >&2
-    fi
-    exit 1
-  fi
-  LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
-  LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
-  LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
-  ;;
-esac
-
-case "$LAUNCH" in
 *__KIMIBIN__*)
   KIMI_BIN=$(resolve_kimi_binary) || exit 1
   LAUNCH=${LAUNCH//__KIMIBIN__/$(shell_quote "$KIMI_BIN")}
@@ -3212,6 +3191,30 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
     exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
   fi
 fi
+if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" = tmux ]; then
+  fm_backend_tmux_clear_stale_client_env
+fi
+
+case "$LAUNCH" in
+*__MUSEBIN__*)
+  MUSE_BIN=$(resolve_muse_binary) || exit 1
+  MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
+  MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
+  MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
+  if ! muse_credential_present "$MUSE_AUTH_FILE"; then
+    if [ -n "${META_API_KEY:-}" ]; then
+      echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
+    else
+      echo "error: muse has no worker-reachable credential; META_API_KEY cannot be proven present in the $BACKEND worker environment and '$MUSE_AUTH_FILE' is absent or empty. Store the fleet credential with 'muse login' or 'muse auth set --api-key-stdin'." >&2
+    fi
+    exit 1
+  fi
+  LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
+  LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
+  LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
+  ;;
+esac
+
 [ -f "$BRIEF" ] || {
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
