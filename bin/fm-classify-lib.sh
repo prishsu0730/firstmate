@@ -123,6 +123,13 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
 
+# A `paused:` line whose reason says it waits on main / firstmate (status_paused_
+# awaits_firstmate below) is not an outside-world wait: the supervisor owes the
+# next move, so it is rechecked after about an hour, not on the four-hour
+# external cadence. The cadence never exceeds
+# FM_PAUSE_RESURFACE_SECS. status_pause_recheck_secs owns the choice.
+FM_MAIN_WAIT_SECS=3600
+
 # fm_utc_iso_to_epoch <YYYY-MM-DDTHH:MM[:SS]Z>: the one portable UTC ISO 8601
 # reader shared by the declared-wait vocabulary and the away-posture record
 # (bin/fm-afk-contract.sh). Prints epoch seconds; returns 1 on any other shape
@@ -482,6 +489,29 @@ status_paused_until() {  # <status-line> -> epoch on stdout
     | head -1)
   [ -n "$token" ] || return 1
   fm_utc_iso_to_epoch "$token"
+}
+
+# 0 if a `paused:` line's reason says the wait is on main / firstmate ("waiting
+# for main", "waiting on main", "main's go", "waiting main review", "waiting for
+# firstmate") and declares no `until` time. A dated hold keeps its declared
+# schedule, so only an undated wait on the supervisor qualifies.
+status_paused_awaits_firstmate() {  # <status-line>
+  local line=$1 reason
+  status_is_paused "$line" || return 1
+  status_paused_until "$line" >/dev/null 2>&1 && return 1
+  reason=${line#*:}
+  printf '%s' "$reason" | grep -Eiq "wait(ing)?[[:space:]]+(for|on)[[:space:]]+(the[[:space:]]+)?(main|firstmate)([^[:alnum:]_]|$)|wait(ing)?[[:space:]]+main[[:space:]]|main['’]s[[:space:]]+(go|call|word|review|ok|approval)|(for|on)[[:space:]]+firstmate['’]s"
+}
+
+# Seconds before a declared pause is rechecked: FM_MAIN_WAIT_SECS (capped at the
+# pause cadence) for a wait on main, the pause cadence <pause-secs> otherwise.
+status_pause_recheck_secs() {  # <status-line> <pause-secs>
+  local line=$1 pause=$2 main=$FM_MAIN_WAIT_SECS
+  if status_paused_awaits_firstmate "$line" && [ "$main" -lt "$pause" ]; then
+    printf '%s' "$main"
+  else
+    printf '%s' "$pause"
+  fi
 }
 
 # --- optional event emission time -------------------------------------------

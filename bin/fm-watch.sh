@@ -374,14 +374,17 @@ SECONDMATE_LIVENESS_MAX_ATTEMPTS=${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-}
 case "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_MAX_ATTEMPTS=3 ;; esac
 SECONDMATE_LIVENESS_WINDOW_SECS=${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-}
 case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WINDOW_SECS=3600 ;; esac
-# A crew that declared a pause is idling on a known external wait, so its stale
+# A crew that declared a pause is idling on a known wait, so its stale
 # pane is absorbed rather than wedge-escalated.
 # A captain-held or paused crew whose agent has confidently exited uses the same
 # bounded cadence, while a live or ambiguously read agent surfaces on first sight
 # and is then held to that same cadence; a secondmate earns the cadence on its
 # declaration alone, because its endpoint liveness is deliberately never read
 # (pause_state_class owns that split).
-# These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
+# An undated `paused:` wait whose reason says it waits on main / firstmate is owed
+# by the supervisor, not the outside world; status_pause_recheck_secs owns its
+# shorter initial and repeat gap, never every tick.
+# Other cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten wait cannot rot
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
@@ -1169,13 +1172,14 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # window; wake() itself exits the cycle, exactly as it does inline. An optional
 # <min-age> replaces the cadence as the absorb-age gate for one call (0 lets a
 # declared `until` time that has just passed re-surface at once), while the
-# throttle keeps the cadence between repeats.
-resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age]
-  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS}
+# throttle keeps the cadence between repeats. An optional <repeat-secs> replaces
+# the cadence as that repeat gap (a wait on main repeats hourly).
+resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age] [repeat-secs]
+  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS} repeat=${7:-$PAUSE_RESURFACE_SECS}
   if [ -z "$scope" ] || [ ! -e "$throttle" ] \
     || [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
     [ "$age" -ge "$min_age" ] || return 0
-    [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
+    [ "$(age_of "$throttle")" -ge "$repeat" ] || return 0   # 999999 when no prior re-surface
   fi
   fm_wake_append stale "$win" "$reason" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
@@ -1320,8 +1324,13 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
     if until=$(status_paused_until "$last"); then
       [ "$(date +%s)" -lt "$until" ] || return 1
     fi
-    wait_record 'declared wait' 'awaiting external' \
-      external 'confirm the wait still holds' "$statusf"
+    if status_paused_awaits_firstmate "$last"; then
+      wait_record 'declared wait' 'waiting on main' \
+        supervisor 'act on it or answer the worker' "$statusf"
+    else
+      wait_record 'declared wait' 'awaiting external' \
+        external 'confirm the wait still holds' "$statusf"
+    fi
     return 0
   fi
   [ -e "$CONFIG/wedge-defer-parked-gate" ] || return 1
@@ -1373,7 +1382,7 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
 # demand-inspection history it had already earned.
 wedge_defer_wait() {  # <window> <since-file> <triage-label> <idle-age> <wait-record>
   local win=$1 since_file=$2 label=$3 age=$4 record=$5
-  local kind subject whom action anchor key mtime wage min_age waited us ok
+  local kind subject whom action anchor key mtime wage min_age waited us ok repeat_secs
   us=$(printf '\037')
   IFS=$us read -r kind subject whom action anchor <<EOF
 $record
@@ -1405,6 +1414,10 @@ EOF
     triage_log "absorbed $label ($kind, never rechecked while the away-posture record exists): $win"
     return 0
   fi
+  repeat_secs=$PAUSE_RESURFACE_SECS
+  if [ -n "$anchor" ]; then
+    repeat_secs=$(status_pause_recheck_secs "$(status_declared_wait_line "$anchor")" "$PAUSE_RESURFACE_SECS")
+  fi
   mtime=''
   [ -n "$anchor" ] && mtime=$(stat_mtime "$anchor")
   case "$mtime" in
@@ -1420,14 +1433,14 @@ EOF
     *)
       wage=$(( $(date +%s) - mtime ))
       [ "$wage" -ge 0 ] || wage=0
-      min_age=$PAUSE_RESURFACE_SECS; waited=", waiting ${wage}s"
+      min_age=$repeat_secs; waited=", waiting ${wage}s"
       ;;
   esac
   clear_write_tracking "$key"
   date +%s > "$since_file"
   resurface_absorbed "$win" "$STATE/.waiting-resurfaced-$key" "$wage" \
     "stale: $win (idle ${age}s${waited} - $kind, $subject, rechecked on a long cadence not a wedge; $action)" \
-    '' "$min_age"
+    '' "$min_age" "$repeat_secs"
   triage_log "absorbed $label ($kind explains the quiet, idle ${age}s): $win"
   return 0
 }
@@ -1598,7 +1611,7 @@ busy_turn_over_age() {  # <task>
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
+  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age repeat_secs
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -1611,6 +1624,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   age=$(( now - mtime ))
   last=$(status_declared_wait_line "$statusf")
   min_age=$PAUSE_RESURFACE_SECS
+  repeat_secs=$PAUSE_RESURFACE_SECS
   declaration="declared:$(fm_wake_signal_sig "$statusf" || true)"
   if status_is_captain_held "$last"; then
     if away_record_present; then
@@ -1634,11 +1648,18 @@ handle_paused_stale() {  # <window> <task> <hash>
       declaration="$declaration:due"
       min_age=0
     fi
+  elif status_paused_awaits_firstmate "$last"; then
+    # A wait on main is owed by the supervisor, not the outside world: wake after
+    # about an hour (FM_MAIN_WAIT_SECS) and repeat on that gap, never every tick.
+    min_age=$(status_pause_recheck_secs "$last" "$PAUSE_RESURFACE_SECS")
+    repeat_secs=$min_age
+    detail="paused, waiting on main"
+    reason="paused ${age}s, waiting on main - the next move is firstmate's, not an outside wait; act on it or answer the worker"
   else
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age" "$repeat_secs"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -1859,12 +1880,13 @@ captain_call_declaration() {  # <task> <call-identity>
 }
 
 # 0 when <declaration> has already been alarmed for this window inside the
-# current PAUSE_RESURFACE_SECS. A pure read: recording an alarm is the caller's,
+# current gap selected by status_pause_recheck_secs. A pure read: recording an alarm is the caller's,
 # so the throttle is never advanced by a sighting it just absorbed.
-stale_wait_throttled() {  # <window-key> <declaration>
-  local throttle="$STATE/.paused-resurfaced-$1"
+stale_wait_throttled() {  # <window-key> <declaration> [status-line]
+  local throttle="$STATE/.paused-resurfaced-$1" repeat_secs
+  repeat_secs=$(status_pause_recheck_secs "${3-}" "$PAUSE_RESURFACE_SECS")
   [ "$(cat "$throttle" 2>/dev/null || true)" = "$2" ] \
-    && [ "$(age_of "$throttle")" -lt "$PAUSE_RESURFACE_SECS" ]
+    && [ "$(age_of "$throttle")" -lt "$repeat_secs" ]
 }
 
 # The same bound, for a stale window whose last line IS captain-relevant. That
@@ -1935,10 +1957,10 @@ surface_nonterminal_stale() {  # <window> <hash>
         throttled=0
       else
         STALE_WAIT_DECLARATION="$STALE_WAIT_DECLARATION:due"
-        stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+        stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
       fi
     else
-      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
     fi
   elif status_is_captain_held "$last"; then
     declared=0
@@ -1947,7 +1969,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     if captain_held_silenced "$last"; then
       throttled=0
     else
-      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
     fi
   elif captain_call_stale_bound "$key" "$task"; then
     bounded=0
