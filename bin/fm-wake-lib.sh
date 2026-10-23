@@ -1140,7 +1140,7 @@ fm_lock_restore_quarantined_holder() {  # <holder> <quarantine>
 # Renaming the holder record is the single atomic claim, so no further mutex
 # tier is needed.
 fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pid>
-  local recovery=$1 observed=$2 current=$3 holder quarantine moved_pid
+  local recovery=$1 observed=$2 current=$3 holder quarantine moved_pid verdict=
   case "$observed" in
     ''|*[!0-9]*|0)
       fm_lock_mid_acquire_is_fresh "$recovery" "$observed" && return 2
@@ -1167,11 +1167,11 @@ fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pi
   fi
   case "$moved_pid" in
     ''|*[!0-9]*|0)
-      fm_lock_mid_acquire_is_fresh "$quarantine/holder" "$moved_pid" && moved_pid=fresh
+      fm_lock_mid_acquire_is_fresh "$quarantine/holder" "$moved_pid" && verdict=fresh
       ;;
-    *) fm_lock_holder_absent "$moved_pid" "$current" || moved_pid=live ;;
+    *) fm_lock_holder_absent "$moved_pid" "$current" || verdict=live ;;
   esac
-  if [ "$moved_pid" = fresh ] || [ "$moved_pid" = live ]; then
+  if [ -n "$verdict" ]; then
     fm_lock_restore_quarantined_holder "$holder" "$quarantine"
     return 1
   fi
