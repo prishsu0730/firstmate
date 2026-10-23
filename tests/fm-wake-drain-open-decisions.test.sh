@@ -283,22 +283,24 @@ test_full_listing_is_read_only_and_bounded() {
 }
 
 test_full_listing_exceeds_ordinary_byte_cap() {
-  local dir state out i
+  local dir state out i bytes
   dir=$(make_case full-listing-cap)
   state="$dir/state"
   out="$dir/drain.out"
-  for i in $(seq 1 30); do
-    printf 'needs-decision [key=api-shape]: decision number %02d with a deliberately descriptive explanation\n' "$i" > "$state/task$i.status"
+  for i in $(seq 1 40); do
+    printf 'needs-decision [key=api-shape]: decision number %02d with a deliberately descriptive explanation 中文\n' "$i" > "$state/task$i.status"
   done
 
-  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
-  grep -F 'task30' "$out" >/dev/null || fail "full listing omitted later decisions beyond the ordinary byte cap"
+  LC_ALL=${FM_TEST_MULTIBYTE_LOCALE:-${LC_ALL:-C.UTF-8}} FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  grep -F 'task40' "$out" >/dev/null || fail "full listing omitted later decisions beyond the ordinary byte cap"
   if grep -F 'more omitted (byte cap)' "$out" >/dev/null; then
     fail "full listing reported omitted decisions despite its full-list contract"
   fi
 
-  env -u FM_DRAIN_FULL_OPEN_DECISIONS FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "ordinary drain failed"
+  env -u FM_DRAIN_FULL_OPEN_DECISIONS LC_ALL=${FM_TEST_MULTIBYTE_LOCALE:-${LC_ALL:-C.UTF-8}} FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "ordinary drain failed"
   grep -F 'more omitted (byte cap)' "$out" >/dev/null || fail "ordinary drain no longer applies its byte cap"
+  bytes=$(LC_ALL=C wc -c < "$out" | tr -d ' ')
+  [ "$bytes" -le 4200 ] || fail "ordinary drain exceeded its 4,000-byte section cap plus framing ($bytes bytes)"
   pass "full listing includes decisions beyond the ordinary drain byte cap"
 }
 

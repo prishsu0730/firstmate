@@ -396,6 +396,7 @@ print_status_outcome_backstop_section() {  # <task-and-endpoint-snapshot>
     line="$task $event"
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
+    local LC_ALL=C
     bytes=$(( ${#line} + 1 ))
     if [ $((used + bytes)) -gt "$global_bytes" ]; then
       omitted=$((omitted + 1))
@@ -508,6 +509,7 @@ print_open_decisions_section() {
     # allowance passed down is one short of the cap.
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
+    local LC_ALL=C
     bytes=$(( ${#line} + 1 ))
     if [ "$OPEN_DECISIONS_FULL" != true ] && [ $((used + bytes)) -gt "$global_bytes" ]; then
       # Not recorded as presented, so the next drain prints it.
@@ -603,6 +605,7 @@ print_record_divergence_section() {
     [ -z "$title" ] || line="$line: $title"
     fm_cap_line_var "$line" $((item_bytes - 1))
     line=$FM_LINE_CAP_LINE
+    local LC_ALL=C
     bytes=$(( ${#line} + 1 ))
     if [ $((used + bytes)) -gt "$global_bytes" ]; then
       omitted=$((omitted + 1))
