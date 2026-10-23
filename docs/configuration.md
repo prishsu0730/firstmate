@@ -982,7 +982,9 @@ The text is static and never executed or expanded; secondmate charters never tak
 ## Worker launch environment (config/launch-env-allowlist)
 
 The optional local, gitignored `config/launch-env-allowlist` limits the ambient environment passed to newly launched workers, scouts, and secondmates, including relaunches.
-With no file, ambient inheritance remains unfiltered: selected harness markers are cleared, while the provider, long-lived terminal daemon, and shell initialization determine which other variables reach the worker.
+With no file, ambient inheritance remains unfiltered apart from Firstmate's launch assignments and explicit clearing of selected harness markers and foreign secondmate state.
+Secondmate launches and relaunches explicitly select their own operational home and clear inherited relocation overrides, secondary home pointers, and per-run startup, timing, guard-bypass, and task state, whether the allowlist is absent or enabled.
+The provider, long-lived terminal daemon, and shell initialization determine which other variables reach the worker.
 
 Do not assume every worker inherits the invoking Firstmate process's current environment.
 The file is inherited into secondmate homes through the [primary-authoritative configuration contract](../.agents/skills/secondmate-provisioning/SKILL.md).
@@ -1040,6 +1042,7 @@ The filter runs at the worker command boundary, after the terminal daemon and pa
 This is not a sandbox: it cannot revoke same-user access to credential files, prevent tools or later shells from loading credentials again, or isolate processes from the same user's other processes.
 
 Regression coverage executes emitted launch commands with synthetic nonsecret values in [`tests/fm-spawn-dispatch-profile.test.sh`](../tests/fm-spawn-dispatch-profile.test.sh).
+[`tests/fm-spawn-secondmate-env-isolation.test.sh`](../tests/fm-spawn-secondmate-env-isolation.test.sh) covers secondmate home isolation under a polluted pane environment for Codex and Claude, with the allowlist absent and enabled.
 
 ### Compact adviser setting
 
@@ -2363,6 +2366,7 @@ FM_BACKEND=             # optional runtime backend override for new spawns; tmux
 FM_TRACE_CONTEXT=       # optional trace-context override; see "Trace context propagation"
 FM_TASK_ID=             # internal task-worker marker fm-spawn.sh exports into ship and scout panes, never set by hand; bin/fm-test-run.sh refuses to execute in the repository primary checkout while it is set
 FM_TASK_INBOX=          # internal: absolute path of the task's steering inbox (state/<id>.inbox) that fm-spawn.sh exports into every ship, scout, and secondmate launch, never set by hand; the steering doorbell names "$FM_TASK_INBOX"
+FM_INBOX_ACK=           # internal: absolute path of bin/fm-inbox-ack.sh that fm-spawn.sh exports into every ship, scout, and secondmate launch, never set by hand; the steering doorbell tells the worker to run "${FM_INBOX_ACK:-<this checkout>/bin/fm-inbox-ack.sh}" NNN alone, so a worker launched before this export falls back to the absolute path of the script in the checkout that rang it, even when FM_HOME is separate from the code
 HERDR_SESSION=default  # herdr-only: named session for normal backend ops; not enough for destructive cleanup (docs/herdr-backend.md)
 FM_BACKEND_HERDR_SUBMIT_POLLS=6  # herdr-only: agent-state samples spread across each Enter attempt's budget when confirming a submit (docs/herdr-backend.md "Current transport behavior")
 FM_BACKEND_HERDR_SUBMIT_MIN_SLEEP=0.6  # herdr-only: minimum per-Enter confirmation budget before polling agent-state after an idle baseline

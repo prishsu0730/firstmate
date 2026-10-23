@@ -92,7 +92,7 @@ make_seeded_secondmate_home() {
 task_inbox_export() {  # <home> <id>
   local state
   state=$(CDPATH='' cd -- "$1/state" && pwd -P) || fail "cannot resolve state dir $1/state"
-  printf "export FM_TASK_INBOX='%s'; " "$state/$2.inbox"
+  printf "export FM_INBOX_ACK='%s'; export FM_TASK_INBOX='%s'; " "$ROOT/bin/fm-inbox-ack.sh" "$state/$2.inbox"
 }
 
 ai_trailer_hooks_prefix() {  # <home> <id>
