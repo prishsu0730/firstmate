@@ -2593,7 +2593,7 @@ run_paused_wait_case() {  # <name> <status-line> <age-secs> <expect: wake|absorb
   PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="$window" FM_FAKE_TMUX_CAPTURE="$capture_file" \
     FM_FAKE_TMUX_CURRENT_COMMAND=zsh \
     FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" \
-    FM_PAUSE_RESURFACE_SECS=14400 FM_MAIN_WAIT_SECS=600 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_PAUSE_RESURFACE_SECS=14400 FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
   pid=$!
   if [ "$expect" = wake ]; then
@@ -2612,17 +2612,17 @@ run_paused_wait_case() {  # <name> <status-line> <age-secs> <expect: wake|absorb
 }
 
 test_main_wait_pause_wakes_after_threshold() {
-  run_paused_wait_case main-wait-late "paused: waiting for main's go before starting no-mistakes" 700 wake
+  run_paused_wait_case main-wait-late "paused: waiting for main's go before starting no-mistakes" 3700 wake
   pass "a paused wait on main wakes once past FM_MAIN_WAIT_SECS"
 }
 
 test_main_wait_pause_absorbed_before_threshold() {
-  run_paused_wait_case main-wait-early "paused: waiting for main's go before starting no-mistakes" 300 absorb
+  run_paused_wait_case main-wait-early "paused: waiting for main's go before starting no-mistakes" 3500 absorb
   pass "a paused wait on main stays absorbed before FM_MAIN_WAIT_SECS"
 }
 
 test_external_wait_pause_keeps_long_cadence() {
-  run_paused_wait_case external-wait-late "paused: waiting for CI to finish" 700 absorb
+  run_paused_wait_case external-wait-late "paused: waiting for CI to finish" 3700 absorb
   pass "an external paused wait at the same age keeps the long cadence"
 }
 

@@ -103,8 +103,6 @@
 #                                   kinds.
 #          FM_STALE_ESCALATE_SECS   idle seconds before a stale pane escalates
 #                                   as a possible wedge (default 240)
-#          FM_MAIN_WAIT_SECS        seconds before an undated paused: wait on main/firstmate
-#                                   is rechecked (default 3600; fm-classify-lib.sh)
 #          FM_PAUSE_RESURFACE_SECS  seconds a declared wait stays declared,
 #                                   idle or busy, before it re-surfaces as a
 #                                   recheck (default 14400, four hours); an

@@ -383,7 +383,7 @@ case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WI
 # (pause_state_class owns that split).
 # An undated `paused:` wait whose reason says it waits on main / firstmate is owed
 # by the supervisor, not the outside world, so it re-surfaces after MAIN_WAIT_SECS
-# (FM_MAIN_WAIT_SECS, default one hour; status_pause_recheck_secs owns it) and
+# (one hour; status_pause_recheck_secs owns it) and
 # repeats on that gap, never every tick.
 # These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten wait cannot rot

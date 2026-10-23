@@ -46,9 +46,7 @@ test_recheck_cadence() {
   local ext_line='paused: waiting for CI'
   [ "$(status_pause_recheck_secs "$main_line" 14400)" = 3600 ] || fail "main wait did not get the hour cadence"
   [ "$(status_pause_recheck_secs "$ext_line" 14400)" = 14400 ] || fail "external wait lost the long cadence"
-  [ "$(FM_MAIN_WAIT_SECS=600 status_pause_recheck_secs "$main_line" 14400)" = 600 ] || fail "FM_MAIN_WAIT_SECS override ignored"
   [ "$(status_pause_recheck_secs "$main_line" 900)" = 900 ] || fail "main cadence exceeded the pause cadence"
-  [ "$(FM_MAIN_WAIT_SECS=junk status_pause_recheck_secs "$main_line" 14400)" = 3600 ] || fail "bad override not defaulted"
   pass "main wait rechecks hourly, external waits keep the long cadence"
 }
 

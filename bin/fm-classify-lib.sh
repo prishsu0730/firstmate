@@ -126,10 +126,9 @@ FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
 # A `paused:` line whose reason says it waits on main / firstmate (status_paused_
 # awaits_firstmate below) is not an outside-world wait: the supervisor owes the
 # next move, so it is rechecked after about an hour, not on the four-hour
-# external cadence. FM_MAIN_WAIT_SECS overrides it; the cadence never exceeds
+# external cadence. The cadence never exceeds
 # FM_PAUSE_RESURFACE_SECS. status_pause_recheck_secs owns the choice.
-# shellcheck disable=SC2034 # Read by status_pause_recheck_secs, the watcher and daemon.
-FM_MAIN_WAIT_SECS_DEFAULT=3600
+FM_MAIN_WAIT_SECS=3600
 
 # fm_utc_iso_to_epoch <YYYY-MM-DDTHH:MM[:SS]Z>: the one portable UTC ISO 8601
 # reader shared by the declared-wait vocabulary and the away-posture record
@@ -507,8 +506,7 @@ status_paused_awaits_firstmate() {  # <status-line>
 # Seconds before a declared pause is rechecked: FM_MAIN_WAIT_SECS (capped at the
 # pause cadence) for a wait on main, the pause cadence <pause-secs> otherwise.
 status_pause_recheck_secs() {  # <status-line> <pause-secs>
-  local line=$1 pause=$2 main=${FM_MAIN_WAIT_SECS:-$FM_MAIN_WAIT_SECS_DEFAULT}
-  case "$main" in ''|*[!0-9]*|0) main=$FM_MAIN_WAIT_SECS_DEFAULT ;; esac
+  local line=$1 pause=$2 main=$FM_MAIN_WAIT_SECS
   if status_paused_awaits_firstmate "$line" && [ "$main" -lt "$pause" ]; then
     printf '%s' "$main"
   else
