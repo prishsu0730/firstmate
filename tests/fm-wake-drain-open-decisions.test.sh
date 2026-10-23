@@ -297,7 +297,7 @@ test_full_listing_exceeds_ordinary_byte_cap() {
     fail "full listing reported omitted decisions despite its full-list contract"
   fi
 
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "ordinary drain failed"
+  env -u FM_DRAIN_FULL_OPEN_DECISIONS FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "ordinary drain failed"
   grep -F 'more omitted (byte cap)' "$out" >/dev/null || fail "ordinary drain no longer applies its byte cap"
   pass "full listing includes decisions beyond the ordinary drain byte cap"
 }
