@@ -454,13 +454,13 @@ test_branch_ack_keeps_older_keyed_decision_open() {
   printf 'needs-decision [key=merge-153]: merge PR 153 now or hold?\n' > "$home/state/held.status"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task held --verdict captain --summary 'needs merge decision' >/dev/null || fail "fixture: older outcome"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task held --verdict captain --summary 'CI is now green' >/dev/null || fail "fixture: newer outcome"
-  drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
+  drained=$(FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
   assert_contains "$drained" 'OPEN DECISIONS' "the status decision must appear in the first drain"
   assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "the older decision must remain open"
   assert_contains "$drained" '[seq 2, newest of 2 for this task' "the branch line must collapse to the newest outcome"
   assert_contains "$drained" "including its still-open decisions listed above under OPEN DECISIONS" "the check-first instruction must include the older keyed decision"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 2 >/dev/null || fail "fixture: acknowledgement refused"
-  drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
+  drained=$(FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
   assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "acknowledging the newer branch line closed the older keyed decision"
   assert_not_contains "$drained" 'CI is now green' "acknowledged branch outcome repeated"
   pass "drain: a keyed decision survives acknowledgement through a newer outcome for its task"

@@ -1349,8 +1349,8 @@ _fm_status_read_span() {  # <status-file> <start-offset> <byte-length>
   ' "$f" "$start" "$length"
 }
 
-status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
-  local f=$1 captured_end=${2:-} cf offset ident open='' trusted_open='' cursor_data first rest offset_line ident_line
+status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [readonly]
+  local f=$1 captured_end=${2:-} readonly=${3:-false} cf offset ident open='' trusted_open='' cursor_data first rest offset_line ident_line
   local version='' size actual_size cur_ident resolve held chunk_file chunk_size line cursor_dirty=0
   local target_cursor kind fold_version
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
@@ -1451,7 +1451,7 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
     offset=$size
     cursor_dirty=1
   fi
-  if [ "$cursor_dirty" -eq 1 ]; then
+  if [ "$cursor_dirty" -eq 1 ] && [ "$readonly" != true ]; then
     target_cursor="$cf.tmp.$$"
     {
       printf 'version=%s\n' "$fold_version"
@@ -1469,14 +1469,14 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
 # each task's status log through status_open_decisions_incremental instead of
 # the whole-file status_open_decisions, so a fleet-wide per-drain scan stays
 # bounded by new appends rather than total lifetime log size across every task.
-scan_open_decisions_incremental() {  # <state>
-  local state=$1 f task open line exclude
+scan_open_decisions_incremental() {  # <state> [readonly]
+  local state=$1 readonly=${2:-false} f task open line exclude
   exclude=$(status_scan_parent_channel_exclude "$state")
   for f in "$state"/*.status; do
     [ -e "$f" ] || continue
     [ "$f" = "$exclude" ] && continue
     task=$(basename "$f"); task="${task%.status}"
-    open=$(status_open_decisions_incremental "$f") || continue
+    open=$(status_open_decisions_incremental "$f" '' "$readonly") || continue
     [ -n "$open" ] || continue
     while IFS= read -r line; do
       [ -n "$line" ] || continue
