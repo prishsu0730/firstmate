@@ -84,12 +84,10 @@
 #   ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
-#   merely unreachable from here - and it is only available on HERDR, which must
-#   still read the recorded pane as gone once that session's server is running
-#   again. A tmux `missing` always refuses: a task record carries no socket
-#   identity for its endpoint, so no read here can tell a destroyed window from
-#   one on a tmux server this process cannot address. An endpoint that turns out
-#   to have survived refuses too. The worktree is reused untouched either way; a
+#   merely unreachable from here. fm_control_endpoint_absence_verdict in
+#   fm-control-lib.sh owns the shared proof for Herdr and for tmux records whose
+#   last launch predates this machine's boot; unproven absence refuses.
+#   The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
 #   (`--secondmate`, driven by the session-start liveness sweep).
@@ -332,7 +330,9 @@
 #   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
 #   task teardown removes only the current home's launch namespace.
 # Launch environment (config/launch-env-allowlist):
-#   Absent means unchanged ambient inheritance. A present readable regular file
+#   Absent means ambient inheritance subject to explicit launch assignments and
+#   clearing (see docs/configuration.md's worker launch environment contract).
+#   A present readable regular file
 #   opts every launch (ship, scout, secondmate, raw command, and relaunch) into
 #   /usr/bin/env -i followed by /bin/sh -c of the existing launch command.
 #   Each line is one POSIX environment name, never a value or shell expression;
@@ -1876,12 +1876,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - REFUSES, always. A task record carries no socket identity for its
-  #           endpoint, and a server-wide inventory describes only the server
-  #           this process addresses, so no read available here can tell "gone"
-  #           from "on a server I cannot see". A tmux `missing` therefore stays
-  #           as deadlocked as it was before this change - deliberately, and
-  #           with the reason stated rather than guessed past.
+  #   tmux  - REFUSES, unless the task record predates this machine's boot. A
+  #           task record carries no socket identity for its endpoint, and a
+  #           server-wide inventory describes only the server this process
+  #           addresses, so no read available here can tell "gone" from "on a
+  #           server I cannot see" - but a reboot ended every agent, which the
+  #           record's launch time against the boot time does prove.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -1889,7 +1889,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # `relaunch` cannot reach two different answers about one endpoint.
   RELAUNCH_STATE=$(fm_backend_agent_state "$BACKEND" "$RELAUNCH_TARGET")
   if [ "$RELAUNCH_STATE" = missing ]; then
-    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET")
+    RELAUNCH_ABSENCE=$(fm_control_endpoint_absence_verdict "$BACKEND" "$RELAUNCH_TARGET" "$RELAUNCH_META")
     case "${RELAUNCH_ABSENCE%%$'\t'*}" in
       gone) RELAUNCH_STATE=missing ;;
       dead) RELAUNCH_STATE=dead ;;
@@ -3750,6 +3750,15 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
+  elif [ "$BACKEND" = tmux ]; then
+    # A tmux endpoint is only ever proven gone by a reboot (the record predates
+    # this boot), which also took the tmux server with it. Create ONE fresh
+    # window directly in the recorded worktree, so the published record rebinds
+    # to it just as the herdr reclaim below does.
+    SES=$(fm_backend_tmux_container_ensure)
+    T="$SES:$W"
+    WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
+    WT_TARGET="$WID"
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -3757,11 +3766,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Herdr is the ONLY backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and absence is provable only on herdr, whose
-    # every read is scoped to the session the record names
-    # (fm_control_endpoint_absence_verdict owns that argument). tmux and every
-    # secondmate were already refused, so there is no dispatch left to make.
+    # Herdr is the only backend that reaches here: the gate above rebinds only
+    # on a PROVEN-gone endpoint, and the only other proof
+    # (fm_control_endpoint_absence_verdict owns that argument) is a tmux record
+    # that predates this boot, handled by the branch above. Every secondmate
+    # was already refused, so there is no further dispatch to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
@@ -3856,10 +3865,10 @@ else
     # it stands up a DIFFERENT home's own workspace by design - so it asks for
     # the per-home container instead of inheriting this launcher's.
     HERDR_LABEL_HOME=$FM_HOME
-    HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    HERDR_LAUNCHER_RELATIONSHIP='launcher-home'
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
-      HERDR_LAUNCHER_RELATIONSHIP=other-home
+      HERDR_LAUNCHER_RELATIONSHIP='other-home'
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
@@ -4549,6 +4558,20 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Written under the Treehouse project lock held from before slot allocation
   # through metadata publication, so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    # A slot another task record still names, whose task is not proven finished,
+    # may still hold that task's work: claiming it would leave two records on one
+    # copy and strand both teardowns. Treehouse offers no way to ask for a
+    # different slot, so refuse here, before the claim, leaving that record the
+    # slot's only owner. A record proven finished (see fm_task_record_finished)
+    # is a harmless leftover and the claim below replaces its claim.
+    if ! fm_treehouse_slot_blocking_records "$WT" "$ID" "$STATE"; then
+      echo "error: could not check which task records name Treehouse pool slot $WT ($FM_LOCAL_FIRSTMATE_ERROR); refusing to launch a worker onto a slot that may belong to another task; inspect window $T" >&2
+      exit 1
+    fi
+    if [ "${#FM_SLOT_BLOCKING_RECORDS[@]}" -gt 0 ]; then
+      echo "error: Treehouse pool slot $WT is still named by unfinished task record ${FM_SLOT_BLOCKING_RECORDS[0]%% *} (${FM_SLOT_BLOCKING_RECORDS[0]}); refusing to launch task $ID onto a slot another task's work may still live in. Finish or tear down that task (bin/fm-crew-state.sh ${FM_SLOT_BLOCKING_RECORDS[0]%% *}), then spawn again; inspect window $T" >&2
+      exit 1
+    fi
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
       exit 1
@@ -5431,7 +5454,23 @@ if [ "$KIND" = secondmate ]; then
   # not enable them across the launch boundary (bin/fm-trace-context-lib.sh header).
   # Reuse the single frozen decision from the carrier resolution above so the
   # injected carrier and this on/off snapshot are guaranteed to agree.
-  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
+  # A secondmate pane can inherit another run's state from a long-lived terminal
+  # daemon. FM_HOME and the five relocation overrides are established explicitly;
+  # the names below are
+  # per-run state or secondary home pointers that nothing here re-establishes,
+  # so they are removed from the agent's environment instead of inherited.
+  # FM_TASK_ID is included because only ship and scout panes receive it, so an
+  # inherited one is another task's marker and would make bin/fm-test-run.sh
+  # refuse this home's own primary checkout.
+  sm_foreign_unset=
+  for sm_foreign_name in FM_PENDING_REPLY_DIR_OVERRIDE FM_SECONDMATE_PARENT_HOME \
+    FM_PROCEVENT_CLAIM_HOME FM_PROCEVENT_CLAIM_ROOT FM_PROCEVENT_CLAIM_STATE_ROOT \
+    FM_BOOTSTRAP_NETWORK FM_BOOTSTRAP_NETWORK_LOCK_PID FM_BOOTSTRAP_PARALLEL_DIR \
+    FM_SESSION_START_STAGE_FILE FM_SPAWN_NO_GUARD FM_TIMING_EPOCH_MS FM_TIMING_LOG \
+    FM_TASK_ID; do
+    sm_foreign_unset="$sm_foreign_unset -u $sm_foreign_name"
+  done
+  LAUNCH="env$sm_foreign_unset FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
 fi
 # Pane-scoped override: git in this worker reads our commit-msg strip without
 # rewriting the project's core.hooksPath. GIT_CONFIG_* takes precedence over

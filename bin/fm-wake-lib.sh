@@ -1930,6 +1930,81 @@ fm_treehouse_slot_owner_release() {  # <worktree> <task-id>
   rm -f "$marker" 2>/dev/null || true
 }
 
+# Is a task record finished, with proof that returning or resetting its recorded
+# slot loses none of its work? Used to tell a harmless leftover record (a worker
+# that finished, whose pool slot was since handed on) from one whose work may
+# still live in the slot it names. Returns 0 only when all of these hold:
+#   - the record's last status line is `done`;
+#   - a scout's report exists at <home>/data/<id>/report.md, or a ship's recorded
+#     pr_head (else its branch tip) is reachable from a remote-tracking ref of
+#     its project, so the work is pushed and the copy is not the only holder.
+# A secondmate home, a record with no status, and anything else returns 1: the
+# answer is "not proven", never "unfinished". The ship check reads local refs
+# only, so it never touches the network or the slot's copy.
+fm_task_record_finished() {  # <state-dir> <task-id>
+  local state=$1 id=$2 meta last kind project sha branch
+  meta="$state/$id.meta"
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  [ -f "$state/$id.status" ] && [ ! -L "$state/$id.status" ] || return 1
+  last=$(tail -n 1 "$state/$id.status" 2>/dev/null) || return 1
+  case "$last" in
+    "done "*|"done["*|"done:"*) ;;
+    *) return 1 ;;
+  esac
+  kind=$(sed -n 's/^kind=//p' "$meta" | tail -n 1)
+  case "$kind" in
+    scout)
+      [ -f "$(dirname "$state")/data/$id/report.md" ]
+      ;;
+    ship|'')
+      project=$(sed -n 's/^project=//p' "$meta" | tail -n 1)
+      [ -d "$project" ] || return 1
+      sha=$(sed -n 's/^pr_head=//p' "$meta" | tail -n 1)
+      if [ -z "$sha" ]; then
+        branch=$(sed -n 's/^branch=//p' "$meta" | tail -n 1)
+        [ -n "$branch" ] || return 1
+        sha=$(git -C "$project" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null) || return 1
+      fi
+      [ -n "$sha" ] || return 1
+      [ -n "$(git -C "$project" for-each-ref --contains "$sha" --count=1 --format=x refs/remotes 2>/dev/null)" ]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Task records, in this home or any local secondmate home, that name a pool slot
+# and are NOT proven finished: the ones whose work the slot may still hold.
+# Sets FM_SLOT_BLOCKING_RECORDS to "<id> <field> <state-dir>" lines. Returns 1
+# with FM_LOCAL_FIRSTMATE_ERROR when the local homes cannot be enumerated, so a
+# caller refuses rather than treating an unreadable home as one with no tasks.
+# Only <first-state>/<self-id>.meta is excluded by file identity; a same-named
+# task in another home still conflicts. Proven-finished worktree references are
+# ignored, but home references always block.
+fm_treehouse_slot_blocking_records() {  # <slot> <self-id> <first-state>
+  local slot=$1 self=$2 first=$3 state_dir other other_id field path canon
+  FM_SLOT_BLOCKING_RECORDS=()
+  slot=$(CDPATH='' cd -- "$slot" 2>/dev/null && pwd -P) || return 0
+  fm_local_firstmate_state_dirs "$first" || return 1
+  for state_dir in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
+    for other in "$state_dir"/*.meta; do
+      [ -f "$other" ] && [ ! -L "$other" ] || continue
+      other_id=$(basename "$other" .meta)
+      [ "$other_id" = "$self" ] && [ "$other" -ef "$first/$self.meta" ] && continue
+      for field in worktree home; do
+        path=$(sed -n "s/^$field=//p" "$other" | tail -n 1)
+        [ -n "$path" ] || continue
+        canon=$(CDPATH='' cd -- "$path" 2>/dev/null && pwd -P) || continue
+        [ "$canon" = "$slot" ] || continue
+        if [ "$field" = worktree ] && fm_task_record_finished "$state_dir" "$other_id"; then
+          continue
+        fi
+        FM_SLOT_BLOCKING_RECORDS+=("$other_id $field $state_dir")
+        break
+      done
+    done
+  done
+}
+
 fm_failure_episode_reset() {
   local state=$1 mode=${2:-acquire} lock current pid acquired=0 path
   lock="$state/.turnend-claude-blocks.lock"
