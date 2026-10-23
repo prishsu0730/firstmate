@@ -1180,6 +1180,12 @@ fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pi
   return 0
 }
 
+# Records the current holder of <lockdir> for the caller's refusal report.
+fm_lock_note_holder() {  # <lockdir>
+  FM_LOCK_HELD_PID=$(cat "$1/pid" 2>/dev/null || true)
+  FM_LOCK_OWNER_DIR=
+}
+
 # A dead <lock>.steal is recovered under the single fixed <lock>.steal.recovery
 # mutex, never a further .steal suffix, so recovery tiers stay bounded. A live
 # recovery holder or its surviving process group is waited out (returns 1);
@@ -1258,8 +1264,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
       fi
     fi
     if ! fm_lock_try_create "$recovery"; then
-      FM_LOCK_HELD_PID=$(cat "$recovery/pid" 2>/dev/null || true)
-      FM_LOCK_OWNER_DIR=
+      fm_lock_note_holder "$recovery"
       return 1
     fi
   fi
@@ -1267,8 +1272,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
 
   if ! fm_lock_points_to_owner "$recovery" "$recovery_owner"; then
     fm_lock_release "$recovery"
-    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
+    fm_lock_note_holder "$lockdir"
     return 1
   fi
   primary_owner=
@@ -1278,8 +1282,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
   cur=$(cat "$lockdir/pid" 2>/dev/null || true)
   if ! fm_lock_recheck_stale_owner "$lockdir" "$primary_owner" "$cur"; then
     fm_lock_release "$recovery"
-    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
+    fm_lock_note_holder "$lockdir"
     return 1
   fi
 
@@ -1290,8 +1293,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
     FM_LOCK_RECOVERED_PID=$cur
   fi
   if [ "$rc" -ne 0 ]; then
-    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
+    fm_lock_note_holder "$lockdir"
   fi
   fm_lock_release "$recovery"
   return "$rc"
