@@ -147,6 +147,7 @@ So the whole digest still runs as one bounded child, default 120s via `FM_SESSIO
 Each per-task endpoint liveness read runs serially in its own crash-isolated child, bounded by `FM_SESSION_START_ENDPOINT_TIMEOUT` (default 10s; a non-numeric or zero value falls back to the default).
 So a read that hangs or dies becomes that task's own `endpoint: error` line and the digest continues.
 With a wedged backend the stage's ceiling is tasks times that per-read bound and can itself reach the digest bound.
+The record-integrity check behind RECORD PROBLEMS has its own bound, `FM_RECORD_CHECK_TIMEOUT` (default 20s; a non-numeric or zero value falls back to the default), and a check that hits it keeps its completed findings and reports the scan as incomplete.
 
 The per-item backlog row reads inside bootstrap's reconcile and close-replay sweeps are the exception.
 Each of those reads is bounded by `FM_BACKLOG_ROW_TIMEOUT_SECS` (default 10s) through `bin/fm-backlog-transition-lib.sh`.

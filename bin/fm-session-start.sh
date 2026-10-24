@@ -58,7 +58,8 @@
 #                       (FM_SESSION_START_ENDPOINT_TIMEOUT, default 10s) and
 #                       can itself reach the digest's runtime bound.
 #                       Includes RECORD PROBLEMS from fm-captain-hold.sh
-#                       check-records (docs/captain-hold-lifecycle.md).
+#                       check-records (docs/captain-hold-lifecycle.md),
+#                       bounded by FM_RECORD_CHECK_TIMEOUT (default 20s).
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
 #   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
