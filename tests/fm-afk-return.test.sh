@@ -525,7 +525,7 @@ test_return_brief_points_at_the_drain_on_a_host_home_only() {
     if [ "$harness" = claude ]; then
       assert_contains "$out" "  1 captain outcome(s) escalated by the away session, presented in the drain's BRANCH OUTCOMES section" \
         "a host home's brief must point at the drain for its captain outcomes"
-      assert_contains "$out" "the drain's BRANCH OUTCOMES section presents the visible outcomes" "a host home's brief must point at the visible outcomes in the drain"
+      assert_contains "$out" "the drain's BRANCH OUTCOMES section also presents the visible outcomes" "a host home's brief must point at the visible outcomes in the drain"
       assert_contains "$out" '    - demo: PR ready for review' "a host home's brief must retain the captain outcome summary"
       assert_contains "$out" '    - demo: routine 6' "a host home's brief must retain visible routine summaries"
     else
