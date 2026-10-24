@@ -5645,6 +5645,33 @@ test_scout_done_requires_completion_evidence() {
   pass 'scout completion requires report and endpoint across busy and idle paths'
 }
 
+test_scout_finished_pause_requires_completion_evidence() {
+  reset_fakes
+  local d activity note gen out
+  d=$(new_case scout-finished-pause-evidence)
+  make_repo_on_branch "$d/wt" fm/task
+  make_fakebin "$d" >/dev/null
+  mkdir -p "$d/data/task"
+  for activity in busy idle; do
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" task)
+    "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task "$activity" --gen "$gen" --source claude-hook --event user-prompt-submit
+    for note in finished 'finished: report ready'; do
+      printf 'paused [at=%s]: %s\n' "$(($(date +%s) + 30))" "$note" > "$d/state/task.status"
+      fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=claude"
+      out=$(FM_HOME="$d" run_crew_state "$d" task)
+      assert_contains "$out" 'state: unknown' "$activity finished scout without report stays unknown"
+      assert_contains "$out" 'missing saved report' "$activity finished scout names absent report"
+      printf 'finished report\n' > "$d/data/task/report.md"
+      fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=claude" "project=other"
+      out=$(FM_HOME="$d" run_crew_state "$d" task)
+      assert_contains "$out" 'state: unknown' "$activity finished scout without valid endpoint stays unknown"
+      assert_contains "$out" 'missing valid task endpoint' "$activity finished scout names invalid endpoint"
+      : > "$d/data/task/report.md"
+    done
+  done
+  pass 'finished scout pauses require saved report and valid endpoint'
+}
+
 test_reliability_reconciles_status_and_activity() {
   reset_fakes
   local d now gen out
@@ -5708,6 +5735,7 @@ test_reliability_reconciles_status_and_activity() {
 }
 
 test_scout_done_requires_completion_evidence
+test_scout_finished_pause_requires_completion_evidence
 test_reliability_reconciles_status_and_activity
 test_captured_axi_status_shapes
 test_captured_inventory_replay

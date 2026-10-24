@@ -1311,6 +1311,14 @@ scout_finished_evidence() {
   [ "$note" = finished ] || [[ "$note" = 'finished: '* ]]
 }
 
+if [ "$KIND" = scout ] && [ "$(map_log_state "$LOG_LINE")" = paused ]; then
+  FINISHED_NOTE=$(status_line_note "$LOG_LINE")
+  if [ "$FINISHED_NOTE" = finished ] || [[ "$FINISHED_NOTE" = 'finished: '* ]]; then
+    [ -s "${FM_DATA_OVERRIDE:-$FM_HOME/data}/$ID/report.md" ] || emit unknown status-log "finished scout missing saved report"
+    fm_backend_validate_task_endpoint "$META" "$ID" >/dev/null 2>&1 || emit unknown status-log "finished scout missing valid task endpoint"
+  fi
+fi
+
 # Secondmates idle on their own watcher (idle pane = healthy), so the busy
 # state is not meaningful for them; read their state from the status log only.
 # Only an exact busy verdict reports working here, and only an exact idle
