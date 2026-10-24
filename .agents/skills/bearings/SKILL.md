@@ -163,8 +163,7 @@ The `CONSTRAINT:` and `Recently landed:` lines belong to Outcome and are not par
    A row whose state is `unknown`, `conflict`, `done`, or `delivery_blocked`, and direct work with no worker, is never Active; it renders under Waiting with its state.
    A non-working row whose id also appears among `gates` (or as `<owner>/<id>` for a secondmate's gate) is a held worker that the snapshot lists in both buckets: count it once, in Held, and do not render it under Waiting.
    A `conflict` row names both disagreeing sources, and an `unknown` row names the missing evidence as its reason.
-   The snapshot reconciles a stamped status declaration against busy-pane activity by timestamp, so a newer stamped declaration supersedes an older busy pane and newer activity yields `conflict`.
-   A scout reads `done` only when it has a saved report plus task-bound endpoint evidence.
+   The snapshot already reconciles status declarations against busy-pane activity and decides scout completion, so render each row's state as recorded; `docs/architecture.md` owns those reconciliation rules.
    Direct work shows `delivery_blocked` while its blockers are open, names those blockers, and is never called running.
    Empty-state: "Nothing is underway."
 3. **Waiting** - queued or gated work, plus underway rows that are not progressing, each with what it waits on and its unblock condition: a blocker, a date, or `UNKNOWN`.
