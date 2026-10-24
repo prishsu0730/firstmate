@@ -79,6 +79,18 @@ fm_backend_tmux_container_ensure() {
   fi
 }
 
+# fm_backend_tmux_clear_stale_client_env: a terminal restored after a reboot
+# can retain TMUX even though the server named by its socket no longer exists,
+# and every later tmux call without -S/-L would follow it to that dead socket.
+# Drop the stale client variables so tmux falls back to the default socket.
+# Must run in the caller's own shell (never a command substitution), so the
+# unset reaches every later tmux call of that process.
+fm_backend_tmux_clear_stale_client_env() {
+  [ -n "${TMUX:-}" ] || return 0
+  [ -n "$(tmux display-message -p '#S' 2>/dev/null)" ] && return 0
+  unset TMUX TMUX_PANE
+}
+
 # fm_backend_tmux_create_task: create the task's window in <proj-abs>,
 # refusing an existing <window-name> in <session>. Mirrors fm-spawn.sh's
 # duplicate-check-then-new-window sequence, including the exact error text

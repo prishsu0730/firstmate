@@ -14,6 +14,8 @@ set -u
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
 DRAIN="$ROOT/bin/fm-wake-drain.sh"
+# These cases test the fold across repeated drains, not the unchanged-decision summary.
+export FM_DRAIN_FULL_OPEN_DECISIONS=1
 
 TMP_ROOT=$(fm_test_tmproot fm-wake-drain-open-decisions-cursor-tests)
 

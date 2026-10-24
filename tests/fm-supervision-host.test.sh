@@ -454,13 +454,13 @@ test_branch_ack_keeps_older_keyed_decision_open() {
   printf 'needs-decision [key=merge-153]: merge PR 153 now or hold?\n' > "$home/state/held.status"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task held --verdict captain --summary 'needs merge decision' >/dev/null || fail "fixture: older outcome"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task held --verdict captain --summary 'CI is now green' >/dev/null || fail "fixture: newer outcome"
-  drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
+  drained=$(FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
   assert_contains "$drained" 'OPEN DECISIONS' "the status decision must appear in the first drain"
   assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "the older decision must remain open"
   assert_contains "$drained" '[seq 2, newest of 2 for this task' "the branch line must collapse to the newest outcome"
   assert_contains "$drained" "including its still-open decisions listed above under OPEN DECISIONS" "the check-first instruction must include the older keyed decision"
   FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 2 >/dev/null || fail "fixture: acknowledgement refused"
-  drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
+  drained=$(FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
   assert_contains "$drained" 'held [key=merge-153] needs-decision: merge PR 153 now or hold?' "acknowledging the newer branch line closed the older keyed decision"
   assert_not_contains "$drained" 'CI is now green' "acknowledged branch outcome repeated"
   pass "drain: a keyed decision survives acknowledgement through a newer outcome for its task"
@@ -988,6 +988,28 @@ test_claude_stop_hook_delivers_a_close_that_turns_main_only_at_its_turn() {
   pass "host+hook: a close that turns main-only at its turn rewakes main and keeps its successor watcher"
 }
 
+# The successor a close that turns main-only at its turn leaves for main
+# outlives the Stop hook's process group teardown, like the pass-through's.
+test_successor_left_at_the_turn_survives_the_hook_process_group_teardown() {
+  local home watcher
+  home=$(make_primary_home hook-turns-main-only-teardown)
+  turn_main_only_at_second_offer "$home" quiet
+  : > "$home/hook.own-group"
+  start_hook_session "$home"
+  turn_end "$home"
+  wait_until 150 watcher_live "$home" || fail "at-turn teardown: the Stop hook never started a watcher cycle: $(cat "$home/hook.err" 2>/dev/null)"
+  append_status "$home" 'step one'
+  wait_until 250 hook_exited "$home" || fail "at-turn teardown: the Stop hook never closed: $(cat "$home/state/.supervision-host.log")"
+  [ "$(cat "$home/offer-count" 2>/dev/null)" -ge 2 ] || fail "fixture: the close was not accepted before it turned main-only"
+  assert_rewoke_main "$home" "at-turn teardown"
+  watcher=$(cat "$home/state/.watch.lock/pid")
+  kill -TERM -- "-$(cat "$home/hook.pgid")" 2>/dev/null || true
+  sleep 2
+  kill -0 "$watcher" 2>/dev/null || fail "at-turn teardown: the successor watcher (pid $watcher) did not survive the hook's process group teardown"
+  stop_home_processes "$home"
+  pass "host+hook: the successor a close that turns main-only at its turn leaves for main survives the hook's process group teardown"
+}
+
 # If the at-turn hand-back cannot publish downtime, the healthy successor
 # cannot turn that undelivered close into a silent Stop-hook success.
 test_claude_stop_hook_notifies_when_at_turn_downtime_write_fails() {
@@ -1044,6 +1066,33 @@ test_successor_close_during_main_turn_is_delivered_at_the_next_turn_end() {
   assert_contains "$drained" 'which region?' "the successor's close must reach main's drain"
   watcher_live "$home" || fail "successor close: the next turn end left no watcher"
   pass "host+hook: a successor close that lands during main's turn is delivered at the next turn end"
+}
+
+# The live loop (2026-10-07): the successor a main-only pass-through leaves
+# for main shared the Stop hook's process group, so Claude's teardown of that
+# group after the exit-2 rewake stopped it mid-turn. The stop published
+# downtime, and the next park's first cycle announced an empty
+# "check: rearm-resurface" that woke main again, over and over. The successor
+# must outlive that teardown, so the next park takes it over quietly.
+test_pass_through_successor_survives_the_hook_process_group_teardown() {
+  local home pgid watcher
+  home=$(make_primary_home hook-group-teardown)
+  : > "$home/hook.own-group"
+  start_hook_session "$home"
+  turn_end "$home"
+  wait_until 150 watcher_live "$home" || fail "group teardown: the Stop hook never started a watcher cycle: $(cat "$home/hook.err" 2>/dev/null)"
+  append_status "$home" 'which export format?' needs-decision
+  wait_until 250 hook_exited "$home" || fail "group teardown: the decision close never reached the Stop hook: $(cat "$home/state/.supervision-host.log")"
+  assert_re '	pass-through	attended	main-only	signal:' "$home/state/.supervision-host.log" "fixture: the close was not a main-only pass-through"
+  assert_rewoke_main "$home" "group teardown (pass-through)"
+  watcher=$(cat "$home/state/.watch.lock/pid")
+  pgid=$(cat "$home/hook.pgid")
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  sleep 2
+  kill -0 "$watcher" 2>/dev/null || fail "group teardown: the successor watcher (pid $watcher) did not survive the hook's process group teardown"
+  [ "$(cat "$home/state/.watch.lock/pid" 2>/dev/null)" = "$watcher" ] || fail "group teardown: the watcher lock moved"
+  stop_home_processes "$home"
+  pass "host+hook: the successor a pass-through leaves for main survives the hook's process group teardown"
 }
 
 # The arm processes running from <home>'s bin, one "<pid> <ppid>" per line.
@@ -1702,8 +1751,10 @@ test_claude_stop_hook_host_does_not_rewake_a_delivered_unacked_recovery
 test_claude_stop_hook_rewakes_a_present_captain_beside_a_quiet_record
 test_claude_stop_hook_runs_the_host_without_the_file_and_off_opts_out
 test_claude_stop_hook_delivers_a_close_that_turns_main_only_at_its_turn
+test_successor_left_at_the_turn_survives_the_hook_process_group_teardown
 test_claude_stop_hook_notifies_when_at_turn_downtime_write_fails
 test_successor_close_during_main_turn_is_delivered_at_the_next_turn_end
+test_pass_through_successor_survives_the_hook_process_group_teardown
 test_next_park_takes_over_the_cycle_a_pass_through_left_for_main
 test_a_park_stopped_mid_take_over_leaves_the_take_over_to_the_next_park
 test_unrecorded_successor_is_stopped_rather_than_left_for_main

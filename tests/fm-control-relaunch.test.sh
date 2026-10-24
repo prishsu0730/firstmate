@@ -20,7 +20,7 @@
 set -u
 
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -35,9 +35,9 @@ BRIEF="$ROOT/bin/fm-brief.sh"
 X_LINK="$ROOT/bin/fm-x-link.sh"
 # fm_test_tmproot's own cleanup trap fires when its command substitution exits,
 # so recreate the root before resolving it and clean it up from this file's trap.
-TMP_ROOT=$(fm_test_tmproot fm-control-relaunch)
-mkdir -p "$TMP_ROOT"
-TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
+TMP_ROOT=$(fm_test_tmproot fm-control-relaunch) || exit 1
+mkdir -p "$TMP_ROOT" || exit 1
+TMP_ROOT=$(cd "$TMP_ROOT" && pwd) || exit 1
 TASK_TMPS=()
 
 relaunch_cleanup() {
@@ -1961,6 +1961,78 @@ test_tmux_refuses_when_the_server_is_gone() {
   pass "tmux: a dead server on this socket refuses both verbs rather than proving absence"
 }
 
+# A reboot ends every process, so a tmux record whose last launch (the epoch in
+# its spawn_gen) predates this boot has no live agent on any server. That is the
+# one proof of tmux absence a task record can carry; FM_BOOT_EPOCH_OVERRIDE
+# stands in for the machine's real boot time.
+stamp_launch() {  # <case-dir> <id> <epoch>
+  printf 'spawn_gen=s%s.4242.7\n' "$3" >> "$1/home/state/$2.meta"
+}
+
+test_tmux_reclaims_a_window_lost_in_a_reboot() {
+  local dir out rc
+  dir=$(new_case tmux-reboot rl64)
+  add_ship_task "$dir" rl64 claude
+  stamp_launch "$dir" rl64 1000
+  strand_endpoint "$dir" rl64
+
+  out=$(FM_BOOT_EPOCH_OVERRIDE=2000 run_control "$dir" rl64 exit); rc=$?
+  expect_code 0 "$rc" "exit must treat a window from before the boot as gone"$'\n'"$out"
+  assert_contains "$out" "endpoint-gone" "exit must say the endpoint did not survive the reboot"
+  assert_absent "$dir/fake/created-windows" "exit must not create a window"
+  [ ! -s "$dir/fake/literal" ] || fail "exit must send nothing into a window that no longer exists"
+
+  out=$(FM_BOOT_EPOCH_OVERRIDE=2000 run_control "$dir" rl64 relaunch --note "the machine rebooted; pick the work back up"); rc=$?
+  expect_code 0 "$rc" "relaunch must proceed for a record written before the boot"$'\n'"$out"
+  assert_contains "$(cat "$dir/fake/created-windows")" "fm-rl64" "relaunch must create a fresh window for the task"
+  assert_contains "$(meta_field "$dir" rl64 window)" ":fm-rl64" "the record must rebind to the new window"
+  [ "$(meta_field "$dir" rl64 worktree)" = "$dir/wt" ] || fail "relaunch must keep the recorded worktree"
+  pass "tmux: a record written before the boot is proven gone, so both verbs reclaim the task"
+}
+
+test_boot_time_is_read_from_sysctl_output() {
+  local dir stub got
+  dir=$(new_case boot-reader rl68)
+  stub="$dir/sysctl-bin"
+  mkdir -p "$stub"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "echo '{ sec = 1792592168, usec = 856262 } Wed Oct 21 22:16:08 2026'" > "$stub/sysctl"
+  chmod +x "$stub/sysctl"
+  got=$(PATH="$stub:$PATH" fm_control_boot_epoch)
+  [ "$got" = 1792592168 ] || fail "the boot time must be the seconds field of kern.boottime, got '$got'"
+  pass "boot time: the reader returns the seconds field of macOS kern.boottime"
+}
+
+test_tmux_refuses_a_window_recorded_after_the_boot() {
+  local dir
+  dir=$(new_case tmux-after-boot rl65)
+  add_ship_task "$dir" rl65 claude
+  stamp_launch "$dir" rl65 3000
+  strand_endpoint "$dir" rl65
+  FM_BOOT_EPOCH_OVERRIDE=2000 assert_tmux_missing_refuses "$dir" rl65 "record written after the boot"
+  pass "tmux: a record written after the boot still refuses both verbs"
+}
+
+test_tmux_refuses_when_the_boot_time_cannot_be_read() {
+  local dir
+  dir=$(new_case tmux-no-boot rl66)
+  add_ship_task "$dir" rl66 claude
+  stamp_launch "$dir" rl66 1000
+  strand_endpoint "$dir" rl66
+  FM_BOOT_EPOCH_OVERRIDE='' assert_tmux_missing_refuses "$dir" rl66 "empty boot time"
+  FM_BOOT_EPOCH_OVERRIDE='not-a-time' assert_tmux_missing_refuses "$dir" rl66 "garbled boot time"
+  pass "tmux: an unreadable boot time keeps the refusal on both verbs"
+}
+
+test_tmux_refuses_when_the_record_has_no_launch_time() {
+  local dir
+  dir=$(new_case tmux-no-launch rl67)
+  add_ship_task "$dir" rl67 claude
+  strand_endpoint "$dir" rl67
+  FM_BOOT_EPOCH_OVERRIDE=2000 assert_tmux_missing_refuses "$dir" rl67 "record without a launch time"
+  pass "tmux: a record that cannot say when it launched keeps the refusal"
+}
+
 test_reclaim_refuses_an_unreadable_endpoint() {
   local dir out rc
   dir=$(new_case gone-unreadable rl63)
@@ -2551,6 +2623,11 @@ test_spawn_relaunch_refuses_a_pane_outside_the_worktree
 test_tmux_refuses_a_window_missing_from_its_session
 test_tmux_refuses_a_session_that_cannot_be_found
 test_tmux_refuses_when_the_server_is_gone
+test_tmux_reclaims_a_window_lost_in_a_reboot
+test_boot_time_is_read_from_sysctl_output
+test_tmux_refuses_a_window_recorded_after_the_boot
+test_tmux_refuses_when_the_boot_time_cannot_be_read
+test_tmux_refuses_when_the_record_has_no_launch_time
 test_reclaim_refuses_an_unreadable_endpoint
 test_herdr_relaunch_resumes_only_the_registered_pi_session
 test_herdr_reclaim_adopts_a_pane_that_outlived_its_server

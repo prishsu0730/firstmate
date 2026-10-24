@@ -958,7 +958,8 @@ _fm_recovery_marker_arm_check() {
 }
 
 # Apply the owner-documented announced-episode arm transition atomically with
-# the queue read. Handling successors must not call this transition.
+# the queue read. Handling successors and foreground checkpoints must not call
+# this transition.
 _fm_recovery_marker_reopen_announced() {
   local marker=$1 lock
   lock="${marker}.lock"
@@ -1124,13 +1125,22 @@ fm_lock_holder_absent() {  # <pid> <current-pid>
   return 0
 }
 
+# Puts a quarantined holder record back unless something took its place, then
+# drops the quarantine directory.
+fm_lock_restore_quarantined_holder() {  # <holder> <quarantine>
+  if [ ! -e "$1" ] && [ ! -L "$1" ]; then
+    mv -- "$2/holder" "$1" 2>/dev/null || true
+  fi
+  rmdir "$2" 2>/dev/null || true
+}
+
 # Returns 0 after removing a recovery mutex whose holder and process group are
 # provably gone (or whose pid-less holder record is past the mid-acquire grace),
 # 1 when another process changed it first, and 2 when absence cannot be proven.
 # Renaming the holder record is the single atomic claim, so no further mutex
 # tier is needed.
 fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pid>
-  local recovery=$1 observed=$2 current=$3 holder quarantine moved_pid
+  local recovery=$1 observed=$2 current=$3 holder quarantine moved_pid verdict=
   case "$observed" in
     ''|*[!0-9]*|0)
       fm_lock_mid_acquire_is_fresh "$recovery" "$observed" && return 2
@@ -1152,23 +1162,17 @@ fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pi
   fi
   moved_pid=$(cat "$quarantine/holder/pid" 2>/dev/null || true)
   if [ "$moved_pid" != "$observed" ]; then
-    if [ ! -e "$holder" ] && [ ! -L "$holder" ]; then
-      mv -- "$quarantine/holder" "$holder" 2>/dev/null || true
-    fi
-    rmdir "$quarantine" 2>/dev/null || true
+    fm_lock_restore_quarantined_holder "$holder" "$quarantine"
     return 1
   fi
   case "$moved_pid" in
     ''|*[!0-9]*|0)
-      fm_lock_mid_acquire_is_fresh "$quarantine/holder" "$moved_pid" && moved_pid=fresh
+      fm_lock_mid_acquire_is_fresh "$quarantine/holder" "$moved_pid" && verdict=fresh
       ;;
-    *) fm_lock_holder_absent "$moved_pid" "$current" || moved_pid=live ;;
+    *) fm_lock_holder_absent "$moved_pid" "$current" || verdict=live ;;
   esac
-  if [ "$moved_pid" = fresh ] || [ "$moved_pid" = live ]; then
-    if [ ! -e "$holder" ] && [ ! -L "$holder" ]; then
-      mv -- "$quarantine/holder" "$holder" 2>/dev/null || true
-    fi
-    rmdir "$quarantine" 2>/dev/null || true
+  if [ -n "$verdict" ]; then
+    fm_lock_restore_quarantined_holder "$holder" "$quarantine"
     return 1
   fi
   if [ "$holder" != "$recovery" ] && fm_lock_points_to_owner "$recovery" "$holder"; then
@@ -1179,12 +1183,82 @@ fm_lock_reclaim_dead_recovery() {  # <recovery-mutex> <observed-pid> <current-pi
   return 0
 }
 
+# Records the current holder of <lockdir> for the caller's refusal report.
+fm_lock_note_holder() {  # <lockdir>
+  FM_LOCK_HELD_PID=$(cat "$1/pid" 2>/dev/null || true)
+  FM_LOCK_OWNER_DIR=
+}
+
+# Handles a recovery mutex that is already taken: waits out a live holder (1),
+# preserves one that cannot be proven dead (2), or reclaims a dead one and takes
+# it. Returns 0 only when this caller now owns <lockdir>.recovery.
+fm_lock_resolve_taken_recovery() {  # <steal-lock> <observed-pid> <current-pid>
+  local lockdir=$1 pid=$2 current=$3 recovery="$1.recovery" recovery_owner rc recovery_pid recovery_target
+  recovery_pid=$(cat "$recovery/pid" 2>/dev/null || true)
+  FM_LOCK_OWNER_DIR=
+  if [ ! -e "$recovery" ] && [ ! -L "$recovery" ]; then
+    FM_LOCK_HELD_PID=$pid
+    [ -w "$(dirname "$recovery")" ] && return 1
+    fm_lock_refuse_recovery "$recovery"
+    return 2
+  fi
+  if [ -L "$recovery" ]; then
+    recovery_target=$(readlink "$recovery" 2>/dev/null || true)
+    recovery_owner=$(fm_lock_link_owner "$recovery" 2>/dev/null || true)
+    if [ -n "$recovery_target" ] && [ -n "$recovery_owner" ] \
+      && [ ! -e "$recovery_owner" ] && [ ! -L "$recovery_owner" ]; then
+      if [ "$(readlink "$recovery" 2>/dev/null || true)" = "$recovery_target" ]; then
+        rm -f "$recovery" 2>/dev/null || true
+      fi
+      FM_LOCK_HELD_PID=$pid
+      return 1
+    fi
+  fi
+  if [ -n "$recovery_pid" ] && [ "$recovery_pid" != "$current" ] \
+    && fm_pid_alive "$recovery_pid"; then
+    FM_LOCK_HELD_PID=$recovery_pid
+    return 1
+  fi
+  if fm_lock_mid_acquire_is_fresh "$recovery" "$recovery_pid"; then
+    FM_LOCK_HELD_PID=$recovery_pid
+    return 1
+  fi
+  case "$recovery_pid" in
+    ''|*[!0-9]*|0) ;;
+    *)
+      if [ "$recovery_pid" != "$current" ] && kill -0 -"$recovery_pid" 2>/dev/null; then
+        FM_LOCK_HELD_PID=$recovery_pid
+        return 1
+      fi
+      ;;
+  esac
+  if [ -n "$recovery_pid" ] && [ "$recovery_pid" = "$current" ]; then
+    fm_lock_remove_path "$recovery" || true
+  else
+    if fm_lock_reclaim_dead_recovery "$recovery" "$recovery_pid" "$current"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    if [ "$rc" -eq 2 ]; then
+      FM_LOCK_HELD_PID=$pid
+      fm_lock_refuse_recovery "$recovery"
+      return 2
+    fi
+  fi
+  if ! fm_lock_try_create "$recovery"; then
+    fm_lock_note_holder "$recovery"
+    return 1
+  fi
+  return 0
+}
+
 # A dead <lock>.steal is recovered under the single fixed <lock>.steal.recovery
 # mutex, never a further .steal suffix, so recovery tiers stay bounded. A live
 # recovery holder or its surviving process group is waited out (returns 1);
 # 2 means only that recovery cannot proceed and the mutex is preserved.
 fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
-  local lockdir=$1 pid=$2 current=$3 recovery recovery_owner primary_owner cur rc recovery_pid recovery_target
+  local lockdir=$1 pid=$2 current=$3 recovery recovery_owner primary_owner cur rc
   if [ -n "$pid" ] && [ "$pid" = "$current" ]; then
     fm_lock_remove_path "$lockdir" || true
     if fm_lock_try_create "$lockdir"; then
@@ -1204,70 +1278,13 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
 
   recovery="$lockdir.recovery"
   if ! fm_lock_try_create "$recovery"; then
-    recovery_pid=$(cat "$recovery/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
-    if [ ! -e "$recovery" ] && [ ! -L "$recovery" ]; then
-      FM_LOCK_HELD_PID=$pid
-      [ -w "$(dirname "$recovery")" ] && return 1
-      fm_lock_refuse_recovery "$recovery"
-      return 2
-    fi
-    if [ -L "$recovery" ]; then
-      recovery_target=$(readlink "$recovery" 2>/dev/null || true)
-      recovery_owner=$(fm_lock_link_owner "$recovery" 2>/dev/null || true)
-      if [ -n "$recovery_target" ] && [ -n "$recovery_owner" ] \
-        && [ ! -e "$recovery_owner" ] && [ ! -L "$recovery_owner" ]; then
-        if [ "$(readlink "$recovery" 2>/dev/null || true)" = "$recovery_target" ]; then
-          rm -f "$recovery" 2>/dev/null || true
-        fi
-        FM_LOCK_HELD_PID=$pid
-        return 1
-      fi
-    fi
-    if [ -n "$recovery_pid" ] && [ "$recovery_pid" != "$current" ] \
-      && fm_pid_alive "$recovery_pid"; then
-      FM_LOCK_HELD_PID=$recovery_pid
-      return 1
-    fi
-    if fm_lock_mid_acquire_is_fresh "$recovery" "$recovery_pid"; then
-      FM_LOCK_HELD_PID=$recovery_pid
-      return 1
-    fi
-    case "$recovery_pid" in
-      ''|*[!0-9]*|0) ;;
-      *)
-        if [ "$recovery_pid" != "$current" ] && kill -0 -"$recovery_pid" 2>/dev/null; then
-          FM_LOCK_HELD_PID=$recovery_pid
-          return 1
-        fi
-        ;;
-    esac
-    if [ -n "$recovery_pid" ] && [ "$recovery_pid" = "$current" ]; then
-      fm_lock_remove_path "$recovery" || true
-    else
-      if fm_lock_reclaim_dead_recovery "$recovery" "$recovery_pid" "$current"; then
-        rc=0
-      else
-        rc=$?
-      fi
-      if [ "$rc" -eq 2 ]; then
-        FM_LOCK_HELD_PID=$pid
-        fm_lock_refuse_recovery "$recovery"
-        return 2
-      fi
-    fi
-    if ! fm_lock_try_create "$recovery"; then
-      FM_LOCK_HELD_PID=$(cat "$recovery/pid" 2>/dev/null || true)
-      FM_LOCK_OWNER_DIR=
-      return 1
-    fi
+    fm_lock_resolve_taken_recovery "$lockdir" "$pid" "$current" || return "$?"
   fi
   recovery_owner=${FM_LOCK_OWNER_DIR:-}
 
   if ! fm_lock_points_to_owner "$recovery" "$recovery_owner"; then
     fm_lock_release "$recovery"
-    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
+    fm_lock_note_holder "$lockdir"
     return 1
   fi
   primary_owner=
@@ -1277,8 +1294,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
   cur=$(cat "$lockdir/pid" 2>/dev/null || true)
   if ! fm_lock_recheck_stale_owner "$lockdir" "$primary_owner" "$cur"; then
     fm_lock_release "$recovery"
-    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
+    fm_lock_note_holder "$lockdir"
     return 1
   fi
 
@@ -1289,8 +1305,7 @@ fm_lock_try_recover_steal_mutex() {  # <steal-lock> <observed-pid> <current-pid>
     FM_LOCK_RECOVERED_PID=$cur
   fi
   if [ "$rc" -ne 0 ]; then
-    FM_LOCK_HELD_PID=$(cat "$lockdir/pid" 2>/dev/null || true)
-    FM_LOCK_OWNER_DIR=
+    fm_lock_note_holder "$lockdir"
   fi
   fm_lock_release "$recovery"
   return "$rc"
@@ -1928,6 +1943,81 @@ fm_treehouse_slot_owner_release() {  # <worktree> <task-id>
   [ "$FM_TREEHOUSE_SLOT_OWNER" = mine ] || return 0
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 0
   rm -f "$marker" 2>/dev/null || true
+}
+
+# Is a task record finished, with proof that returning or resetting its recorded
+# slot loses none of its work? Used to tell a harmless leftover record (a worker
+# that finished, whose pool slot was since handed on) from one whose work may
+# still live in the slot it names. Returns 0 only when all of these hold:
+#   - the record's last status line is `done`;
+#   - a scout's report exists at <home>/data/<id>/report.md, or a ship's recorded
+#     pr_head (else its branch tip) is reachable from a remote-tracking ref of
+#     its project, so the work is pushed and the copy is not the only holder.
+# A secondmate home, a record with no status, and anything else returns 1: the
+# answer is "not proven", never "unfinished". The ship check reads local refs
+# only, so it never touches the network or the slot's copy.
+fm_task_record_finished() {  # <state-dir> <task-id>
+  local state=$1 id=$2 meta last kind project sha branch
+  meta="$state/$id.meta"
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  [ -f "$state/$id.status" ] && [ ! -L "$state/$id.status" ] || return 1
+  last=$(tail -n 1 "$state/$id.status" 2>/dev/null) || return 1
+  case "$last" in
+    "done "*|"done["*|"done:"*) ;;
+    *) return 1 ;;
+  esac
+  kind=$(sed -n 's/^kind=//p' "$meta" | tail -n 1)
+  case "$kind" in
+    scout)
+      [ -f "$(dirname "$state")/data/$id/report.md" ]
+      ;;
+    ship|'')
+      project=$(sed -n 's/^project=//p' "$meta" | tail -n 1)
+      [ -d "$project" ] || return 1
+      sha=$(sed -n 's/^pr_head=//p' "$meta" | tail -n 1)
+      if [ -z "$sha" ]; then
+        branch=$(sed -n 's/^branch=//p' "$meta" | tail -n 1)
+        [ -n "$branch" ] || return 1
+        sha=$(git -C "$project" rev-parse --verify --quiet "refs/heads/$branch^{commit}" 2>/dev/null) || return 1
+      fi
+      [ -n "$sha" ] || return 1
+      [ -n "$(git -C "$project" for-each-ref --contains "$sha" --count=1 --format=x refs/remotes 2>/dev/null)" ]
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Task records, in this home or any local secondmate home, that name a pool slot
+# and are NOT proven finished: the ones whose work the slot may still hold.
+# Sets FM_SLOT_BLOCKING_RECORDS to "<id> <field> <state-dir>" lines. Returns 1
+# with FM_LOCAL_FIRSTMATE_ERROR when the local homes cannot be enumerated, so a
+# caller refuses rather than treating an unreadable home as one with no tasks.
+# Only <first-state>/<self-id>.meta is excluded by file identity; a same-named
+# task in another home still conflicts. Proven-finished worktree references are
+# ignored, but home references always block.
+fm_treehouse_slot_blocking_records() {  # <slot> <self-id> <first-state>
+  local slot=$1 self=$2 first=$3 state_dir other other_id field path canon
+  FM_SLOT_BLOCKING_RECORDS=()
+  slot=$(CDPATH='' cd -- "$slot" 2>/dev/null && pwd -P) || return 0
+  fm_local_firstmate_state_dirs "$first" || return 1
+  for state_dir in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
+    for other in "$state_dir"/*.meta; do
+      [ -f "$other" ] && [ ! -L "$other" ] || continue
+      other_id=$(basename "$other" .meta)
+      [ "$other_id" = "$self" ] && [ "$other" -ef "$first/$self.meta" ] && continue
+      for field in worktree home; do
+        path=$(sed -n "s/^$field=//p" "$other" | tail -n 1)
+        [ -n "$path" ] || continue
+        canon=$(CDPATH='' cd -- "$path" 2>/dev/null && pwd -P) || continue
+        [ "$canon" = "$slot" ] || continue
+        if [ "$field" = worktree ] && fm_task_record_finished "$state_dir" "$other_id"; then
+          continue
+        fi
+        FM_SLOT_BLOCKING_RECORDS+=("$other_id $field $state_dir")
+        break
+      done
+    done
+  done
 }
 
 fm_failure_episode_reset() {

@@ -1538,6 +1538,51 @@ test_spawn_secondmate_claude_grants_parent_inbox_dir() {
   pass "claude secondmate launches cover the parent-home steering inbox in auto and bypass modes"
 }
 
+# A restarted parent can retain its own FM_* snapshot while it relaunches more
+# than one secondmate.  Each emitted shell command must clear that snapshot and
+# establish only the selected mate's home before the harness starts.
+test_spawn_secondmate_launches_keep_home_environment_isolated() {
+  local w alpha beta alpha_real beta_real alpha_log beta_log fakebin out status launch capture
+  w="$TMP_ROOT/spawn-home-isolation"
+  alpha="$w/alpha"
+  beta="$w/beta"
+  alpha_log="$w/alpha.launch"
+  beta_log="$w/beta.launch"
+  mkdir -p "$w/home/config" "$w/home/state" "$w/home/data"
+  printf 'claude\n' > "$w/home/config/secondmate-harness"
+  make_seeded_home "$alpha" alpha
+  make_seeded_home "$beta" beta
+  alpha_real=$(cd "$alpha" && pwd -P)
+  beta_real=$(cd "$beta" && pwd -P)
+
+  out=$(spawn_secondmate_capture "$w" alpha "$alpha" "$alpha_log" 2>&1); status=$?
+  expect_code 0 "$status" "alpha secondmate spawn should succeed"$'\n'"$out"
+  out=$(spawn_secondmate_capture "$w" beta "$beta" "$beta_log" 2>&1); status=$?
+  expect_code 0 "$status" "beta secondmate spawn should succeed"$'\n'"$out"
+
+  fakebin=$(make_launch_capturing_tmux "$w/eval-tmux")
+  cat > "$fakebin/claude" <<'SH'
+#!/usr/bin/env bash
+printf '%s|%s|%s|%s\n' "${FM_HOME:-}" "${FM_ROOT_OVERRIDE-set}" "${FM_STATE_OVERRIDE-set}" "$PWD" >> "${FM_CAPTURE_ENV:?}"
+SH
+  chmod +x "$fakebin/claude"
+  capture="$w/captured-env"
+  : > "$capture"
+  fm_eval_launch "$(cat "$alpha_log")" "$alpha" "$fakebin" \
+    "FM_HOME=$w/poisoned-home" "FM_ROOT_OVERRIDE=$w/poisoned-root" \
+    "FM_STATE_OVERRIDE=$w/poisoned-state" "FM_CAPTURE_ENV=$capture" \
+    || fail "alpha captured secondmate launch could not be evaluated"
+  fm_eval_launch "$(cat "$beta_log")" "$beta" "$fakebin" \
+    "FM_HOME=$w/poisoned-home" "FM_ROOT_OVERRIDE=$w/poisoned-root" \
+    "FM_STATE_OVERRIDE=$w/poisoned-state" "FM_CAPTURE_ENV=$capture" \
+    || fail "beta captured secondmate launch could not be evaluated"
+  assert_grep "$alpha_real|||$alpha_real" "$capture" \
+    "alpha launch inherited another home's Firstmate state: $(cat "$capture")"
+  assert_grep "$beta_real|||$beta_real" "$capture" \
+    "beta launch inherited another home's Firstmate state: $(cat "$capture")"
+  pass "secondmate launches clear parent snapshots and keep each selected home isolated"
+}
+
 # The file is a captain-wide safety preference, so it inherits like
 # config/backend: present values converge exactly and primary absence mirrors.
 test_claude_permission_mode_inheritance_present_and_absent() {
@@ -2761,6 +2806,7 @@ test_bootstrap_sweep_materializes_and_inherits_memory_default
 test_backend_inheritance_present_and_absent
 test_spawn_secondmate_claude_permission_mode_auto
 test_spawn_secondmate_claude_grants_parent_inbox_dir
+test_spawn_secondmate_launches_keep_home_environment_isolated
 test_claude_permission_mode_inheritance_present_and_absent
 test_presentation_inheritance_default_on_and_opt_out
 test_bootstrap_sweep_surfaces_config_propagation_failure

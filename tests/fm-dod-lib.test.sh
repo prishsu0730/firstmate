@@ -83,15 +83,64 @@ test_moved_branch_without_named_head_is_refused() {
   pass "a moved remote branch that lacks the named head is refused"
 }
 
-test_no_mistakes_prevalidation_done_is_not_gated() {
-  local repo wt
+test_pr_delivery_done_without_pr_url_is_refused() {
+  local repo wt reason rc mode pushed line
   repo="$TMP_ROOT/preval-repo"
   wt="$TMP_ROOT/preval-wt"
   fm_git_worktree "$repo" "$wt" fm/preval
   git -C "$wt" commit -q --allow-empty -m 'only in the disposable copy'
-  accept_done ship no-mistakes "$wt" "$repo" 'done: implementation complete' \
-    || fail "no-mistakes pre-validation done: must not require named-head reachability"
-  pass "no-mistakes pre-validation done: is not gated"
+  for pushed in no yes; do
+    if [ "$pushed" = yes ]; then
+      git -C "$wt" update-ref refs/remotes/origin/fm/preval "$(git -C "$wt" rev-parse HEAD)"
+    fi
+    for mode in no-mistakes direct-PR ''; do
+      for line in 'done: implementation complete' 'done [key=fix]: implementation complete' 'done: [key=fix] implementation complete'; do
+        rc=0
+        reason=$(accept_done ship "$mode" "$wt" "$repo" "$line") || rc=$?
+        [ "$rc" -eq 1 ] || fail "mode '$mode' without a PR URL was accepted (pushed=$pushed, exit $rc)"
+        case "$reason" in
+          "no PR link yet:"*) ;;
+          *) fail "PR-less refusal was not the plain message: $reason" ;;
+        esac
+        if [ "$mode" = direct-PR ]; then
+          [ "$reason" = 'no PR link yet: push your branch and open a PR, then report done: PR <url>' ] \
+            || fail "direct-PR refusal gave incorrect recovery advice: $reason"
+        else
+          [ "$reason" = 'no PR link yet: run /no-mistakes to reach a PR, then report done: PR <url> checks green' ] \
+            || fail "no-mistakes refusal gave incorrect recovery advice: $reason"
+        fi
+      done
+    done
+  done
+  pass "PR delivery done: without a PR URL is refused before and after push"
+}
+
+test_no_mistakes_done_with_pr_url_is_accepted() {
+  local repo wt sha
+  repo="$TMP_ROOT/withurl-repo"
+  wt="$TMP_ROOT/withurl-wt"
+  fm_git_worktree "$repo" "$wt" fm/withurl
+  git -C "$wt" commit -q --allow-empty -m 'pushed fix'
+  sha=$(git -C "$wt" rev-parse HEAD)
+  git -C "$wt" update-ref refs/remotes/origin/fm/withurl "$sha"
+  accept_done ship no-mistakes "$wt" "$repo" 'done: PR https://example.test/o/r/pull/9 checks green' \
+    || fail "no-mistakes done: with a PR URL and a pushed head was refused"
+  pass "no-mistakes done: with a PR URL is accepted"
+}
+
+test_direct_pr_done_with_pr_url_follows_head_gate() {
+  local repo wt sha
+  repo="$TMP_ROOT/dpr-repo"
+  wt="$TMP_ROOT/dpr-wt"
+  fm_git_worktree "$repo" "$wt" fm/dpr
+  git -C "$wt" commit -q --allow-empty -m 'unpushed'
+  accept_done ship direct-PR "$wt" "$repo" 'done: PR https://example.test/o/r/pull/3' >/dev/null \
+    && fail "direct-PR unpushed done: was accepted"
+  sha=$(git -C "$wt" rev-parse HEAD)
+  git -C "$wt" update-ref refs/remotes/origin/fm/dpr "$sha"
+  accept_done ship direct-PR "$wt" "$repo" 'done: PR https://example.test/o/r/pull/3' \
+    || fail "direct-PR pushed done: was refused"
+  pass "direct-PR done: with a PR URL still requires a pushed head"
 }
 
 test_local_only_linked_branch_is_accepted() {
@@ -150,7 +199,7 @@ test_free_text_sha_is_not_the_named_head() {
   git -C "$wt" update-ref refs/remotes/origin/main "$old"
   git -C "$wt" commit -q --allow-empty -m 'actual fix'
   new=$(git -C "$wt" rev-parse HEAD)
-  reason=$(accept_done ship direct-PR "$wt" "$repo" "done: reverted $old and fixed the retry")
+  reason=$(accept_done ship direct-PR "$wt" "$repo" "done: PR https://example.test/o/r/pull/3 reverted $old and fixed the retry")
   rc=$?
   [ "$rc" -eq 1 ] || fail "free-text SHA on origin/main made an unpushed HEAD accept"
   case "$reason" in
@@ -426,7 +475,9 @@ EOF
 
 test_scout_done_is_not_gated
 test_unpushed_ship_done_is_refused
-test_no_mistakes_prevalidation_done_is_not_gated
+test_pr_delivery_done_without_pr_url_is_refused
+test_no_mistakes_done_with_pr_url_is_accepted
+test_direct_pr_done_with_pr_url_follows_head_gate
 test_remote_containing_named_head_is_accepted
 test_moved_branch_without_named_head_is_refused
 test_free_text_sha_is_not_the_named_head
@@ -464,5 +515,170 @@ test_worker_role_names_skill_and_fallback_file() {
 }
 
 test_worker_role_names_skill_and_fallback_file
+
+# --- scope map: a ship done: is refused until every brief item maps ---------
+
+# Build a worktree with one change on its branch, a brief with three items
+# (two intent, one spec) that opts in to the scope map, and the state/data
+# layout the gate reads. Prints nothing; sets SCOPE_* variables.
+scope_fixture() {  # <name> [with-heading]
+  local name=$1 heading=${2:-yes}
+  SCOPE_REPO="$TMP_ROOT/$name-repo"
+  SCOPE_WT="$TMP_ROOT/$name-wt"
+  SCOPE_STATE="$TMP_ROOT/$name-home/state"
+  SCOPE_DATA="$TMP_ROOT/$name-home/data"
+  SCOPE_ID=$name
+  mkdir -p "$SCOPE_STATE" "$SCOPE_DATA/$SCOPE_ID"
+  fm_git_worktree "$SCOPE_REPO" "$SCOPE_WT" "fm/$name"
+  printf 'one\n' > "$SCOPE_WT/one.txt"
+  git -C "$SCOPE_WT" add one.txt
+  git -C "$SCOPE_WT" commit -q -m 'cover the first intent item'
+  SCOPE_SHA=$(git -C "$SCOPE_WT" rev-parse HEAD)
+  printf 'two\n' > "$SCOPE_WT/two.txt"
+  git -C "$SCOPE_WT" add two.txt
+  git -C "$SCOPE_WT" commit -q -m 'cover the second intent item'
+  {
+    printf '# Task\n## Captain'"'"'s intent\n'
+    printf 'Plain prose is not an item.\n'
+    printf '1. First intent item\n'
+    printf -- '- Second intent item\n'
+    printf -- '    - nested detail is not an item\n'
+    # shellcheck disable=SC2016 # Literal fence markers must remain unexpanded.
+    printf -- '```\n- fenced bullet is not an item\n```\n'
+    printf '## Firstmate spec\n'
+    printf '* Spec item\n'
+    printf '# Setup\n'
+    printf '1. not a brief item, outside the Task\n'
+    [ "$heading" = yes ] && printf '# Scope map\nWrite the map.\n'
+  } > "$SCOPE_DATA/$SCOPE_ID/brief.md"
+  # The recorded PR head satisfies the named-head gate, so only the scope map decides.
+  SCOPE_DONE='done [at=1]: PR https://example.test/o/r/pull/1 checks green'
+  fm_write_meta "$SCOPE_STATE/$SCOPE_ID.meta" pr=https://example.test/o/r/pull/1 "pr_head=$SCOPE_SHA"
+}
+
+scope_accept() {  # <done line>
+  FM_DATA_OVERRIDE=$SCOPE_DATA accept_done ship no-mistakes "$SCOPE_WT" "$SCOPE_REPO" \
+    "$1" "$SCOPE_STATE" "$SCOPE_ID" "$SCOPE_STATE/$SCOPE_ID.meta"
+}
+
+test_scope_items_number_only_top_level_brief_items() {
+  scope_fixture scope-items
+  fm_scope_map_items "$SCOPE_DATA/$SCOPE_ID/brief.md" > "$TMP_ROOT/scope-items.out"
+  assert_equals "I1	First intent item
+I2	Second intent item
+S1	Spec item" "$(cat "$TMP_ROOT/scope-items.out")" "scope items were not the three top-level bullets"
+  pass "scope items number only the top-level intent and spec items"
+}
+
+test_partial_scope_map_refuses_done() {
+  local reason rc
+  scope_fixture scope-partial
+  printf 'I1: %s\n' "$SCOPE_SHA" > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
+  reason=$(scope_accept "$SCOPE_DONE")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "partial scope map accepted done: (exit $rc)"
+  assert_contains "$reason" "I2 has no mapping" "refusal did not name the unmapped intent item"
+  assert_contains "$reason" "S1 has no mapping" "refusal did not name the unmapped spec item"
+  assert_not_contains "$reason" "I1 has no mapping" "refusal named an item that is mapped"
+  pass "a partial scope map refuses done:"
+}
+
+test_missing_scope_map_refuses_done() {
+  local reason rc
+  scope_fixture scope-absent
+  reason=$(scope_accept "$SCOPE_DONE")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "done: was accepted with no scope map (exit $rc)"
+  assert_contains "$reason" "I1 has no mapping" "refusal did not name the first item"
+  pass "an absent scope map refuses done:"
+}
+
+test_full_scope_map_accepts_done() {
+  scope_fixture scope-full
+  {
+    printf 'I1: %s\n' "$SCOPE_SHA"
+    # shellcheck disable=SC2016 # Literal backticks must remain unexpanded.
+    printf -- '- `I2`: two.txt\n'
+    printf 'S1: two.txt\n'
+  } > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
+  scope_accept "$SCOPE_DONE" >/dev/null \
+    || fail "full scope map refused done: $(scope_accept "$SCOPE_DONE")"
+  pass "a full scope map accepts done:"
+}
+
+test_scope_map_ref_must_be_on_the_branch() {
+  local reason rc
+  scope_fixture scope-badref
+  {
+    printf 'I1: README.md\n'
+    printf 'I2: %s\n' "$(git -C "$SCOPE_WT" rev-parse main)"
+    printf 'S1: n/a\n'
+  } > "$SCOPE_DATA/$SCOPE_ID/scope-map.md"
+  reason=$(scope_accept "$SCOPE_DONE")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "unchanged file and base commit were accepted (exit $rc)"
+  assert_contains "$reason" "I1 maps to README.md" "an unchanged file was accepted as covering an item"
+  assert_contains "$reason" "I2 maps to" "a base commit was accepted as covering an item"
+  assert_contains "$reason" "S1 maps to n/a" "an n/a mapping was accepted"
+  pass "scope map refs must be commits or files on the branch"
+}
+
+test_brief_without_scope_map_heading_is_not_gated() {
+  scope_fixture scope-legacy no
+  scope_accept "$SCOPE_DONE" >/dev/null \
+    || fail "a brief with no Scope map section was gated"
+  pass "a brief without the Scope map section is not gated"
+}
+
+test_scope_map_only_gates_ship_done_lines() {
+  scope_fixture scope-verbs
+  scope_accept 'working [at=1]: still going' >/dev/null || fail "a working: line was gated"
+  FM_DATA_OVERRIDE=$SCOPE_DATA accept_done scout no-mistakes "$SCOPE_WT" "$SCOPE_REPO" \
+    'done [at=1]: report' "$SCOPE_STATE" "$SCOPE_ID" "$SCOPE_STATE/$SCOPE_ID.meta" >/dev/null \
+    || fail "a scout done: was gated"
+  pass "the scope map gates only ship done: lines"
+}
+
+test_scope_map_cli_lists_and_checks() {
+  local brief map
+  scope_fixture scope-cli
+  brief=$SCOPE_DATA/$SCOPE_ID/brief.md
+  map=$SCOPE_DATA/$SCOPE_ID/scope-map.md
+  printf 'I1: %s\n' "$SCOPE_SHA" > "$map"
+  "$ROOT/bin/fm-scope-map.sh" items "$brief" | grep -q '^S1	Spec item$' \
+    || fail "items did not list the spec item"
+  if (cd "$SCOPE_WT" && "$ROOT/bin/fm-scope-map.sh" check "$brief" "$map" > "$TMP_ROOT/scope-cli.out"); then
+    fail "check passed a partial map"
+  fi
+  assert_grep "I2 has no mapping" "$TMP_ROOT/scope-cli.out" "check did not report the unmapped item"
+  printf 'I2: two.txt\nS1: two.txt\n' >> "$map"
+  (cd "$SCOPE_WT" && "$ROOT/bin/fm-scope-map.sh" check "$brief" "$map") >/dev/null \
+    || fail "check refused a full map"
+  pass "fm-scope-map.sh lists items and checks the map"
+}
+
+test_scope_map_cli_refuses_without_git_worktree() {
+  local brief map
+  scope_fixture scope-no-worktree
+  brief=$SCOPE_DATA/$SCOPE_ID/brief.md
+  map=$SCOPE_DATA/$SCOPE_ID/scope-map.md
+  printf 'I1: one.txt\nI2: two.txt\nS1: two.txt\n' > "$map"
+  if "$ROOT/bin/fm-scope-map.sh" check "$brief" "$map" "$TMP_ROOT/not-a-repo" > "$TMP_ROOT/scope-no-worktree.out"; then
+    fail "check accepted mappings without a git worktree"
+  fi
+  assert_grep "cannot be checked without a git worktree" "$TMP_ROOT/scope-no-worktree.out" \
+    "check did not explain the missing git worktree"
+  pass "fm-scope-map.sh refuses when no git worktree is available"
+}
+
+test_scope_items_number_only_top_level_brief_items
+test_partial_scope_map_refuses_done
+test_missing_scope_map_refuses_done
+test_full_scope_map_accepts_done
+test_scope_map_ref_must_be_on_the_branch
+test_brief_without_scope_map_heading_is_not_gated
+test_scope_map_only_gates_ship_done_lines
+test_scope_map_cli_lists_and_checks
+test_scope_map_cli_refuses_without_git_worktree
 
 echo "all fm-dod-lib tests passed"
