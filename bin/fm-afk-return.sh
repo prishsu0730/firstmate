@@ -890,6 +890,9 @@ EOF
     printf 'Next: firstmate closes landed task %s with bin/fm-teardown.sh %s.\n' "$landed_task" "$landed_task"
   elif [ -n "$review_task" ]; then
     printf 'Next: captain reviews %s for %s.\n' "$review_url" "$review_task"
+  elif [ -n "$rows" ]; then
+    task=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" && $6 != "true" { print $2; exit }')
+    printf 'Next: captain reviews the escalated outcome for %s.\n' "$task"
   else
     printf 'Next: none.\n'
   fi

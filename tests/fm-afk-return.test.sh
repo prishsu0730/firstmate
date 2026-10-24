@@ -673,7 +673,7 @@ test_return_brief_lists_landed_work_awaiting_cleanup() {
 
 test_return_brief_files_and_next_action_precedence() {
   local scenario dir out next_line expected stamp
-  for scenario in blocker decision captain-outcome landed default-base review unrecorded none; do
+  for scenario in blocker decision captain-outcome captain-only landed default-base review unrecorded none; do
     dir="$TMP_ROOT/brief-next-$scenario"
     install_runner "$dir"
     contract_in "$dir" enter --words 'handle the recorded PR work' >/dev/null 2>&1 \
@@ -717,7 +717,7 @@ SH
         printf 'window=synthetic:fm-choice\nbackend=tmux\nkind=ship\n' > "$dir/home/state/choice.meta"
         printf 'needs-decision [key=target]: choose the target\n' > "$dir/home/state/choice.status"
         ;;
-      captain-outcome)
+      captain-outcome|captain-only)
         outcome_in "$dir" append --task choice --verdict captain --summary 'choose the target' >/dev/null \
           || fail "could not record the captain outcome"
         ;;
@@ -772,13 +772,14 @@ SH
       blocker) expected='Next: firstmate resolves the catch-up blocker for repair-task.' ;;
       decision) expected='Next: captain decides for choice [key=target].' ;;
       captain-outcome) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      captain-only) expected='Next: captain reviews the escalated outcome for choice.' ;;
       landed|default-base) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       review) expected='Next: captain reviews https://github.com/example/ready/pull/9 for ready.' ;;
       unrecorded) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       none) expected='Next: none.' ;;
     esac
     [ "$next_line" = "$expected" ] || fail "$scenario selected the wrong next action: $next_line"
-    if [ "$scenario" = none ] || [ "$scenario" = unrecorded ]; then
+    if [ "$scenario" = none ] || [ "$scenario" = unrecorded ] || [ "$scenario" = captain-only ]; then
       assert_contains "$out" 'Files changed: none recorded' "empty records did not say no changes were recorded"
     else
       assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence' "$scenario did not show recorded PR changes"
