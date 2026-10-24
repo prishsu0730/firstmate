@@ -1117,18 +1117,19 @@ EOF
 # _fm_decision_fold_line rule the two folds use, and the reported verb is read
 # off the transitions that rule produces.
 #
-# Read the complete stream to preserve byte offsets for episode matching, even
-# across lines that do not change the open set.
+# Only lines that name a transition verb can move the open set, so grep selects
+# those and reports each one's byte offset (-b); that keeps the episode offsets
+# exact without walking every line of a long stream in bash.
 status_key_closing_verb() {  # <status-file> <key>
-  local f=$1 want=$2 line resolve held open='' was verb='' kind event position=0 start LC_ALL=C
+  local f=$1 want=$2 line entry resolve held open='' was verb='' kind event start LC_ALL=C
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   [ -n "$want" ] || return 0
   kind=$(_fm_status_kind "$f")
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  while IFS= read -r line || [ -n "$line" ]; do
-    start=$position
-    position=$((position + ${#line} + 1))
+  while IFS= read -r entry || [ -n "$entry" ]; do
+    start=${entry%%:*}
+    line=${entry#*:}
     status_line_verb "$line" event
     case "$event:$kind" in
       done:ship|done:scout|failed:ship|failed:scout) ;;
@@ -1148,7 +1149,7 @@ status_key_closing_verb() {  # <status-file> <key>
     if [ "$was" = 1 ] && ! _fm_open_set_has "$open" "$want"; then
       verb=$event
     fi
-  done < "$f"
+  done < <(grep -a -b -F -e needs-decision -e blocked -e "done" -e failed -e "$resolve" -e "$held" -- "$f" 2>/dev/null)
   if _fm_open_set_has "$open" "$want"; then
     _fm_open_set_verb "$open" "$want"
     return 0
