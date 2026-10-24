@@ -5831,6 +5831,13 @@ fi
 fm_lock_release "$SPAWN_META_LOCK"
 SPAWN_META_LOCK_HELD=0
 
+# A secondmate launched after a deliberate stop is running again, so the stop
+# marker must not keep the liveness probes skipping it.
+if [ "$KIND" = secondmate ]; then
+  rm -f "$STATE/.secondmate-stopped-$ID" \
+    || { echo "error: secondmate $ID launched but its stop marker $STATE/.secondmate-stopped-$ID could not be cleared" >&2; exit 1; }
+fi
+
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
 SPAWN_ACCOUNT=

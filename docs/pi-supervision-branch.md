@@ -573,14 +573,14 @@ A leftover `state/.afk` flag declines nothing.
   - A wake the branch declines or cannot take (a broken branch inside its cooldown, an unresolvable or corrupt scan) falls back to main exactly as attended.
 
   Parking is a cost and chat-cleanliness measure.
-  Supervision continuity is the safety property, and the return brief's health section reads any gap.
+  Supervision continuity is the safety property, and the return brief's Outcome section reports any gap.
 - The wake message ends with a fixed `POSTURE: AWAY` tail plus the record's read-back verbatim (`bin/fm-afk-contract.sh readback`).
   The branch therefore has the captain's away words, the spend cap, the expected return, and the reach line in front of it at execution time, without any prefix change.
 - Captain-verdict outcomes accumulate unprocessed in the outcome store.
   Their visible entries still persist, but no processing turn opens on the parked main.
   The request is re-checked against the record immediately before it would open and at every run boundary, so a request pending when the record appears is cancelled rather than delivered.
   The first run boundary after the record is archived, ordinarily the captain's return message, presents the accumulated rows with a fresh triggered budget exactly as after any other gap.
-  `bin/fm-afk-return.sh` lists them under "waiting on you".
+  `bin/fm-afk-return.sh` lists them under "Needs Me".
 - Main's standing authority relocates to the branch, and nothing more.
   [Authority relocation](#authority-relocation) below gives the details.
 - The branch prompt's fixed "Postures" section states these rules once per firstmate version, so the prefix stays byte-stable.
