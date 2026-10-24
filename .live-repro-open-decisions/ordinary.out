@@ -1,0 +1,5 @@
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+task8 [key=k8] needs-decision: decision text for item 8
+task9 [key=k9] needs-decision: decision text for item 9
+OPEN DECISIONS: 68 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'

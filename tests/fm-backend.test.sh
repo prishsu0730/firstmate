@@ -904,6 +904,41 @@ run_spawn_case() {  # <bin-root> <fakebin> <log> <state> <data> <config> <proj> 
     "$bin/bin/fm-spawn.sh" "$@"
 }
 
+test_tmux_container_recovers_from_a_stale_socket_environment() {
+  local dir fb out
+  dir="$TMP_ROOT/stale-tmux-container"
+  fb="$dir/fakebin"
+  mkdir -p "$fb" "$dir/proj"
+  cat > "$fb/tmux" <<'SH'
+#!/usr/bin/env bash
+printf '%s %s\n' "${TMUX-unset}" "$*" >> "${FM_TMUX_LOG:?}"
+[ -z "${TMUX:-}" ] || { echo "no server running on ${TMUX%%,*}" >&2; exit 1; }
+case "${1:-}" in
+  has-session) exit 1 ;;
+  new-session|list-windows|set-window-option) exit 0 ;;
+  new-window) printf '@1\n'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fb/tmux"
+  : > "$dir/log"
+  out=$(PATH="$fb:$PATH" TMUX='stale-socket,1,0' TMUX_PANE='%3' FM_TMUX_LOG="$dir/log" \
+    bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source tmux
+      fm_backend_tmux_clear_stale_client_env
+      ses=$(fm_backend_tmux_container_ensure) || exit 1
+      wid=$(fm_backend_tmux_create_task "$ses" fm-t1 "$2") || exit 1
+      printf "%s %s %s" "$ses" "$wid" "${TMUX_PANE-unset}"' _ "$ROOT" "$dir/proj") \
+    || fail "a stale tmux environment should recover into a dedicated session and window: $(cat "$dir/log")"
+  [ "$out" = "firstmate @1 unset" ] || fail "stale tmux recovery produced '$out', not 'firstmate @1 unset'"
+  assert_grep 'stale-socket,1,0 display-message -p #S' "$dir/log" \
+    "stale tmux recovery never probed the inherited socket: $(cat "$dir/log")"
+  assert_grep 'unset new-session -d -s firstmate' "$dir/log" \
+    "stale tmux recovery created the session through the dead socket environment: $(cat "$dir/log")"
+  assert_grep 'unset new-window ' "$dir/log" \
+    "stale tmux recovery created the task window through the dead socket environment: $(cat "$dir/log")"
+  pass "tmux spawn sequence clears a stale reboot socket before creating firstmate and the task window"
+}
+
 # NOTE: the old-vs-new spawn command-log conformance test that used to live here
 # was retired. It asserted the P1 backend refactor was a byte-for-byte pure
 # extraction of the spawn window-creation/targeting sequence, but that sequence
@@ -1256,6 +1291,7 @@ test_resolve_selector_three_forms
 test_backend_of_selector_matches_explicit_target_meta
 test_send_tmux_contract
 test_peek_conformance_old_vs_new
+test_tmux_container_recovers_from_a_stale_socket_environment
 test_spawn_symlinked_project_prefix_avoids_false_refusal
 test_teardown_conformance_old_vs_new
 test_spawn_refuses_unknown_backend_flag

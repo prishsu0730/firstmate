@@ -1020,6 +1020,134 @@ test_stale_record_on_claimed_slot_retires_then_claimant_tears_down() {
   pass "fm-teardown: a stale record on a claimed slot retires, then the claimant tears down"
 }
 
+# Mark a scout record finished with the proof fm_task_record_finished reads: a
+# last status line of done and a saved report.
+finish_scout_record() {  # <case> <id>
+  local dir=$1 id=$2
+  printf 'done [at=1]: report saved\n' > "$dir/home/state/$id.status"
+  mkdir -p "$dir/home/data/$id"
+  printf 'report\n' > "$dir/home/data/$id/report.md"
+}
+
+# The deadlock behind "teardown refuses and the pool fills up": an older scout
+# record is finished but cannot be torn down first (its captain-call gate belongs
+# to the captain), and the newer claimant's teardown refused while the older
+# record still named its slot. A finished record with a saved report holds
+# nothing in the slot, so the claimant must tear down; an unfinished one, or one
+# only paused, must still block it.
+test_finished_record_beside_the_claimant_does_not_block_its_teardown() {
+  local dir id=older-task other=claimant-task rc
+
+  dir=$(make_case slot-finished-older-record)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  finish_scout_record "$dir" "$id"
+  claim_pool_slot "$dir" "$other"
+  run_case "$dir" "$other" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "claimant teardown was refused by a finished older record: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$other.meta" "claimant teardown left its record"
+  assert_present "$dir/home/state/$id.meta" "claimant teardown removed the finished record it does not own"
+  grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "claimant teardown did not return its pool slot: $(cat "$dir/runtime.log")"
+
+  # A record that is merely paused, or finished with no saved report, is not proof.
+  dir=$(make_case slot-unproven-older-record)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  printf 'done [at=1]: report saved\n' > "$dir/home/state/$id.status"
+  claim_pool_slot "$dir" "$other"
+  assert_refused_without_mutation "$dir" "$other" "finished record with no saved report"
+  printf 'paused [at=2]: waiting\n' >> "$dir/home/state/$id.status"
+  mkdir -p "$dir/home/data/$id"
+  printf 'report\n' > "$dir/home/data/$id/report.md"
+  assert_refused_without_mutation "$dir" "$other" "paused record"
+
+  pass "fm-teardown: a finished record with a saved report no longer blocks the claimant; an unproven one still does"
+}
+
+# A finished ship counts only when its work is pushed: the recorded pr_head must
+# be reachable from a remote-tracking ref.
+test_finished_ship_record_needs_pushed_work() {
+  local dir id=older-ship other=claimant-task sha
+
+  dir=$(make_case slot-finished-ship-record)
+  mark_case_as_treehouse_pool "$dir"
+  sha=$(git -C "$dir/project" rev-parse HEAD)
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=ship" "pr_head=$sha"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  printf 'done [at=1]: PR checks green\n' > "$dir/home/state/$id.status"
+  claim_pool_slot "$dir" "$other"
+  assert_refused_without_mutation "$dir" "$other" "finished ship whose head is not on any remote"
+
+  git -C "$dir/project" update-ref refs/remotes/origin/pushed "$sha"
+  run_case "$dir" "$other" > "$dir/stdout" 2> "$dir/stderr" \
+    || fail "claimant teardown was refused by a finished ship whose head is pushed: $(cat "$dir/stderr")"
+  assert_absent "$dir/home/state/$other.meta" "claimant teardown left its record"
+
+  pass "fm-teardown: a finished ship stops blocking the claimant only once its head is on a remote-tracking ref"
+}
+
+# The mirror: THIS record is finished and proven, nobody claims the slot, and an
+# unfinished record names it. The finished record's cleanup becomes records-only,
+# so the unfinished task's worker and copy are never touched.
+test_finished_record_cleanup_leaves_a_slot_an_unfinished_record_names() {
+  local dir id=finished-task other=live-task worker rc
+
+  dir=$(make_case slot-finished-beside-live)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  finish_scout_record "$dir" "$id"
+  ( cd "$dir/worktree" && exec sleep 30 ) &
+  worker=$!
+
+  set +e
+  run_case "$dir" "$id" > "$dir/stdout" 2> "$dir/stderr"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "finished record teardown beside a live record failed: $(cat "$dir/stderr")"
+  kill -0 "$worker" 2>/dev/null || fail "finished record teardown killed the worker in the shared slot"
+  assert_present "$dir/worktree/sentinel" "finished record teardown reset a slot a live record names"
+  assert_absent "$dir/home/state/$id.meta" "finished record teardown left its own record"
+  assert_present "$dir/home/state/$other.meta" "finished record teardown removed the live record"
+  ! grep -Fq "treehouse <return>" "$dir/runtime.log" \
+    || fail "finished record teardown returned a slot a live record names: $(cat "$dir/runtime.log")"
+  assert_contains "$(cat "$dir/stderr")" "$other" "the warning should name the live record"
+  kill "$worker" 2>/dev/null || true
+  wait "$worker" 2>/dev/null || true
+
+  # A record with no proof of being finished still refuses, as before.
+  dir=$(make_case slot-unproven-beside-live)
+  mark_case_as_treehouse_pool "$dir"
+  fm_write_meta "$dir/home/state/$id.meta" \
+    "window=firstmate:fm-$id" "endpoint_task_id=$id" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  fm_write_meta "$dir/home/state/$other.meta" \
+    "window=firstmate:fm-$other" "endpoint_task_id=$other" \
+    "worktree=$dir/worktree" "project=$dir/project" "kind=scout"
+  assert_refused_without_mutation "$dir" "$id" "unproven record beside a live record"
+
+  pass "fm-teardown: a finished record's cleanup is records-only beside an unfinished record; an unproven one still refuses"
+}
+
 # The two states that must never become a false refusal: the task's own claim,
 # and no claim at all (a slot taken before claims existed, or already returned).
 test_own_and_absent_slot_claims_still_tear_down() {
@@ -1442,6 +1570,9 @@ test_sole_slot_record_still_tears_down
 test_reassigned_pool_slot_finishes_own_cleanup_without_touching_the_slot
 test_stale_record_on_claimed_slot_retires_then_claimant_tears_down
 test_own_and_absent_slot_claims_still_tear_down
+test_finished_record_beside_the_claimant_does_not_block_its_teardown
+test_finished_ship_record_needs_pushed_work
+test_finished_record_cleanup_leaves_a_slot_an_unfinished_record_names
 test_recorded_endpoint_that_changed_directory_still_tears_down
 test_project_lock_anchors_at_the_local_root_across_home_layouts
 test_remote_seeded_home_returns_its_uncontested_slot

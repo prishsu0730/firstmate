@@ -123,9 +123,52 @@ test_refusals() {
   pass "ack: refuses traversal, foreign dirs, symlinks, and collisions without moving anything"
 }
 
+test_bad_id_moves_nothing() {
+  local d rc=0
+  d=$(new_inbox t6)
+  bash "$ACK" --inbox "$d" 001 abc >/dev/null 2>&1 || rc=$?
+  expect_code 2 "$rc" "a bad id after a good one should be refused"
+  [ -f "$d/001.msg" ] && [ ! -e "$d/handled/001.msg" ] || fail "a good id moved before a bad id was refused"
+  pass "ack: one bad id refuses the whole call and nothing moves"
+}
+
+test_invalid_entries_move_nothing() {
+  local d location kind entry rc
+  for location in source handled; do
+    for kind in directory fifo symlink dangling; do
+      d=$(new_inbox "invalid-$location-$kind")
+      if [ "$location" = source ]; then
+        entry="$d/003.msg"
+      else
+        entry="$d/handled/003.msg"
+      fi
+      case "$kind" in
+        directory) mkdir "$entry" ;;
+        fifo) mkfifo "$entry" ;;
+        symlink) ln -s "$d/002.msg" "$entry" ;;
+        dangling) ln -s "$d/absent" "$entry" ;;
+      esac
+      rc=0
+      bash "$ACK" --inbox "$d" 001 003 >/dev/null 2>&1 || rc=$?
+      expect_code 2 "$rc" "a $kind $location entry should refuse the whole call"
+      [ -f "$d/001.msg" ] && [ ! -e "$d/handled/001.msg" ] \
+        || fail "001 moved before an invalid $location entry was refused"
+    done
+  done
+  d="$TMP/directory-second.inbox"
+  mkdir -p "$d/handled" "$d/002.msg"
+  printf 'one\n' > "$d/001.msg"
+  refuses "a directory after a regular message" --inbox "$d" 001 002
+  [ -f "$d/001.msg" ] && [ ! -e "$d/handled/001.msg" ] \
+    || fail "001 moved before directory 002 was refused"
+  pass "ack: invalid source and handled entries refuse all moves"
+}
+
 test_moves_via_env_and_flag
 test_env_inbox_cannot_be_overridden
 test_several_ids
 test_rerun_is_safe
 test_missing_message
 test_refusals
+test_bad_id_moves_nothing
+test_invalid_entries_move_nothing
