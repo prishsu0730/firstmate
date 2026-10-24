@@ -123,6 +123,13 @@ FM_CLASSIFY_PAUSED_VERB_DEFAULT='paused'
 # shellcheck disable=SC2034 # Read by the watcher and daemon (fm-watch.sh, fm-supervise-daemon.sh), not this lib.
 FM_PAUSE_RESURFACE_SECS_DEFAULT=14400
 
+# A `paused:` line whose reason says it waits on main / firstmate (status_paused_
+# awaits_firstmate below) is not an outside-world wait: the supervisor owes the
+# next move, so it is rechecked after about an hour, not on the four-hour
+# external cadence. The cadence never exceeds
+# FM_PAUSE_RESURFACE_SECS. status_pause_recheck_secs owns the choice.
+FM_MAIN_WAIT_SECS=3600
+
 # fm_utc_iso_to_epoch <YYYY-MM-DDTHH:MM[:SS]Z>: the one portable UTC ISO 8601
 # reader shared by the declared-wait vocabulary and the away-posture record
 # (bin/fm-afk-contract.sh). Prints epoch seconds; returns 1 on any other shape
@@ -482,6 +489,29 @@ status_paused_until() {  # <status-line> -> epoch on stdout
     | head -1)
   [ -n "$token" ] || return 1
   fm_utc_iso_to_epoch "$token"
+}
+
+# 0 if a `paused:` line's reason says the wait is on main / firstmate ("waiting
+# for main", "waiting on main", "main's go", "waiting main review", "waiting for
+# firstmate") and declares no `until` time. A dated hold keeps its declared
+# schedule, so only an undated wait on the supervisor qualifies.
+status_paused_awaits_firstmate() {  # <status-line>
+  local line=$1 reason
+  status_is_paused "$line" || return 1
+  status_paused_until "$line" >/dev/null 2>&1 && return 1
+  reason=${line#*:}
+  printf '%s' "$reason" | grep -Eiq "wait(ing)?[[:space:]]+(for|on)[[:space:]]+(the[[:space:]]+)?(main|firstmate)([^[:alnum:]_]|$)|wait(ing)?[[:space:]]+main[[:space:]]|main['’]s[[:space:]]+(go|call|word|review|ok|approval)|(for|on)[[:space:]]+firstmate['’]s"
+}
+
+# Seconds before a declared pause is rechecked: FM_MAIN_WAIT_SECS (capped at the
+# pause cadence) for a wait on main, the pause cadence <pause-secs> otherwise.
+status_pause_recheck_secs() {  # <status-line> <pause-secs>
+  local line=$1 pause=$2 main=$FM_MAIN_WAIT_SECS
+  if status_paused_awaits_firstmate "$line" && [ "$main" -lt "$pause" ]; then
+    printf '%s' "$main"
+  else
+    printf '%s' "$pause"
+  fi
 }
 
 # --- optional event emission time -------------------------------------------
@@ -1330,8 +1360,8 @@ _fm_status_read_span() {  # <status-file> <start-offset> <byte-length>
   ' "$f" "$start" "$length"
 }
 
-status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
-  local f=$1 captured_end=${2:-} cf offset ident open='' trusted_open='' cursor_data first rest offset_line ident_line
+status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [readonly]
+  local f=$1 captured_end=${2:-} readonly=${3:-false} cf offset ident open='' trusted_open='' cursor_data first rest offset_line ident_line
   local version='' size actual_size cur_ident resolve held chunk_file chunk_size line cursor_dirty=0
   local target_cursor kind fold_version position LC_ALL=C
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
@@ -1434,7 +1464,7 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
     offset=$size
     cursor_dirty=1
   fi
-  if [ "$cursor_dirty" -eq 1 ]; then
+  if [ "$cursor_dirty" -eq 1 ] && [ "$readonly" != true ]; then
     target_cursor="$cf.tmp.$$"
     {
       printf 'version=%s\n' "$fold_version"
@@ -1452,14 +1482,14 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>]
 # each task's status log through status_open_decisions_incremental instead of
 # the whole-file status_open_decisions, so a fleet-wide per-drain scan stays
 # bounded by new appends rather than total lifetime log size across every task.
-scan_open_decisions_incremental() {  # <state>
-  local state=$1 f task open line exclude
+scan_open_decisions_incremental() {  # <state> [readonly]
+  local state=$1 readonly=${2:-false} f task open line exclude
   exclude=$(status_scan_parent_channel_exclude "$state")
   for f in "$state"/*.status; do
     [ -e "$f" ] || continue
     [ "$f" = "$exclude" ] && continue
     task=$(basename "$f"); task="${task%.status}"
-    open=$(status_open_decisions_incremental "$f") || continue
+    open=$(status_open_decisions_incremental "$f" '' "$readonly") || continue
     [ -n "$open" ] || continue
     while IFS= read -r line; do
       [ -n "$line" ] || continue
