@@ -215,7 +215,99 @@ test_over_long_decision_note_is_capped_with_a_marker() {
   pass "an over-long open decision is cut to its per-item budget with the shared truncation marker"
 }
 
+test_unchanged_decision_is_summarized_after_first_presentation() {
+  local dir state out
+  dir=$(make_case unchanged)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task1.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first drain failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "first drain did not print the decision in full"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  if grep -F 'pick REST or RPC' "$out" >/dev/null; then
+    fail "an unchanged decision was re-printed in full: $(cat "$out")"
+  fi
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" | grep -F -- '--all-open-decisions' >/dev/null \
+    || fail "second drain is missing the unchanged summary line: $(cat "$out")"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "--all-open-decisions did not list the decision in full"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after the listing failed"
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" >/dev/null || fail "the read-only listing disturbed the presented record"
+
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "full-mode drain failed"
+  grep -F 'pick REST or RPC' "$out" >/dev/null || fail "full mode (session start) did not print the decision in full"
+
+  printf 'needs-decision [key=api-shape]: pick REST, RPC, or GraphQL\n' >> "$state/task1.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after a change failed"
+  grep -F 'pick REST, RPC, or GraphQL' "$out" >/dev/null || fail "a changed decision did not print in full again: $(cat "$out")"
+
+  printf 'needs-decision [key=second]: brand new\n' > "$state/task2.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after a new decision failed"
+  grep -F 'brand new' "$out" >/dev/null || fail "a new decision did not print in full"
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" >/dev/null || fail "the older decision was not summarized beside the new one"
+  pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
+}
+
+test_full_listing_is_read_only_and_bounded() {
+  local dir state out cursor presented cursor_before presented_before probe bytes
+  dir=$(make_case readonly-listing)
+  state="$dir/state"
+  out="$dir/drain.out"
+  cursor="$state/.task1.open-decisions-cursor"
+  presented="$state/.open-decisions-presented"
+  cursor_before="$dir/cursor.before"
+  presented_before="$dir/presented.before"
+  printf 'needs-decision [key=api-shape]: pick REST or RPC\n' > "$state/task1.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "initial drain failed"
+  [ -f "$cursor" ] || fail "initial drain did not create its decision cursor"
+  [ -f "$presented" ] || fail "initial drain did not create its presented record"
+  cp "$cursor" "$cursor_before"
+  cp "$presented" "$presented_before"
+
+  printf 'needs-decision [key=api-shape]: choose a REST or RPC endpoint\n' >> "$state/task1.status"
+  probe="$dir/read-probe"
+  FM_OPEN_DECISIONS_READ_PROBE="$probe" FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  grep -F 'choose a REST or RPC endpoint' "$out" >/dev/null || fail "full listing did not fold the appended decision"
+  cmp -s "$cursor_before" "$cursor" || fail "full listing changed the durable decision cursor"
+  cmp -s "$presented_before" "$presented" || fail "full listing changed the presented record"
+  bytes=$(awk -F '\t' 'END { print $2 + 0 }' "$probe")
+  [ "$bytes" -eq "$(printf 'needs-decision [key=api-shape]: choose a REST or RPC endpoint\n' | wc -c | tr -d ' ')" ] \
+    || fail "full listing read $bytes bytes instead of only the appended span"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "drain after the listing failed"
+  grep -F 'choose a REST or RPC endpoint' "$out" >/dev/null || fail "drain after listing did not present the appended decision"
+}
+
+test_full_listing_exceeds_ordinary_byte_cap() {
+  local dir state out i bytes
+  dir=$(make_case full-listing-cap)
+  state="$dir/state"
+  out="$dir/drain.out"
+  for i in $(seq 1 40); do
+    printf 'needs-decision [key=api-shape]: decision number %02d with a deliberately descriptive explanation 中文\n' "$i" > "$state/task$i.status"
+  done
+
+  LC_ALL="${FM_TEST_MULTIBYTE_LOCALE:-${LC_ALL:-C.UTF-8}}" FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  grep -F 'task40' "$out" >/dev/null || fail "full listing omitted later decisions beyond the ordinary byte cap"
+  if grep -F 'more omitted (byte cap)' "$out" >/dev/null; then
+    fail "full listing reported omitted decisions despite its full-list contract"
+  fi
+
+  env -u FM_DRAIN_FULL_OPEN_DECISIONS LC_ALL="${FM_TEST_MULTIBYTE_LOCALE:-${LC_ALL:-C.UTF-8}}" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "ordinary drain failed"
+  grep -F 'more omitted (byte cap)' "$out" >/dev/null || fail "ordinary drain no longer applies its byte cap"
+  bytes=$(LC_ALL=C wc -c < "$out" | tr -d ' ')
+  [ "$bytes" -le 4200 ] || fail "ordinary drain exceeded its 4,000-byte section cap plus framing ($bytes bytes)"
+  pass "full listing includes decisions beyond the ordinary drain byte cap"
+}
+
 test_buried_decision_still_surfaces
+test_unchanged_decision_is_summarized_after_first_presentation
+test_full_listing_is_read_only_and_bounded
+test_full_listing_exceeds_ordinary_byte_cap
 test_over_long_decision_note_is_capped_with_a_marker
 test_explicit_resolution_closes_it
 test_later_unrelated_terminal_line_does_not_close_it

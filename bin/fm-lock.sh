@@ -20,6 +20,25 @@
 # bin/fm-startup-network.sh compares that pid across its deferred sweeps; a dead
 # recorded pid is reclaimed and rewritten to this session's anchor.
 #
+# A live harness holder that is not the process Firstmate launched for a
+# secondmate home is a FOREIGN holder - for example the Codex desktop app's
+# shared app-server daemon, which inherits the home as its cwd and records itself
+# in the lock, then shadows the real session Firstmate launched into the home's
+# endpoint. Launch endpoint resolution uses the parent's durable launch
+# record, never from the holder's name or cwd: .fm-secondmate-home names the
+# mate, .fm-secondmate-parent names the parent home, the parent's
+# state/<id>.meta names the tmux window Firstmate launched it into, and the
+# holder is classified by fm_session_lock_holder_launched in
+# bin/fm-session-lock-lib.sh, including its detached-session safeguards.
+# A foreign holder is still refused - nothing is reclaimed
+# and no process is ever signalled - but the refusal names its pid and command
+# with one next step for the captain, and the parent home gets one keyed
+# `blocked` line on this mate's status channel (published by this script, not
+# left to the model; bin/fm-parent-channel-lib.sh owns the channel). Any step of
+# that record that cannot be resolved - a primary home, a remote route, a
+# herdr or zellij endpoint, an unreachable tmux - is no evidence, so the generic
+# live-holder refusal applies exactly as before.
+#
 # Usage: fm-lock.sh           acquire; exit 1 unless ownership is verified
 #        fm-lock.sh status    print holder and liveness; always exits 0.
 #                             A held lock is not proof the holder is consuming
@@ -43,13 +62,55 @@ mkdir -p "$STATE" 2>/dev/null || {
 # Stop auto-arm applies the exact same identity contract.
 # shellcheck source=bin/fm-session-lock-lib.sh
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
+# The parent channel resolver also owns the secondmate identity and parent
+# binding reads the foreign-holder check below needs. A main home has no
+# identity marker and never loads it, so its lock path is exactly what it was.
+if [ -e "$FM_HOME/.fm-secondmate-home" ] || [ -L "$FM_HOME/.fm-secondmate-home" ]; then
+  # shellcheck source=bin/fm-parent-channel-lib.sh
+  [ ! -f "$SCRIPT_DIR/fm-parent-channel-lib.sh" ] || . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
+fi
+
+# Pane pids of the tmux window Firstmate launched this secondmate home into, one
+# per line, or non-zero when the launch record cannot be fully resolved. The
+# whole chain is local and tmux-only; every gap is "unknown", never "foreign".
+home_endpoint_pids() {
+  local id parent_home meta window backend home_real meta_home pids
+  command -v fm_parent_channel_home_id >/dev/null 2>&1 || return 1
+  id=$(fm_parent_channel_home_id "$FM_HOME") || return 1
+  fm_secondmate_parent_record_parse "$FM_HOME/.fm-secondmate-parent" || return 1
+  [ "$FM_SECONDMATE_PARENT_ROUTE" = local ] || return 1
+  parent_home=$FM_SECONDMATE_PARENT_HOME
+  meta="$parent_home/state/$id.meta"
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
+  backend=$(sed -n 's/^backend=//p' "$meta" | tail -n 1)
+  case "$backend" in ''|tmux) ;; *) return 1 ;; esac
+  [ "$(sed -n 's/^kind=//p' "$meta" | tail -n 1)" = secondmate ] || return 1
+  meta_home=$(sed -n 's/^home=//p' "$meta" | tail -n 1)
+  home_real=$(cd -P "$FM_HOME" 2>/dev/null && pwd -P) || return 1
+  [ -n "$meta_home" ] && [ "$(cd -P "$meta_home" 2>/dev/null && pwd -P)" = "$home_real" ] || return 1
+  window=$(sed -n 's/^window=//p' "$meta" | tail -n 1)
+  [ -n "$window" ] || return 1
+  command -v tmux >/dev/null 2>&1 || return 1
+  pids=$(tmux list-panes -t "$window" -F '#{pane_pid}' 2>/dev/null) || return 1
+  [ -n "$pids" ] || return 1
+  printf '%s\n' "$pids"
+}
 
 if [ "${1:-}" = "status" ]; then
   fm_session_lock_inspect "$STATE"
+  if [ "$FM_LOCK_INSPECT_STATE" = held ]; then
+    fm_session_lock_inspect "$STATE" "$(home_endpoint_pids 2>/dev/null || true)"
+  fi
   case "$FM_LOCK_INSPECT_STATE" in
     free) echo "lock: free" ;;
     unreadable) echo "lock: unreadable" ;;
-    held) echo "lock: held by live harness pid $FM_LOCK_INSPECT_PID" ;;
+    held)
+      if [ "$FM_LOCK_INSPECT_HOME_LAUNCHED" = false ]; then
+        echo "lock: held by FOREIGN harness pid $FM_LOCK_INSPECT_PID ($(fm_session_lock_holder_command "$FM_LOCK_INSPECT_PID")), not the session launched for this home"
+      else
+        echo "lock: held by live harness pid $FM_LOCK_INSPECT_PID"
+      fi
+      ;;
     *) echo "lock: stale (pid $FM_LOCK_INSPECT_PID dead or not a harness)" ;;
   esac
   exit 0
@@ -179,8 +240,29 @@ confirm_own_lock() {  # <recorded-pid>
   return 1
 }
 
+# The live holder $1 is not the process Firstmate launched for this home: refuse
+# loudly with its pid, command, and one next step, and tell the parent once.
+# Returns when the holder is not provably foreign, so the caller's generic
+# live-owner refusal runs unchanged. Never reclaims the lock, never signals $1.
+refuse_foreign_holder() {  # <recorded-pid>
+  local pid=$1 endpoints cmd note rc=0 launched_rc=0
+  endpoints=$(home_endpoint_pids 2>/dev/null) || return 0
+  fm_session_lock_holder_launched "$pid" "$endpoints" "$STATE" || launched_rc=$?
+  [ "$launched_rc" -eq 1 ] || return 0
+  cmd=$(fm_session_lock_holder_command "$pid")
+  echo "error: the session lock is held by a foreign process, not the session Firstmate launched for this home (pid $pid, command: ${cmd:-unknown}); operate read-only. Next step: confirm that process is not this home's session, stop it yourself (kill $pid), then rerun bin/fm-session-start.sh - Firstmate never stops it for you." >&2
+  note=$(fm_parent_channel_clean_note "foreign process holds this home's session lock (pid $pid, command: ${cmd:-unknown}); the session launched for this home stayed read-only. Confirm it is not this home's session and stop it, then restart the home's session.")
+  fm_parent_channel_report "$FM_HOME" "$STATE" "blocked [key=lock-foreign-holder-$pid]: $note" || rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) echo "warning: could not publish the foreign-holder alarm to the parent channel (rc $rc)" >&2 ;;
+  esac
+  exit 1
+}
+
 refuse_live_owner() {  # <recorded-pid>
   local recorded
+  refuse_foreign_holder "$1"
   if recorded=$(fm_session_lock_recorded_session_id "$STATE"); then
     echo "error: another live firstmate session holds the lock (pid $1, session $recorded); operate read-only until resolved" >&2
   else

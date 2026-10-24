@@ -137,6 +137,17 @@
 #                          inbox and a fresh child beacon are not idle proof;
 #                          the foreign queue itself stays read-only, and one
 #                          parent notification covers each no-progress episode
+#   check: secondmate watcher down: mate=<id> beat_age=<seconds>s
+#                          a local secondmate's wake queue is empty but its own
+#                          state/.last-watcher-beat is older than
+#                          FM_SECONDMATE_WATCHER_DOWN_SECS (default 600) and the
+#                          mate is not in an active turn, so its watcher is dead
+#                          and nothing can enqueue a row; a proven-idle mate is
+#                          rung once first, then the parent is notified once per
+#                          stale episode until the beacon is fresh; a missing
+#                          beacon stays silent, and so does a mate whose own
+#                          endpoint is provably stopped (dead or missing) while
+#                          no worker in its home has a live endpoint
 #   check: secondmate <id> auto-relaunched after <cause> (<where>)
 #                          the liveness tick probed a registered secondmate's
 #                          recorded endpoint, got the recovery-grade `dead` or
@@ -149,6 +160,9 @@
 #                          the same verdict authorized recovery but the
 #                          relaunch itself failed; the attempt is ledgered and
 #                          counts toward the bound below
+#   check: secondmate <id> auto-relaunch skipped: <reason>
+#                          recovery was authorized but could not start; no
+#                          attempt is spent, and the reason names the blocker
 #   check: secondmate <id> auto-relaunch paused after <n> attempts in <s>s; ...
 #                          a mate that kept dying exceeded its bounded relaunch
 #                          budget and is parked until a probe reads it live
@@ -355,6 +369,11 @@ BUSY_TURN_MAX_SECS=${FM_BUSY_TURN_MAX_SECS:-3600}
 # secondmate_wake_stall_tick, never a substitute for it.
 SECONDMATE_WAKE_STALL_SECS=${FM_SECONDMATE_WAKE_STALL_SECS:-}
 case "$SECONDMATE_WAKE_STALL_SECS" in ''|*[!0-9]*|0) SECONDMATE_WAKE_STALL_SECS=180 ;; esac
+# A local secondmate whose own watcher beacon is older than this, with an empty
+# wake queue and no active turn, has a dead watcher that can enqueue nothing;
+# the parent alarms once per interval of that silence.
+SECONDMATE_WATCHER_DOWN_SECS=${FM_SECONDMATE_WATCHER_DOWN_SECS:-}
+case "$SECONDMATE_WATCHER_DOWN_SECS" in ''|*[!0-9]*|0) SECONDMATE_WATCHER_DOWN_SECS=600 ;; esac
 # Secondmate ENDPOINT liveness (distinct from the wake-loop stall observation
 # above): on this cadence the watcher probes each registered mate's recorded
 # endpoint through fm-secondmate-liveness-lib.sh and relaunches only on the
@@ -374,14 +393,17 @@ SECONDMATE_LIVENESS_MAX_ATTEMPTS=${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-}
 case "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_MAX_ATTEMPTS=3 ;; esac
 SECONDMATE_LIVENESS_WINDOW_SECS=${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-}
 case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WINDOW_SECS=3600 ;; esac
-# A crew that declared a pause is idling on a known external wait, so its stale
+# A crew that declared a pause is idling on a known wait, so its stale
 # pane is absorbed rather than wedge-escalated.
 # A captain-held or paused crew whose agent has confidently exited uses the same
 # bounded cadence, while a live or ambiguously read agent surfaces on first sight
 # and is then held to that same cadence; a secondmate earns the cadence on its
 # declaration alone, because its endpoint liveness is deliberately never read
 # (pause_state_class owns that split).
-# These cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
+# An undated `paused:` wait whose reason says it waits on main / firstmate is owed
+# by the supervisor, not the outside world; status_pause_recheck_secs owns its
+# shorter initial and repeat gap, never every tick.
+# Other cases re-surface once for a recheck every PAUSE_RESURFACE_SECS - far
 # longer than the wedge threshold, but finite so a forgotten wait cannot rot
 # invisibly - except an item held for the captain while the away-posture record
 # exists, which is never rechecked (away_record_present below).
@@ -939,6 +961,99 @@ secondmate_ring_to_drain() {  # <task> <window>
   fm_task_inbox_ring "$backend" "$w" "$rec" "$(window_label "$w")"
 }
 
+# 0 iff <meta>'s recorded endpoint is provably stopped: no endpoint recorded, or
+# the backend's recovery-grade verdict is dead or missing. Alive, ambiguous,
+# unreadable, and unverified are not proof of a stop.
+endpoint_provably_stopped() {  # <meta>
+  local meta=$1 target state
+  target=$(fm_backend_target_of_meta "$meta")
+  [ -n "$target" ] || return 0
+  state=$(fm_backend_agent_state "$(fm_backend_of_meta "$meta")" "$target" 2>/dev/null || true)
+  case "$state" in dead|missing) return 0 ;; esac
+  return 1
+}
+
+# 0 iff some worker recorded in a secondmate home still has an endpoint that is
+# not provably stopped. A backlog entry or a leftover record of a stopped worker
+# is not live work, and a worker on a remote host cannot be probed from here, so
+# it counts as live.
+secondmate_home_has_live_worker() {  # <home>
+  local home=$1 wmeta
+  for wmeta in "$home/state"/*.meta; do
+    [ -e "$wmeta" ] || continue
+    [ "$(fm_meta_get "$wmeta" kind)" != secondmate ] || continue
+    [ -z "$(fm_meta_get "$wmeta" remote_host)" ] || return 0
+    endpoint_provably_stopped "$wmeta" || return 0
+  done
+  return 1
+}
+
+# Write <epoch> into a watcher-down marker through the same atomic replace the
+# other secondmate markers use. 0 iff the marker now holds it.
+secondmate_watcher_down_marker_write() {  # <marker> <epoch>
+  local marker=$1 epoch=$2 tmp
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
+    [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  fi
+  tmp=$(mktemp "$STATE/.secondmate-watcher-down.XXXXXX") || return 1
+  if ! printf '%s\n' "$epoch" > "$tmp" || ! chmod 0600 "$tmp" \
+    || ! _fm_atomic_replace "$tmp" "$marker"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+}
+
+# The empty-queue half of the stall check: a child whose own watcher died
+# enqueues nothing, so an empty queue alone proves nothing. When the child's
+# watcher beacon is older than SECONDMATE_WATCHER_DOWN_SECS and the mate is not
+# inside an active turn, ring a proven-idle mate once so it can re-arm, then
+# raise one parent notification for the episode; a fresh beacon ends it. A
+# missing beacon is no evidence and stays silent. A mate whose endpoint is
+# provably stopped and whose home has no live worker was stopped on purpose or
+# is the liveness tick's to recover, so nothing is waiting on its watcher.
+secondmate_watcher_down_check() {  # <task> <meta> <home> <now>
+  local task=$1 meta=$2 home=$3 now=$4 bound=$SECONDMATE_WATCHER_DOWN_SECS
+  local ring_marker="$STATE/.secondmate-watcher-down-ring-$task"
+  local alarm_marker="$STATE/.secondmate-watcher-down-alarm-$task"
+  local beat="$home/state/.last-watcher-beat" age w rung alarmed reason notify_key queued
+  if [ ! -e "$beat" ]; then
+    rm -f "$ring_marker" "$alarm_marker"
+    return 0
+  fi
+  age=$(fm_path_age "$beat")
+  if [ "$age" -lt "$bound" ]; then
+    rm -f "$ring_marker" "$alarm_marker"
+    return 0
+  fi
+  if endpoint_provably_stopped "$meta" && ! secondmate_home_has_live_worker "$home"; then
+    rm -f "$ring_marker" "$alarm_marker"
+    return 0
+  fi
+  w=$(fm_backend_target_of_meta "$meta")
+  ! secondmate_in_active_turn "$w" "$age" || return 0
+  rung=$(cat "$ring_marker" 2>/dev/null || true)
+  case "$rung" in ''|*[!0-9]*) rung= ;; esac
+  if [ -z "$rung" ]; then
+    if secondmate_idle_ring_safe "$w" && secondmate_ring_to_drain "$task" "$w"; then
+      secondmate_watcher_down_marker_write "$ring_marker" "$now" || return 1
+      return 0
+    fi
+  elif [ "$now" -ge "$rung" ] && [ $((now - rung)) -lt "$bound" ]; then
+    return 0
+  fi
+  alarmed=$(cat "$alarm_marker" 2>/dev/null || true)
+  case "$alarmed" in ''|*[!0-9]*) alarmed= ;; esac
+  [ -z "$alarmed" ] || return 0
+  notify_key="secondmate-watcher-down-$task-$now"
+  reason="check: secondmate watcher down: mate=$task beat_age=${age}s"
+  queued=$(fm_wake_queued_keys check)
+  if ! printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1; then
+    fm_wake_append check "$notify_key" "$reason" || return 1
+  fi
+  secondmate_watcher_down_marker_write "$alarm_marker" "$now" || return 1
+  wake "$reason"
+}
+
 # Surface one durable parent check when the foreign queue's drain position has
 # not moved for the bounded interval. The progress marker records that position
 # as the same epoch-sequence row identity the stall receipts use, so the timer
@@ -988,6 +1103,7 @@ secondmate_wake_stall_tick() {
         [ -d "$receipt_dir" ] && [ ! -L "$receipt_dir" ] || return 1
         rm -rf -- "$receipt_dir" || return 1
       fi
+      secondmate_watcher_down_check "$task" "$meta" "$home" "$now" || return 1
       continue
     fi
     IFS=$(printf '\t') read -r epoch seq _row_kind _row_key _row_payload <<EOF
@@ -1059,8 +1175,9 @@ EOF
 # probe rules, the kill ordering, and the guarded relaunch). On a bounded
 # cadence each registered mate's recorded endpoint is probed once; only a
 # recovery-grade `dead` or `missing` verdict relaunches, every relaunch
-# (success or failure) becomes exactly one durable `check` wake row, and every
-# other verdict lands only in the triage log. The tick finishes every mate
+# (success, failure, or a skip after relaunch authorization) becomes exactly
+# one durable `check` wake row; inconclusive probe verdicts land only in the
+# triage log. The tick finishes every mate
 # before it wakes once on the first outcome, so one dead mate never delays
 # another's recovery; the drain surfaces every queued row. A mate that keeps
 # dying is parked after SECONDMATE_LIVENESS_MAX_ATTEMPTS ledgered attempts
@@ -1103,7 +1220,8 @@ secondmate_liveness_tick() {
           reason="check: secondmate $id auto-relaunched after $FM_SM_LIVE_CAUSE ($FM_SM_LIVE_WHERE)"
           notify_key="secondmate-relaunch-$id-$now"
         elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
-          err=$FM_SM_LIVE_REASON
+          reason="check: secondmate $id auto-relaunch skipped: $FM_SM_LIVE_REASON"
+          notify_key="secondmate-relaunch-skipped-$id-$now"
         else
           reason="check: secondmate $id auto-relaunch failed after $FM_SM_LIVE_CAUSE: $(fm_sm_live_first_line "$FM_SM_LIVE_OUT")"
           notify_key="secondmate-relaunch-failed-$id-$now"
@@ -1168,13 +1286,14 @@ FM_WEDGE_DEMAND_INSPECT_COUNT=${FM_WEDGE_DEMAND_INSPECT_COUNT:-3}
 # window; wake() itself exits the cycle, exactly as it does inline. An optional
 # <min-age> replaces the cadence as the absorb-age gate for one call (0 lets a
 # declared `until` time that has just passed re-surface at once), while the
-# throttle keeps the cadence between repeats.
-resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age]
-  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS}
+# throttle keeps the cadence between repeats. An optional <repeat-secs> replaces
+# the cadence as that repeat gap (a wait on main repeats hourly).
+resurface_absorbed() {  # <window> <throttle-marker> <age> <reason> [scope] [min-age] [repeat-secs]
+  local win=$1 throttle=$2 age=$3 reason=$4 scope=${5-} min_age=${6:-$PAUSE_RESURFACE_SECS} repeat=${7:-$PAUSE_RESURFACE_SECS}
   if [ -z "$scope" ] || [ ! -e "$throttle" ] \
     || [ "$(cat "$throttle" 2>/dev/null || true)" = "$scope" ]; then
     [ "$age" -ge "$min_age" ] || return 0
-    [ "$(age_of "$throttle")" -ge "$PAUSE_RESURFACE_SECS" ] || return 0   # 999999 when no prior re-surface
+    [ "$(age_of "$throttle")" -ge "$repeat" ] || return 0   # 999999 when no prior re-surface
   fi
   fm_wake_append stale "$win" "$reason" || exit 1
   if [ -n "$scope" ]; then printf '%s' "$scope" > "$throttle"; else date +%s > "$throttle"; fi
@@ -1319,8 +1438,13 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
     if until=$(status_paused_until "$last"); then
       [ "$(date +%s)" -lt "$until" ] || return 1
     fi
-    wait_record 'declared wait' 'awaiting external' \
-      external 'confirm the wait still holds' "$statusf"
+    if status_paused_awaits_firstmate "$last"; then
+      wait_record 'declared wait' 'waiting on main' \
+        supervisor 'act on it or answer the worker' "$statusf"
+    else
+      wait_record 'declared wait' 'awaiting external' \
+        external 'confirm the wait still holds' "$statusf"
+    fi
     return 0
   fi
   [ -e "$CONFIG/wedge-defer-parked-gate" ] || return 1
@@ -1372,7 +1496,7 @@ wedge_wait_evidence() {  # <task> -> one wait_record on stdout
 # demand-inspection history it had already earned.
 wedge_defer_wait() {  # <window> <since-file> <triage-label> <idle-age> <wait-record>
   local win=$1 since_file=$2 label=$3 age=$4 record=$5
-  local kind subject whom action anchor key mtime wage min_age waited us ok
+  local kind subject whom action anchor key mtime wage min_age waited us ok repeat_secs
   us=$(printf '\037')
   IFS=$us read -r kind subject whom action anchor <<EOF
 $record
@@ -1404,6 +1528,10 @@ EOF
     triage_log "absorbed $label ($kind, never rechecked while the away-posture record exists): $win"
     return 0
   fi
+  repeat_secs=$PAUSE_RESURFACE_SECS
+  if [ -n "$anchor" ]; then
+    repeat_secs=$(status_pause_recheck_secs "$(status_declared_wait_line "$anchor")" "$PAUSE_RESURFACE_SECS")
+  fi
   mtime=''
   [ -n "$anchor" ] && mtime=$(stat_mtime "$anchor")
   case "$mtime" in
@@ -1419,14 +1547,14 @@ EOF
     *)
       wage=$(( $(date +%s) - mtime ))
       [ "$wage" -ge 0 ] || wage=0
-      min_age=$PAUSE_RESURFACE_SECS; waited=", waiting ${wage}s"
+      min_age=$repeat_secs; waited=", waiting ${wage}s"
       ;;
   esac
   clear_write_tracking "$key"
   date +%s > "$since_file"
   resurface_absorbed "$win" "$STATE/.waiting-resurfaced-$key" "$wage" \
     "stale: $win (idle ${age}s${waited} - $kind, $subject, rechecked on a long cadence not a wedge; $action)" \
-    '' "$min_age"
+    '' "$min_age" "$repeat_secs"
   triage_log "absorbed $label ($kind explains the quiet, idle ${age}s): $win"
   return 0
 }
@@ -1597,7 +1725,7 @@ busy_turn_over_age() {  # <task>
 # wording; a caller that reached the bounded cadence off pause tracking alone, with
 # no declaring verb left on the log, keeps the external-wait wording it always had.
 handle_paused_stale() {  # <window> <task> <hash>
-  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age
+  local win=$1 task=$2 h=$3 key statusf mtime age detail reason declaration last until now min_age repeat_secs
   key=$(window_key "$win")
   printf '%s' "$h" > "$STATE/.stale-$key"
   : > "$STATE/.paused-$key"
@@ -1610,6 +1738,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   age=$(( now - mtime ))
   last=$(status_declared_wait_line "$statusf")
   min_age=$PAUSE_RESURFACE_SECS
+  repeat_secs=$PAUSE_RESURFACE_SECS
   declaration="declared:$(fm_wake_signal_sig "$statusf" || true)"
   if status_is_captain_held "$last"; then
     if away_record_present; then
@@ -1633,11 +1762,18 @@ handle_paused_stale() {  # <window> <task> <hash>
       declaration="$declaration:due"
       min_age=0
     fi
+  elif status_paused_awaits_firstmate "$last"; then
+    # A wait on main is owed by the supervisor, not the outside world: wake after
+    # about an hour (FM_MAIN_WAIT_SECS) and repeat on that gap, never every tick.
+    min_age=$(status_pause_recheck_secs "$last" "$PAUSE_RESURFACE_SECS")
+    repeat_secs=$min_age
+    detail="paused, waiting on main"
+    reason="paused ${age}s, waiting on main - the next move is firstmate's, not an outside wait; act on it or answer the worker"
   else
     detail="paused, awaiting external"
     reason="paused ${age}s, awaiting external - declared pause, rechecked on a long cadence not a wedge; confirm the wait still holds"
   fi
-  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age"
+  resurface_absorbed "$win" "$STATE/.paused-resurfaced-$key" "$age" "stale: $win ($reason)" "$declaration" "$min_age" "$repeat_secs"
   triage_log "absorbed stale ($detail, age ${age}s): $win"
 }
 
@@ -1858,12 +1994,13 @@ captain_call_declaration() {  # <task> <call-identity>
 }
 
 # 0 when <declaration> has already been alarmed for this window inside the
-# current PAUSE_RESURFACE_SECS. A pure read: recording an alarm is the caller's,
+# current gap selected by status_pause_recheck_secs. A pure read: recording an alarm is the caller's,
 # so the throttle is never advanced by a sighting it just absorbed.
-stale_wait_throttled() {  # <window-key> <declaration>
-  local throttle="$STATE/.paused-resurfaced-$1"
+stale_wait_throttled() {  # <window-key> <declaration> [status-line]
+  local throttle="$STATE/.paused-resurfaced-$1" repeat_secs
+  repeat_secs=$(status_pause_recheck_secs "${3-}" "$PAUSE_RESURFACE_SECS")
   [ "$(cat "$throttle" 2>/dev/null || true)" = "$2" ] \
-    && [ "$(age_of "$throttle")" -lt "$PAUSE_RESURFACE_SECS" ]
+    && [ "$(age_of "$throttle")" -lt "$repeat_secs" ]
 }
 
 # The same bound, for a stale window whose last line IS captain-relevant. That
@@ -1934,10 +2071,10 @@ surface_nonterminal_stale() {  # <window> <hash>
         throttled=0
       else
         STALE_WAIT_DECLARATION="$STALE_WAIT_DECLARATION:due"
-        stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+        stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
       fi
     else
-      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
     fi
   elif status_is_captain_held "$last"; then
     declared=0
@@ -1946,7 +2083,7 @@ surface_nonterminal_stale() {  # <window> <hash>
     if captain_held_silenced "$last"; then
       throttled=0
     else
-      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" && throttled=0
+      stale_wait_throttled "$key" "$STALE_WAIT_DECLARATION" "$last" && throttled=0
     fi
   elif captain_call_stale_bound "$key" "$task"; then
     bounded=0
@@ -2533,7 +2670,9 @@ recovery_already_delivered() {
   fm_recovery_marker_read "$WATCHER_DOWNTIME_MARKER" || return 1
   [ "$FM_RECOVERY_MARKER_TOKEN" = "announced:downtime:$FM_WATCH_DELIVERED_RECOVERY" ]
 }
-if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] && ! recovery_already_delivered; then
+if [ "${FM_WATCH_HANDLING_SUCCESSOR:-0}" != 1 ] \
+  && [ "${FM_WATCH_FOREGROUND_CHECKPOINT:-0}" != 1 ] \
+  && ! recovery_already_delivered; then
   if ! fm_recovery_marker_reopen_announced "$WATCHER_DOWNTIME_MARKER"; then
     echo "watcher: recovery state could not be reopened safely; retaining stale lock evidence" >&2
     exit 1
