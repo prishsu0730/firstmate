@@ -1724,6 +1724,7 @@ SH
   rc=$?
   set -e
   [ "$rc" -ne 0 ] || fail "racing close reported success: $out"
+  out=$(run_return "$dir" check) && fail "racing reopen cleared catch-up"
   (
     . "$ROOT/bin/fm-classify-lib.sh"
     local expected=$'repair-key\tblocked\tnew issue' open
@@ -1749,7 +1750,6 @@ SH
     set -e
     [ "$offset" -eq 1 ] || fail "span retained a matching closed episode"
   ) || return 1
-  out=$(run_return "$dir" check) && fail "racing reopen cleared catch-up"
   pass "episode-qualified closes preserve concurrent reopens across status readers"
 }
 
