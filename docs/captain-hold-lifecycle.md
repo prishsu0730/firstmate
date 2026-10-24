@@ -460,7 +460,7 @@ If tasks-axi is unavailable or its listing cannot be parsed, the guard cannot re
 
 ## Record problems
 
-Three task-record problems used to surface only at cleanup.
+These task-record problems can block lifecycle checks or affect cleanup.
 `bin/fm-captain-hold.sh check-records` reports them early, and `bin/fm-session-start.sh` prints the result as a bounded `RECORD PROBLEMS` subsection of FLEET STATE.
 The subsection appears when a problem exists or the scan is incomplete.
 
