@@ -743,6 +743,20 @@ test_teardown_closes_the_backlog_item_itself() {
   pass "teardown closes its own backlog item before reporting success"
 }
 
+test_teardown_cleans_the_file_boundary_marker() {
+  local case_dir
+  case_dir=$(make_case file-boundary-marker)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  printf 'bin/*.sh\n' > "$case_dir/state/task-x1.file-boundary"
+
+  run_teardown "$case_dir" >/dev/null || fail "teardown failed with a file-boundary marker"
+  assert_absent "$case_dir/state/task-x1.file-boundary" \
+    "teardown left the task's file-boundary marker behind"
+  pass "teardown removes the task's file-boundary marker"
+}
+
 test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note() {
   local case_dir out real_tasks_axi gerrit_url=https://gerrit.example.com/c/project/+/12345
   case_dir=$(make_case tasks-axi-close-gerrit)
@@ -4866,6 +4880,7 @@ test_forced_secondmate_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal
 test_local_only_fork_remote_allows
 test_teardown_closes_the_backlog_item_itself
+test_teardown_cleans_the_file_boundary_marker
 test_teardown_closes_a_gerrit_task_with_its_change_url_as_a_note
 test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
