@@ -3058,11 +3058,6 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
-if [ "${FM_TEST_RECORDS_ONLY:-0}" = 1 ]; then
-  test_record_problems_warn_only_when_present
-  exit 0
-fi
-
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path

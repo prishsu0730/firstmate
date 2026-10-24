@@ -4951,15 +4951,6 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
-if [ "${FM_TEST_RECORDS_ONLY:-0}" = 1 ]; then
-  test_check_records_flags_a_decision_list_naming_its_own_task
-  test_check_records_flags_a_decision_key_with_no_hold
-  test_check_records_preserves_unknown_reads
-  test_check_records_flags_a_slot_claimed_by_another_task
-  test_check_records_is_silent_and_read_only_on_a_clean_home
-  exit 0
-fi
-
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_precede_backend_holds
 test_historical_self_inventory_has_workable_repair
