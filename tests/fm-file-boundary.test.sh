@@ -169,6 +169,33 @@ test_extra_file_fails_and_is_named() {
   pass "fm-file-boundary check exits 1 and names every file outside the list"
 }
 
+test_uncommitted_files_are_checked() {
+  local case_dir kind
+  for kind in staged unstaged untracked; do
+    case_dir=$(make_case "local-$kind")
+    write_list "$case_dir" bin/allowed.sh
+    commit_files "$case_dir" bin/allowed.sh bin/extra.sh
+    git -C "$case_dir/wt" update-ref refs/remotes/origin/main "$(git -C "$case_dir/wt" rev-parse HEAD)"
+    printf 'change\n' >> "$case_dir/wt/bin/extra.sh"
+    case "$kind" in
+      staged) git -C "$case_dir/wt" add bin/extra.sh ;;
+      unstaged) : ;;
+      untracked)
+        git -C "$case_dir/wt" checkout -- bin/extra.sh
+        printf 'change\n' > "$case_dir/wt/bin/new.sh"
+        ;;
+    esac
+    run_checker "$case_dir" check "$TASK"
+    expect_code 1 "$RC" "$kind: a local file outside the list must fail"
+    if [ "$kind" = untracked ]; then
+      assert_contains "$ERR" 'bin/new.sh' "$kind: the untracked file was not named"
+    else
+      assert_contains "$ERR" 'bin/extra.sh' "$kind: the modified file was not named"
+    fi
+  done
+  pass "fm-file-boundary check includes staged, unstaged, and untracked paths"
+}
+
 test_no_list_passes_with_a_note() {
   local case_dir
   case_dir=$(make_case no-list)
@@ -601,6 +628,7 @@ test_script_parses
 test_help_prints_the_header
 test_in_list_change_passes
 test_extra_file_fails_and_is_named
+test_uncommitted_files_are_checked
 test_no_list_passes_with_a_note
 test_recorded_names_the_list
 test_glob_matching_stays_inside_a_directory

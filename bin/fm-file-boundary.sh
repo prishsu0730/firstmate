@@ -3,10 +3,10 @@
 # Usage: fm-file-boundary.sh check <task-id> [--pr <url> [--head <sha>]]
 #        fm-file-boundary.sh recorded <task-id>
 #   check compares the changed files with the list recorded for the task.
-#   Without --pr the changed files are the committed branch changes in the
-#   task's worktree (the `worktree=` in state/<id>.meta, else the current
-#   directory): `git diff --name-only --no-renames <merge-base>...HEAD`, where
-#   the base is origin/<base_branch=> from the same metadata, else origin/HEAD,
+#   Without --pr the changed files include committed, staged, unstaged, and
+#   untracked paths in the task's worktree (`worktree=` in state/<id>.meta,
+#   else the current directory). The comparison base is origin/<base_branch=>
+#   from the same metadata, else origin/HEAD,
 #   origin/main, or origin/master. A rename or deletion counts both paths,
 #   and paths are read unquoted so they compare as the forge reports them.
 #   With --pr the changed files are the live pull request's file list, read
@@ -226,6 +226,10 @@ changed_from_branch() {
     || die "cannot find a merge base between $ref and HEAD in $wt"
   git -C "$wt" diff -z --no-renames --name-only "$merge_base...HEAD" > "$CHANGED_FILE" \
     || die "cannot list the changes since $merge_base in $wt"
+  git -C "$wt" diff -z --no-renames --name-only HEAD >> "$CHANGED_FILE" \
+    || die "cannot list uncommitted changes in $wt"
+  git -C "$wt" ls-files -z --others --exclude-standard >> "$CHANGED_FILE" \
+    || die "cannot list untracked files in $wt"
 }
 
 changed_from_pr() {
