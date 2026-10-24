@@ -161,6 +161,7 @@ The `CONSTRAINT:` and `Recently landed:` lines belong to Outcome and are not par
 2. **Active** - real workers alive now: one line per `in_flight` row whose state shows a live worker (`working`, or `blocked` at a prompt, which the line says), with its current state and next expected result when the record carries one.
    Only these rows count as active work.
    A row whose state is `unknown`, `conflict`, `done`, or `delivery_blocked`, and direct work with no worker, is never Active; it renders under Waiting with its state.
+   A non-working row whose id also appears among `gates` (or as `<owner>/<id>` for a secondmate's gate) is a held worker that the snapshot lists in both buckets: count it once, in Held, and do not render it under Waiting.
    A `conflict` row names both disagreeing sources, and an `unknown` row names the missing evidence as its reason.
    The snapshot reconciles a stamped status declaration against busy-pane activity by timestamp, so a newer stamped declaration supersedes an older busy pane and newer activity yields `conflict`.
    A scout reads `done` only when it has a saved report plus task-bound endpoint evidence.

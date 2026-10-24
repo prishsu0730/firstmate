@@ -2614,6 +2614,43 @@ test_untimed_busy_pane_conflicts_with_pause() {
   pass "untimed busy conflicts with pauses except evidenced scout completion"
 }
 
+# A worker resumed by its captain's reply goes busy after its unkeyed pause. The
+# strictly newer busy hook reads working, so the quiet worker keeps absorbing
+# routine wakes; a keyed declaration or a blocked line stays a conflict.
+test_resumed_worker_after_unkeyed_pause_reads_working() {
+  reset_fakes
+  local d out gen now
+  d=$(new_case resumed-pause)
+  make_repo_on_branch "$d/wt" fm/resumed
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/resumed.meta" "window=fm:fm-resumed" "worktree=$d/wt" "project=$d/wt" \
+    "kind=ship" "mode=no-mistakes" "harness=claude"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_BUSY=0
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" resumed)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" resumed busy --gen "$gen" \
+    --source claude-hook --event user-prompt-submit
+  now=$(date +%s)
+  printf 'paused [at=%s]: waiting on CI\n' "$((now - 60))" > "$d/state/resumed.status"
+  out=$(run_crew_state "$d" resumed)
+  assert_contains "$out" "state: working" "a busy hook newer than an unkeyed pause reads working"
+  assert_contains "$out" "resumed after status-log paused" "the working read keeps the pause as a note"
+  printf 'paused [at=%s]: waiting on CI\n' "$((now + 60))" > "$d/state/resumed.status"
+  out=$(run_crew_state "$d" resumed)
+  assert_not_contains "$out" "state: working" "a pause newer than the busy hook is not overridden"
+  printf 'paused [at=%s] [key=wait-ci]: waiting on CI\n' "$((now - 60))" > "$d/state/resumed.status"
+  out=$(run_crew_state "$d" resumed)
+  assert_contains "$out" "state: conflict" "a keyed pause still conflicts with a newer busy hook"
+  printf 'blocked [at=%s] [key=stuck]: stuck\n' "$((now - 60))" > "$d/state/resumed.status"
+  out=$(run_crew_state "$d" resumed)
+  assert_contains "$out" "state: conflict" "a keyed blocked line still conflicts with a newer busy hook"
+  printf 'needs-decision [at=%s] [key=pick]: pick one\n' "$((now - 60))" > "$d/state/resumed.status"
+  out=$(run_crew_state "$d" resumed)
+  assert_contains "$out" "state: conflict" "a keyed needs-decision line still conflicts with a newer busy hook"
+  pass "a resumed worker reads working after an unkeyed pause; keyed declarations still conflict"
+}
+
 test_no_run_herdr_unknown_uses_backend_capture() {
   command -v jq >/dev/null 2>&1 || { pass "herdr pane fallback skipped without jq"; return; }
   reset_fakes
@@ -5651,7 +5688,8 @@ test_reliability_reconciles_status_and_activity() {
   "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task busy --gen "$gen" --source claude-hook --event user-prompt-submit
   printf 'paused [at=1]: awaiting direction\n' > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)
-  assert_contains "$out" 'state: conflict' 'newer busy activity contradicts an older pause'
+  assert_contains "$out" 'state: working' 'newer busy activity after an older unkeyed pause reads as a resumed worker'
+  assert_contains "$out" 'resumed after status-log paused' 'the resumed read keeps the pause as a note'
   assert_contains "$out" 'status' 'conflict names the status source'
   assert_contains "$out" 'pane' 'conflict names the activity source'
   printf 'paused [at=%s]: finished\n' "$(date +%s)" > "$d/state/task.status"
@@ -5757,6 +5795,7 @@ test_no_run_launch_prompt_parked_is_not_working
 test_no_run_footer_text_alone_is_not_working
 test_no_run_grok_uses_isolated_fallback
 test_untimed_busy_pane_conflicts_with_pause
+test_resumed_worker_after_unkeyed_pause_reads_working
 test_no_run_herdr_unknown_uses_backend_capture
 test_no_run_herdr_cli_failure_reads_unreachable_not_gone
 test_no_run_herdr_alive_with_failed_read_stays_live

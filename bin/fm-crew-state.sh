@@ -1336,6 +1336,16 @@ if [ "$KIND" != secondmate ]; then
           if [ -z "$LOG_EPOCH" ] || [ -z "$BUSY_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); timestamp evidence unavailable"
           fi
+          # A worker that resumed after an unkeyed pause is working: the
+          # strictly newer busy hook is the resumption evidence. A keyed
+          # declaration still conflicts, because its open decision is not
+          # closed by the worker going busy.
+          if [ "$LOG_STATE" = paused ] && [ "$BUSY_EPOCH" -gt "$LOG_EPOCH" ]; then
+            case "$LOG_LINE" in
+              *'[key='*) ;;
+              *) emit working pane "harness busy (${BUSY_VERDICT#* }); resumed after status-log paused, busy hook newer than status" ;;
+            esac
+          fi
           if [ "$BUSY_EPOCH" -ge "$LOG_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }), activity newer than status"
           fi
