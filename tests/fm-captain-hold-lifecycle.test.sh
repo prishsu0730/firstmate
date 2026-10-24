@@ -2755,6 +2755,136 @@ EOF
   pass "a captain call with no routed work, a verified transfer, an open decision, and an answered call all stay silent"
 }
 
+# --- record integrity check ---------------------------------------------------
+#
+# `check-records` is the read-only early look at the three task-record problems
+# that otherwise surface only when a cleanup refuses: a decision list naming its
+# own task, a decision key that resolves to no task or hold, and a recorded
+# worktree whose slot claim now names another task.
+
+write_record_meta() {  # <home> <id> [extra meta lines...]
+  local home=$1 id=$2
+  shift 2
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" \
+    "worktree=$home/projects/missing-$id" \
+    "project=$home/projects/sample" \
+    "harness=codex" \
+    "kind=ship" \
+    "mode=no-mistakes" \
+    "spawn_gen=fixture-$id" \
+    "$@"
+}
+
+# One pool slot, the way treehouse lays it out: <pool>/<slot>/<repo> beside a
+# claim file, with the pool's state file one level up.
+make_claimed_slot() {  # <home> <claimant-id>
+  local home=$1 claimant=$2 pool="$1/pool"
+  mkdir -p "$home/projects/sample" "$pool/1"
+  fm_git_init_commit "$home/projects/sample"
+  git -C "$home/projects/sample" worktree add -q --detach "$pool/1/sample"
+  printf '{"worktrees":[{"name":"1","path":"%s"}]}\n' "$pool/1/sample" > "$pool/treehouse-state.json"
+  printf 'task=%s\nhome=%s\n' "$claimant" "$home" > "$pool/1/.fm-slot-owner"
+}
+
+home_digest() {  # <home>; every file under the home except the git checkouts
+  (cd "$1" && find . -path ./projects -prune -o -path ./pool/1/sample -prune -o -type f -print \
+    | LC_ALL=C sort | while IFS= read -r f; do shasum "$f"; done | shasum)
+}
+
+test_check_records_flags_a_decision_list_naming_its_own_task() {
+  local home out
+  home=$(make_home records-self)
+  write_record_meta "$home" sample-brand decisions_reviewed=1 decision_keys=sample-brand
+  out=$(run_captain "$home" check-records) || fail "check-records failed on a self-naming list"
+  printf '%s\n' "$out" | grep -F "sample-brand	self-decision-key	sample-brand" >/dev/null \
+    || fail "the self-naming decision key was not reported: $out"
+  pass "a decision list naming its own task is reported"
+}
+
+test_check_records_flags_a_decision_key_with_no_hold() {
+  local home out
+  home=$(make_home records-missing)
+  run_captain "$home" hold sample-real-call --title "Choose a sample" \
+    --reason "captain choice pending" --repo sample >/dev/null \
+    || fail "could not register the real call"
+  write_record_meta "$home" sample-scenes decisions_reviewed=1 \
+    decision_keys=sample-real-call,sample-gone-call
+  out=$(run_captain "$home" check-records) || fail "check-records failed on a missing hold"
+  printf '%s\n' "$out" | grep -F "sample-scenes	unresolved-decision-key	sample-gone-call" >/dev/null \
+    || fail "the missing hold was not reported: $out"
+  if printf '%s\n' "$out" | grep -F "sample-real-call" >/dev/null; then
+    fail "a key that resolves to a real hold was reported: $out"
+  fi
+  pass "a decision key that resolves to no task or hold is reported"
+}
+
+test_check_records_preserves_unknown_reads() {
+  local home out rc mode
+  for mode in first second timeout; do
+    home=$(make_home "records-unknown-$mode")
+    write_record_meta "$home" sample-origin decision_keys=sample-origin,sample-call,sample-later
+    cat > "$home/fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ]; then
+  printf 'read\n' >> "$FM_HOME/reads"
+  if [ "$RECORD_READ_MODE" = second ] && [ "$(wc -l < "$FM_HOME/reads")" -eq 1 ]; then
+    printf 'id: sample-call\nstate: queued\nhold_kind: captain\n'
+    exit 0
+  fi
+  [ "$RECORD_READ_MODE" != timeout ] || exit 124
+  printf 'error: backlog unreadable\n' >&2
+  exit 1
+fi
+exec "$REAL_TASKS_AXI" "$@"
+SH
+    chmod +x "$home/fakebin/tasks-axi"
+    rc=0
+    out=$(RECORD_READ_MODE="$mode" run_captain "$home" check-records) || rc=$?
+    expect_code 2 "$rc" "unknown $mode read must mark the scan incomplete"
+    assert_contains "$out" "self-decision-key" "a completed finding was lost"
+    case "$out" in *unresolved-decision-key*) fail "an unreadable hold was reported missing: $out" ;; esac
+    if [ "$mode" = second ]; then
+      assert_equals 2 "$(wc -l < "$home/reads" | tr -d ' ')" "durability failure triggered further reads"
+    else
+      assert_equals 1 "$(wc -l < "$home/reads" | tr -d ' ')" "read failure triggered further reads"
+    fi
+  done
+  pass "unknown reads preserve findings and stop further backlog reads"
+}
+
+test_check_records_flags_a_slot_claimed_by_another_task() {
+  local home out
+  home=$(make_home records-slot)
+  make_claimed_slot "$home" sample-newer
+  write_record_meta "$home" sample-older "worktree=$home/pool/1/sample"
+  out=$(run_captain "$home" check-records) || fail "check-records failed on a reassigned slot"
+  printf '%s\n' "$out" | grep -F "sample-older	slot-reassigned	sample-newer" >/dev/null \
+    || fail "the reassigned slot was not reported: $out"
+  mv "$home/state/sample-older.meta" "$home/older.meta.set-aside"
+  write_record_meta "$home" sample-newer "worktree=$home/pool/1/sample"
+  out=$(run_captain "$home" check-records) || fail "check-records failed on a slot's own claimant"
+  [ -z "$out" ] || fail "a task holding its own slot claim was reported: $out"
+  pass "a worktree whose slot claim names another task is reported, its own claimant is not"
+}
+
+test_check_records_is_silent_and_read_only_on_a_clean_home() {
+  local home out before after
+  home=$(make_home records-clean)
+  make_claimed_slot "$home" sample-owner
+  run_captain "$home" hold sample-clean-call --title "Choose a clean sample" \
+    --reason "captain choice pending" --repo sample >/dev/null \
+    || fail "could not register the clean call"
+  write_record_meta "$home" sample-owner "worktree=$home/pool/1/sample" \
+    decisions_reviewed=1 decision_keys=sample-clean-call
+  before=$(home_digest "$home")
+  out=$(run_captain "$home" check-records) || fail "check-records failed on a clean home"
+  [ -z "$out" ] || fail "a clean home produced a report: $out"
+  after=$(home_digest "$home")
+  [ "$before" = "$after" ] || fail "check-records changed a file in the home"
+  pass "a clean home reports nothing and the check writes nothing"
+}
+
 # The originating work item is itself the captain call, which is what the policy
 # prefers ("hold the work item the question gates"). Cleanup of that finished
 # work must never be the act that closes the captain's own row: the deliverable
@@ -4821,6 +4951,15 @@ SH
   pass "marked hold reasons round-trip through public reads, fleet, startup, and return without changing other fields"
 }
 
+if [ "${FM_TEST_RECORDS_ONLY:-0}" = 1 ]; then
+  test_check_records_flags_a_decision_list_naming_its_own_task
+  test_check_records_flags_a_decision_key_with_no_hold
+  test_check_records_preserves_unknown_reads
+  test_check_records_flags_a_slot_claimed_by_another_task
+  test_check_records_is_silent_and_read_only_on_a_clean_home
+  exit 0
+fi
+
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_precede_backend_holds
 test_historical_self_inventory_has_workable_repair
@@ -4858,6 +4997,11 @@ test_chat_channel_feeds_the_same_keyed_answer_intake
 test_origin_slug_validation_precedes_path_construction
 test_status_resolution_over_an_open_hold_is_signalled
 test_legitimate_holds_produce_no_divergence_signal
+test_check_records_flags_a_decision_list_naming_its_own_task
+test_check_records_flags_a_decision_key_with_no_hold
+test_check_records_preserves_unknown_reads
+test_check_records_flags_a_slot_claimed_by_another_task
+test_check_records_is_silent_and_read_only_on_a_clean_home
 test_teardown_never_closes_a_captain_held_task
 test_retained_row_artifacts_survive_captain_answers
 test_interrupted_cleanup_keeps_the_captain_call_recoverable

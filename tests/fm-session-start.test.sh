@@ -1240,6 +1240,50 @@ EOF
   pass "orphan status logs are printed once with bounded tails"
 }
 
+# The record-integrity check is read-only and bounded: a decision list naming
+# its own task is the one problem that needs no backlog tool, so the digest
+# warning is exercised here and stays silent for a sound record. The three
+# problem kinds themselves are covered in tests/fm-captain-hold-lifecycle.test.sh.
+test_record_problems_warn_only_when_present() {
+  local rec root home fakebin out before after
+  rec=$(new_world record-problems)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  printf 'kind=ship\ndecisions_reviewed=1\ndecision_keys=task-self\n' > "$home/state/task-self.meta"
+  before=$(cat "$home/state/task-self.meta")
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "RECORD PROBLEMS" "digest did not warn about a decision list naming its own task"
+  assert_contains "$out" "task-self: its decision list names the task itself (task-self)" \
+    "digest warning did not name the task and the problem"
+  after=$(cat "$home/state/task-self.meta")
+  [ "$before" = "$after" ] || fail "the record check rewrote the task record"
+
+  printf 'kind=ship\n' > "$home/state/task-self.meta"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" "RECORD PROBLEMS" "digest warned about a sound record"
+
+  printf 'kind=ship\ndecision_keys=task-self,slow-call,later-call\n' > "$home/state/task-self.meta"
+  cat > "$fakebin/tasks-axi" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ]; then
+  sleep 5
+  exit 1
+fi
+exit 0
+SH
+  chmod +x "$fakebin/tasks-axi"
+  out=$(FM_RECORD_CHECK_TIMEOUT=1 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "task-self: its decision list names the task itself" "timeout discarded a completed finding"
+  assert_contains "$out" "Record check incomplete" "timeout was not disclosed"
+  assert_not_contains "$out" "cleanup of these tasks will refuse" "heading still misstates reassigned-slot cleanup"
+
+  pass "the digest warns about a bad task record and is silent for a sound one"
+}
+
 # --- session-start secondmate recovery boundary -----------------------------
 
 test_session_start_relaunches_missing_pi_secondmate() {
@@ -3014,6 +3058,11 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+if [ "${FM_TEST_RECORDS_ONLY:-0}" = 1 ]; then
+  test_record_problems_warn_only_when_present
+  exit 0
+fi
+
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
@@ -3036,6 +3085,7 @@ test_session_start_relaunches_herdr_husk_secondmate
 test_status_tail_bounding
 test_status_tail_line_cap
 test_orphan_status_logs_are_printed
+test_record_problems_warn_only_when_present
 test_endpoint_liveness_tmux
 test_endpoint_liveness_herdr
 test_endpoint_read_death_is_isolated_and_reported

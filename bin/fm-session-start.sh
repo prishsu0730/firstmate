@@ -57,6 +57,8 @@
 #                       ceiling is tasks x the per-read bound
 #                       (FM_SESSION_START_ENDPOINT_TIMEOUT, default 10s) and
 #                       can itself reach the digest's runtime bound.
+#                       Includes RECORD PROBLEMS from fm-captain-hold.sh
+#                       check-records (docs/captain-hold-lifecycle.md).
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
 #   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
@@ -572,6 +574,47 @@ print_status_tail() {
   done < <(tail -n "$STATUS_TAIL" "$status")
 }
 
+# Task-record problems relevant to cleanup, found now. bin/fm-captain-hold.sh
+# check-records owns which problems count and reads without writing; this prints
+# what it reports, and nothing at all when the records are sound. Bounded in time
+# and size; incomplete scans retain completed findings and report uncertainty.
+print_record_problems() {
+  local report bound task kind detail line output='' shown=0 omitted=0 rc=0
+  local max_items=8 item_bytes=200
+  bound=${FM_RECORD_CHECK_TIMEOUT:-20}
+  case "$bound" in ''|*[!0-9]*|0) bound=20 ;; esac
+  report=$(fm_run_timed "$bound" "$SCRIPT_DIR/fm-captain-hold.sh" check-records 2>/dev/null) || rc=$?
+  [ -n "$report" ] || [ "$rc" -ne 0 ] || return 0
+  while IFS=$(printf '\t') read -r task kind detail; do
+    [ -n "$task" ] || continue
+    case "$kind" in
+      self-decision-key) line="$task: its decision list names the task itself ($detail)" ;;
+      unresolved-decision-key) line="$task: decision key $detail resolves to no task or hold" ;;
+      slot-reassigned) line="$task: its recorded worktree slot is now claimed by task $detail" ;;
+      *) continue ;;
+    esac
+    if [ "$shown" -ge "$max_items" ]; then
+      omitted=$((omitted + 1))
+      continue
+    fi
+    fm_cap_line_var "$line" "$item_bytes"
+    output="$output$FM_LINE_CAP_LINE
+"
+    shown=$((shown + 1))
+  done <<EOF
+$report
+EOF
+  [ "$shown" -gt 0 ] || [ "$rc" -ne 0 ] || return 0
+  subsection "RECORD PROBLEMS (read-only check - nothing was changed; reassigned slots permit records-only cleanup)"
+  printf '%s' "$output"
+  if [ "$rc" -ne 0 ]; then
+    printf 'Record check incomplete; some records could not be checked.\n'
+  fi
+  if [ "$omitted" -gt 0 ]; then
+    printf '%d more omitted (line cap)\n' "$omitted"
+  fi
+}
+
 # fm_session_start_endpoint_read <backend> <target> [expected-label]: ONE
 # bounded, crash-isolated endpoint-liveness read. The read runs in its own
 # bash under fm_run_timed's bound instead of in this digest process, because
@@ -935,6 +978,8 @@ for status in "$STATE"/*.status; do
   print_status_tail "$status"
 done
 [ "$ORPHAN_STATUS_FOUND" -eq 1 ] || printf '(none)\n'
+
+print_record_problems
 
 subsection "AFK"
 # The away posture is the record (bin/fm-afk-contract.sh); the legacy flag
