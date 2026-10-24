@@ -865,6 +865,30 @@ test_no_mistakes_origin_remote_allows() {
   pass "no-mistakes worktree with HEAD on origin is torn down (no regression)"
 }
 
+test_no_mistakes_proxy_pushed_head_allows_without_ref_refresh() {
+  local case_dir rc head
+  case_dir=$(make_case nm-proxy-origin)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit "$case_dir" "proxy-pushed work"
+  head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  # Model no-mistakes publishing from its gate clone: origin has the exact
+  # commit, but this worker was never fetched and therefore sees no matching
+  # refs/remotes/origin branch.
+  git -C "$case_dir/wt" push -q origin "HEAD:refs/heads/fm/task-x1"
+  git -C "$case_dir/wt" update-ref -d refs/remotes/origin/fm/task-x1
+  git -C "$case_dir/wt" log --format=%H HEAD --not --remotes | grep -Fqx "$head" \
+    || fail "proxy-origin fixture accidentally refreshed the worker remote-tracking ref"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "proxy-origin: teardown should accept a head proven on origin"
+  ! grep -q REFUSED "$case_dir/stderr" || fail "proxy-origin: teardown printed a REFUSED line"
+  pass "no-mistakes proxy-pushed exact head is accepted without a local ref refresh"
+}
+
 test_no_mistakes_truly_unpushed_refuses() {
   local case_dir rc
   case_dir=$(make_case nm-unpushed)
@@ -4847,6 +4871,7 @@ test_teardown_manual_backend_leaves_the_backlog_to_the_operator
 test_local_only_truly_unpushed_refuses
 test_local_only_merged_to_local_main_allows
 test_no_mistakes_origin_remote_allows
+test_no_mistakes_proxy_pushed_head_allows_without_ref_refresh
 test_no_mistakes_truly_unpushed_refuses
 test_local_only_force_overrides_unpushed
 test_secondmate_pr_registration_publishes_ready_line

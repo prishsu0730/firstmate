@@ -3485,14 +3485,22 @@ test_secondmate_liveness_tick_fails_closed_on_ledger_errors() {
     rc=0
     wait_for_exit "$pid" 300 || rc=$?
     chmod 644 "$ledger"
-    [ "$rc" -eq 1 ] || fail "a mode-$mode relaunch ledger did not fail the watcher (rc=$rc): $(cat "$dir/watch-ledger.out" "$dir/watch-ledger.err")"
-    grep -F 'secondmate liveness check failed' "$dir/watch-ledger.err" >/dev/null \
-      || fail "a mode-$mode ledger failure was not reported: $(cat "$dir/watch-ledger.err")"
+    if [ "$mode" = 444 ]; then
+      [ "$rc" -eq 0 ] || fail "an unwritable ledger skip did not notify (rc=$rc): $(cat "$dir/watch-ledger.out" "$dir/watch-ledger.err")"
+      grep -F "check: secondmate sm1 auto-relaunch skipped: relaunch ledger $ledger is unwritable" "$dir/watch-ledger.out" >/dev/null \
+        || fail "the unwritable ledger skip was not surfaced: $(cat "$dir/watch-ledger.out")"
+      [ "$(awk -F '\t' '$3 == "check" && $4 ~ /^secondmate-relaunch-skipped-sm1-/ { n++ } END { print n+0 }' "$state/.wake-queue")" -eq 1 ] \
+        || fail "the unwritable ledger skip did not queue exactly one notification: $(cat "$state/.wake-queue")"
+    else
+      [ "$rc" -eq 1 ] || fail "an unreadable relaunch ledger did not fail the watcher (rc=$rc): $(cat "$dir/watch-ledger.out" "$dir/watch-ledger.err")"
+      grep -F 'secondmate liveness check failed' "$dir/watch-ledger.err" >/dev/null \
+        || fail "the unreadable ledger failure was not reported: $(cat "$dir/watch-ledger.err")"
+      ! grep -F 'secondmate-relaunch' "$state/.wake-queue" >/dev/null 2>&1 \
+        || fail "an unreadable ledger queued a relaunch wake: $(cat "$state/.wake-queue")"
+    fi
     [ ! -s "$dir/tmux.log" ] \
       || fail "a mode-$mode relaunch ledger still killed or spawned: $(cat "$dir/tmux.log")"
     [ ! -s "$ledger" ] || fail "a mode-$mode ledger gained rows: $(cat "$ledger")"
-    ! grep -F 'secondmate-relaunch' "$state/.wake-queue" >/dev/null 2>&1 \
-      || fail "a mode-$mode ledger failure queued a relaunch wake: $(cat "$state/.wake-queue")"
   done
   pass "watch liveness: an unwritable or unreadable relaunch ledger refuses to kill or spawn"
 }

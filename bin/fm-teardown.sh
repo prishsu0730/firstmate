@@ -44,7 +44,9 @@
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
 # hard-resets/removes the worktree and kills its processes. Work has landed when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
-# upstream-contribution PRs pushed to a fork satisfy this in any mode), OR - for a
+# upstream-contribution PRs pushed to a fork satisfy this in any mode), or when
+# HEAD exactly matches a branch tip proven directly on origin (a proxy push need
+# not refresh this worktree's remote-tracking refs), OR - for a
 # normal ship task whose commits are not so reachable - when its PR is merged and
 # GitHub reports a PR head that contains the current local work, or its content is
 # already present in the up-to-date default branch. This recognizes the common
@@ -1635,6 +1637,19 @@ content_in_default() {
   [ "$merged_tree" = "$default_tree" ]
 }
 
+# A no-mistakes proxy can push this exact head from its isolated gate clone,
+# leaving the worker's own refs/remotes/origin/* stale.  Directly compare HEAD
+# with origin's advertised branch tips before refusing the worker's local copy.
+# This is deliberately exact: ancestry is already covered by the local
+# remote-tracking proof, while accepting an arbitrary remote commit here could
+# discard work that only shares a base with a published branch.
+head_is_exact_origin_branch_tip() {
+  local head
+  head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  git -C "$WT" ls-remote --heads origin 2>/dev/null \
+    | awk -v head="$head" '$1 == head { found = 1 } END { exit !found }'
+}
+
 # Has the worktree's committed work actually LANDED, though its commits are not
 # reachable from any remote-tracking branch? True when a merged PR proves the
 # current local work is contained in the PR head, OR the content is already in the
@@ -2008,7 +2023,7 @@ validate_worktree_teardown_safety() {
     report_worktree_dirt "$dirty"
     echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
     return 1
-  elif [ -n "$unpushed" ]; then
+  elif [ -n "$unpushed" ] && ! head_is_exact_origin_branch_tip; then
     branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
     if [ -z "$branch" ]; then
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
