@@ -30,7 +30,8 @@ CONTROL="$ROOT/bin/fm-control.sh"
 SEND="$ROOT/bin/fm-send.sh"
 # fm_test_tmproot's own cleanup trap fires when its command substitution exits,
 # so recreate the root before resolving it and clean it up from this file's trap.
-TMP_ROOT=$(fm_test_tmproot fm-control)
+TMP_ROOT=$(fm_test_tmproot fm-control) || exit 1
+case "$TMP_ROOT" in ''|"$ROOT"|"$ROOT"/*) printf 'unsafe test root: %s\n' "$TMP_ROOT" >&2; exit 1 ;; esac
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd)
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -125,6 +126,8 @@ case "${1:-}" in
       esac
     done
     payload=${1:-}
+    # FM_FAKE_SEND_FAILS: the transport refuses every typed payload.
+    if [ "$literal" = 1 ] && [ -n "${FM_FAKE_SEND_FAILS:-}" ]; then exit 1; fi
     if [ "$literal" = 1 ]; then
       printf '%s\n' "$payload" >> "$D/literal"
       if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
@@ -1062,6 +1065,36 @@ test_agent_that_does_not_stop_fails_closed() {
   pass "fm-control exit: a stubborn agent reports delivered input and an unconfirmed exit"
 }
 
+test_secondmate_exit_timeout_preserves_deliberate_stop() {
+  local dir out rc marker
+  dir=$(new_case mate-timeout)
+  add_task "$dir" sm1 claude secondmate
+  alive_as "$dir" claude
+  marker="$dir/home/state/.secondmate-stopped-sm1"
+  out=$(FM_FAKE_NEVER_DIES=1 run_control "$dir" sm1 exit); rc=$?
+  expect_code 1 "$rc" "a mate exit that remains unconfirmed should fail closed"
+  assert_contains "$out" 'exit-command=delivered' "the exit command must have reached the mate"
+  [ -f "$marker" ] || fail "a delivered but late mate exit lost its deliberate-stop marker"
+  pass "fm-control exit: late secondmate stops remain marked for both liveness sweeps"
+}
+
+test_secondmate_exit_send_failure_leaves_no_new_stop_marker() {
+  local dir out rc marker
+  dir=$(new_case mate-send-fails)
+  add_task "$dir" sm1 claude secondmate
+  alive_as "$dir" claude
+  marker="$dir/home/state/.secondmate-stopped-sm1"
+  out=$(FM_FAKE_SEND_FAILS=1 run_control "$dir" sm1 exit); rc=$?
+  [ "$rc" -ne 0 ] || fail "an exit command that could not be sent must fail: $out"
+  assert_contains "$out" 'could not be sent' "the failure should say the exit command was not sent"
+  [ ! -e "$marker" ] || fail "an exit that was never delivered left a deliberate-stop marker on a live mate"
+  : > "$marker"
+  out=$(FM_FAKE_SEND_FAILS=1 run_control "$dir" sm1 exit); rc=$?
+  [ "$rc" -ne 0 ] || fail "an exit command that could not be sent must fail: $out"
+  [ -e "$marker" ] || fail "an exit that failed to send removed a stop marker an earlier exit created"
+  pass "fm-control exit: an undelivered exit removes only the stop marker it created"
+}
+
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed() {
   local dir out rc
   dir=$(new_case nosettle)
@@ -1101,6 +1134,7 @@ test_secondmate_control_command_carries_no_marker() {
   alive_as "$dir" claude
   out=$(run_control "$dir" domain exit); rc=$?
   expect_code 0 "$rc" "exiting a secondmate's agent should succeed"$'\n'"$out"
+  [ -f "$home/state/.secondmate-stopped-domain" ] || fail "deliberate secondmate exit must persist a stop marker"
   typed=$(literals "$dir")
   [ "$typed" = "/exit" ] \
     || fail "a secondmate control command must be the bare exit command, got: $typed"
@@ -1213,6 +1247,8 @@ test_muse_interrupt_confirms_adapter_acknowledgement
 test_interrupt_revalidates_agent_after_acknowledgement_wait
 test_exit_accepts_agent_stopped_by_busy_interrupt
 test_agent_that_does_not_stop_fails_closed
+test_secondmate_exit_timeout_preserves_deliberate_stop
+test_secondmate_exit_send_failure_leaves_no_new_stop_marker
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
