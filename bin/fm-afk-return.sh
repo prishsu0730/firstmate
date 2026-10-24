@@ -641,7 +641,7 @@ pr_changed_paths() {
         fi ;;
     esac
   fi
-  if [ -z "$paths" ] && [ -n "$branch" ] && [ -n "$base" ]; then
+  if [ "$state" = ready ] && [ -z "$paths" ] && [ -n "$branch" ] && [ -n "$base" ]; then
     commit=$(git -C "$repo" merge-base "$base" "$branch" 2>/dev/null) || commit=
     if [ -n "$commit" ]; then
       paths=$(git -C "$repo" diff --name-only "$commit" "$branch" -- 2>/dev/null) || paths=
@@ -929,6 +929,9 @@ EOF
   elif [ -n "$rows" ]; then
     task=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "captain" && $6 != "true" { print $2; exit }')
     printf 'Next: captain reviews the escalated outcome for %s.\n' "$task"
+  elif [ "$routine_visible" -gt 0 ]; then
+    task=$(printf '%s\n' "$STORE_ROWS" | awk -F '\t' '$3 == "routine" && $6 != "true" { print $2; exit }')
+    printf 'Next: firstmate reviews the routine outcome for %s.\n' "$task"
   else
     printf 'Next: none.\n'
   fi

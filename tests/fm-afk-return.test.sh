@@ -686,7 +686,7 @@ test_return_brief_lists_landed_work_awaiting_cleanup() {
 
 test_return_brief_files_and_next_action_precedence() {
   local scenario dir out next_line expected stamp
-  for scenario in blocker decision captain-outcome captain-only landed default-base review unrecorded none; do
+  for scenario in blocker decision captain-outcome captain-only routine-only landed default-base squash-moving review unrecorded none; do
     dir="$TMP_ROOT/brief-next-$scenario"
     install_runner "$dir"
     contract_in "$dir" enter --words 'handle the recorded PR work' >/dev/null 2>&1 \
@@ -700,7 +700,7 @@ case "$1" in
 esac
 SH
     chmod +x "$dir/bin/fm-crew-state.sh"
-    if [ "$scenario" != none ] && [ "$scenario" != captain-only ]; then
+    if [ "$scenario" != none ] && [ "$scenario" != captain-only ] && [ "$scenario" != routine-only ]; then
       printf 'window=synthetic:fm-ready\nbackend=tmux\nkind=ship\npr=https://github.com/example/ready/pull/9\n' > "$dir/home/state/ready.meta"
       if [ "$scenario" = unrecorded ]; then
         printf 'done: PR https://github.com/example/ready/pull/9 checks green\n' > "$dir/home/state/ready.status"
@@ -709,7 +709,7 @@ SH
       fi
     fi
     case "$scenario" in
-      blocker|decision|captain-outcome|landed|default-base|unrecorded)
+      blocker|decision|captain-outcome|landed|default-base|squash-moving|unrecorded)
         printf 'window=synthetic:fm-landed\nbackend=tmux\nkind=ship\npr=https://github.com/example/landed/pull/7\n' > "$dir/home/state/landed.meta"
         if [ "$scenario" = unrecorded ]; then
           printf 'done: PR https://github.com/example/landed/pull/7 merged\n' > "$dir/home/state/landed.status"
@@ -725,6 +725,10 @@ SH
         [ "$scenario" != unrecorded ] || touch -t 202001010000 "$dir/home/state/landed.pr-poll-merge-notified"
         ;;
     esac
+    if [ "$scenario" = routine-only ]; then
+      outcome_in "$dir" append --task upkeep --verdict routine --summary 'worker resumed' >/dev/null \
+        || fail "could not record the routine outcome"
+    fi
     case "$scenario" in
       blocker|decision)
         printf 'window=synthetic:fm-choice\nbackend=tmux\nkind=ship\n' > "$dir/home/state/choice.meta"
@@ -742,12 +746,12 @@ SH
       outcome_in "$dir" append --task ready --verdict routine --summary 'PR ready for review' >/dev/null \
         || fail "could not record the review-ready outcome for $scenario"
       case "$scenario" in
-        blocker|decision|captain-outcome|landed|default-base)
+        blocker|decision|captain-outcome|landed|default-base|squash-moving)
           outcome_in "$dir" append --task landed --verdict routine --summary 'merged PR' >/dev/null \
             || fail "could not record the merged outcome for $scenario" ;;
       esac
     fi
-    if [ "$scenario" = landed ] || [ "$scenario" = default-base ]; then
+    if [ "$scenario" = landed ] || [ "$scenario" = default-base ] || [ "$scenario" = squash-moving ]; then
       mkdir -p "$dir/repo"
       git -C "$dir/repo" init -q -b main
       git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m base
@@ -756,7 +760,15 @@ SH
       git -C "$dir/repo" add .
       git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m 'Changes (#7)'
       git -C "$dir/repo" checkout -q main
-      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com merge -q --no-ff changes -m 'Merge pull request #7 from example/changes'
+      if [ "$scenario" = squash-moving ]; then
+        git -C "$dir/repo" checkout -q changes
+        touch "$dir/repo/later"
+        git -C "$dir/repo" add later
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m later
+        git -C "$dir/repo" checkout -q main
+      else
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com merge -q --no-ff changes -m 'Merge pull request #7 from example/changes'
+      fi
       for task in ready landed; do
         printf 'project=%s/repo\nbranch=changes\nbase_branch=main\n' "$dir" >> "$dir/home/state/$task.meta"
       done
@@ -777,6 +789,9 @@ SH
     if [ "$scenario" = landed ] || [ "$scenario" = default-base ]; then
       assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged): a, b, c +2 more' "merged PR omitted local paths"
       assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review): a, b, c +2 more' "ready PR omitted local paths"
+    elif [ "$scenario" = squash-moving ]; then
+      assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged): paths unavailable' "merged PR used the moving branch"
+      assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review): a, b, c +3 more' "ready PR lost its branch comparison"
     elif [ "$scenario" = review ]; then
       assert_contains "$out" 'paths unavailable: recorded local repository missing' "missing repository lacked a reason"
     fi
@@ -786,19 +801,20 @@ SH
       decision) expected='Next: captain decides for choice [key=target].' ;;
       captain-outcome) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       captain-only) expected='Next: captain reviews the escalated outcome for choice.' ;;
-      landed|default-base) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
+      routine-only) expected='Next: firstmate reviews the routine outcome for upkeep.' ;;
+      landed|default-base|squash-moving) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       review) expected='Next: captain reviews https://github.com/example/ready/pull/9 for ready.' ;;
       unrecorded) expected='Next: firstmate closes landed task landed with bin/fm-teardown.sh landed.' ;;
       none) expected='Next: none.' ;;
     esac
     [ "$next_line" = "$expected" ] || fail "$scenario selected the wrong next action: $next_line"
-    if [ "$scenario" = none ] || [ "$scenario" = unrecorded ] || [ "$scenario" = captain-only ]; then
+    if [ "$scenario" = none ] || [ "$scenario" = unrecorded ] || [ "$scenario" = captain-only ] || [ "$scenario" = routine-only ]; then
       assert_contains "$out" 'Files changed: none recorded' "empty records did not say no changes were recorded"
     else
       assert_contains "$out" 'Files changed: PRs with away-window merge or ready evidence' "$scenario did not show recorded PR changes"
       assert_contains "$out" 'ready: https://github.com/example/ready/pull/9 (ready for review)' "$scenario omitted the review-ready PR"
       case "$scenario" in
-        blocker|decision|captain-outcome|landed|default-base)
+        blocker|decision|captain-outcome|landed|default-base|squash-moving)
           assert_contains "$out" 'landed: https://github.com/example/landed/pull/7 (merged)' "$scenario omitted the landed PR" ;;
       esac
     fi
