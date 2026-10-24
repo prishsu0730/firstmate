@@ -24,7 +24,8 @@
 #
 # Layout under <state-dir>:
 #   <task>.inbox/NNN.msg       one durable steer, numeric sequence, atomic rename
-#   <task>.inbox/handled/      the worker's `mv` here IS the acknowledgement
+#   <task>.inbox/handled/      the record moved here IS the acknowledgement
+#                              (the worker runs bin/fm-inbox-ack.sh, never a bare mv)
 #   <task>.inbox/.seq.lock     serializes sequence allocation across writers
 #                              (the session and the away daemon)
 #   <task>.inbox/.ring-state   watcher re-ring ladder: "<msg>\t<count>\t<epoch>"
@@ -314,8 +315,14 @@ fm_task_inbox_body() {  # <record-path>
 # resolve it from its own environment even after losing its brief context.
 # The short `<task>.inbox` name follows as the fallback for a worker launched
 # before that export, whose brief carries the full path (bin/fm-dod-lib.sh
-# role contract, bin/fm-brief.sh inbox section). No absolute path is printed,
-# so the line's length never grows with the home's depth: a long line wraps
+# role contract, bin/fm-brief.sh inbox section).
+# The acknowledgement is named the same way, "$FM_INBOX_ACK", the exported path
+# of bin/fm-inbox-ack.sh, run as a standalone command so a global ask rule on
+# `mv` with an absolute path never fires. A worker launched before that export
+# falls back to this library's own bin/fm-inbox-ack.sh, so it works when FM_HOME
+# is separate from the code. That install path is the only absolute path
+# printed; the inbox is never named by its home path, so the rest of the line
+# never grows with the home's depth: a long line wraps
 # past what a harness composer read can prove, and a Herdr submit then reports
 # it did not reach the pane on every re-ring. The leading `: ` is the POSIX
 # shell no-op, so the same line typed into a pane whose agent has exited (a
@@ -331,8 +338,8 @@ fm_task_inbox_doorbell_line() {  # <record-path>
     ''|*[![:print:]]*) return 1 ;;
   esac
   quoted=$(printf '%s' "$name" | sed "s/'/'\\\\''/g")
-  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, read and act on each in numeric order, then mv each into its handled/." \
-    "$quoted"
+  printf ": Firstmate instruction waiting: list \"\$FM_TASK_INBOX\"/*.msg in your '%s' steering inbox, act on each in numeric order, then run \"\${FM_INBOX_ACK:-%s}\" NNN." \
+    "$quoted" "$_FM_TASK_INBOX_LIB_DIR/fm-inbox-ack.sh"
 }
 
 # Ring the doorbell, best-effort: one endpoint-liveness pre-check, one advisory
