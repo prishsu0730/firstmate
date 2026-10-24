@@ -909,7 +909,7 @@ capture_unchanged() {  # <id> <seq> <result> <adapter>
 result_wake_append_once() {  # <key> <payload>
   local key=$1 payload=$2 status=0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
-  if [ -f "$STATE/.wake-queue" ] && awk -F '\t' -v key="$key" '$3 == "check" && $4 == key { found=1 } END { exit !found }' "$STATE/.wake-queue"; then
+  if [ -f "$FM_WAKE_QUEUE" ] && awk -F '\t' -v key="$key" '$3 == "check" && $4 == key { found=1 } END { exit !found }' "$FM_WAKE_QUEUE"; then
     status=0
   else
     fm_wake_append_locked check "$key" "$payload" || status=$?

@@ -260,6 +260,25 @@ test_repeated_lavish_results_are_quiet() {
 
 test_repeated_lavish_results_are_quiet
 
+test_custom_wake_queue_ignores_default_queue_duplicate() {
+  local home payload FM_WAKE_QUEUE
+  home="$TMP_ROOT/custom-wake-queue"
+  payload="$TMP_ROOT/custom-wake-payload"
+  new_home "$home"
+  FM_WAKE_QUEUE="$home/state/custom-wake-queue"
+  export FM_WAKE_QUEUE
+  printf 'session:\n  status: feedback\nfeedback[1]{text}:\n  new answer\n' > "$payload"
+  printf '1\t1\tcheck\tprocevent:custom-src:1\tstale wake\n' > "$home/state/.wake-queue"
+  pe_register "$home" lavish custom-src -- cat "$payload" >/dev/null
+  pe "$home" start custom-src >/dev/null
+  [ -s "$FM_WAKE_QUEUE" ] || fail 'custom queue missed published result'
+  awk -F '\t' '$3 == "check" && $4 == "procevent:custom-src:1" { found=1 } END { exit !found }' "$FM_WAKE_QUEUE" \
+    || fail 'custom queue omitted the new result wake'
+  pass 'a stale default-queue row does not suppress publication to a custom queue'
+}
+
+test_custom_wake_queue_ignores_default_queue_duplicate
+
 # --- inert with nothing configured ------------------------------------------
 IDLE="$TMP_ROOT/idle"; mkdir -p "$IDLE"
 out=$(pe "$IDLE" list)
