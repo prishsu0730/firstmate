@@ -770,7 +770,9 @@ SH
         git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com merge -q --no-ff changes -m 'Merge pull request #7 from example/changes'
       fi
       for task in ready landed; do
-        printf 'project=%s/repo\nbranch=changes\nbase_branch=main\n' "$dir" >> "$dir/home/state/$task.meta"
+        awk -v project="$dir/repo" '/^pr=/ { print "project=" project; print "branch=changes"; print "base_branch=main" } { print }' \
+          "$dir/home/state/$task.meta" > "$dir/home/state/$task.meta.tmp"
+        mv "$dir/home/state/$task.meta.tmp" "$dir/home/state/$task.meta"
       done
       git -C "$dir/repo" branch ready-base HEAD~1
       sed -i.bak 's/base_branch=main/base_branch=ready-base/' "$dir/home/state/ready.meta"
