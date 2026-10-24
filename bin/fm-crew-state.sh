@@ -1336,10 +1336,8 @@ if [ "$KIND" != secondmate ]; then
       LOG_STATE=$(map_log_state "$LOG_LINE")
       case "$LOG_STATE" in
         paused|done|failed|blocked|parked)
-          if [ -n "$LOG_EPOCH" ] && [ -z "$BUSY_EPOCH" ] && [ "$LOG_STATE" = paused ]; then
-            if scout_finished_evidence; then
-              emit_ship_status_done "saved scout report; no ordering evidence for the busy pane"
-            fi
+          if [ "$LOG_STATE" = paused ] && scout_finished_evidence; then
+            emit_ship_status_done "saved scout report; pane busy"
           fi
           if [ -z "$LOG_EPOCH" ] || [ -z "$BUSY_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }); timestamp evidence unavailable"
@@ -1356,9 +1354,6 @@ if [ "$KIND" != secondmate ]; then
           fi
           if [ "$BUSY_EPOCH" -ge "$LOG_EPOCH" ]; then
             emit conflict pane "status-log says $LOG_STATE; pane says busy (${BUSY_VERDICT#* }), activity newer than status"
-          fi
-          if scout_finished_evidence; then
-            emit_ship_status_done "saved scout report; busy hook no newer than status"
           fi
           if [ "$LOG_STATE" = "done" ]; then
             emit_ship_status_done "busy hook older than status"

@@ -5672,6 +5672,23 @@ test_scout_finished_pause_requires_completion_evidence() {
   pass 'finished scout pauses require saved report and valid endpoint'
 }
 
+test_scout_finished_pause_beats_newer_busy_hook() {
+  reset_fakes
+  local d gen now out
+  d=$(new_case scout-finished-newer-busy)
+  make_repo_on_branch "$d/wt" fm/task
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/task.meta" "window=fm:fm-task" "worktree=$d/wt" "project=sample" "kind=scout" "harness=claude"
+  mkdir -p "$d/data/task"
+  printf 'finished report\n' > "$d/data/task/report.md"
+  printf 'paused [at=%s]: finished\n' "$(($(date +%s) - 60))" > "$d/state/task.status"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$d/state" task)
+  "$ROOT/bin/fm-busy-event.sh" apply "$d/state" task busy --gen "$gen" --source claude-hook --event user-prompt-submit
+  out=$(FM_HOME="$d" run_crew_state "$d" task)
+  assert_contains "$out" 'state: done' 'finished scout evidence beats a newer busy hook'
+  pass 'evidenced finished scout stays done after a newer busy hook'
+}
+
 test_reliability_reconciles_status_and_activity() {
   reset_fakes
   local d now gen out
@@ -5736,6 +5753,7 @@ test_reliability_reconciles_status_and_activity() {
 
 test_scout_done_requires_completion_evidence
 test_scout_finished_pause_requires_completion_evidence
+test_scout_finished_pause_beats_newer_busy_hook
 test_reliability_reconciles_status_and_activity
 test_captured_axi_status_shapes
 test_captured_inventory_replay
