@@ -163,11 +163,11 @@ test_fixture_snapshot_json() {
     || fail "task ordering must be stable by id, got $ids"
   printf '%s' "$out" | jq -e '
     .tasks[] | select(.id == "ship-task")
-    | .current_state.state == "working"
+    | .current_state.state == "conflict"
       and .current_state.source == "pane"
       and .pr.url == "https://github.com/kunchenguid/firstmate/pull/9"
       and .backlog.body_excerpt == "Preserve this detail for bearings."
-      and .hints.pending_decision == false
+      and .hints.pending_decision == true
       and .paths.status_log.kind == "event_history"
   ' >/dev/null || fail "ship task state, PR, body, and stale event hints wrong"
   printf '%s' "$out" | jq -e '
@@ -526,10 +526,10 @@ test_event_hints_follow_reconciled_current_state() {
       and task("active-decision").hints.pending_decision == true
       and task("active-blocked").current_state.state == "blocked"
       and task("active-blocked").hints.blocked_event == true
-      and task("stale-decision").current_state.state == "working"
-      and task("stale-decision").hints.pending_decision == false
-      and task("stale-blocked").current_state.state == "working"
-      and task("stale-blocked").hints.blocked_event == false
+      and task("stale-decision").current_state.state == "conflict"
+      and task("stale-decision").hints.pending_decision == true
+      and task("stale-blocked").current_state.state == "conflict"
+      and task("stale-blocked").hints.blocked_event == true
   ' >/dev/null || fail "event hints must follow reconciled current state"
   pass "snapshot event hints follow reconciled current state"
 }
