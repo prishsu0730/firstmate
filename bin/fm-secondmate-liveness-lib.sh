@@ -90,16 +90,15 @@ fm_sm_live_first_line() {
 }
 
 # One line per relaunch attempt and one per outcome, keyed by epoch, plus a
-# `rearmed` row when a live probe lifts a parked mate. The watcher bound counts
-# `attempt` rows inside its window and after the last `rearmed` row; the whole
+# `rearmed` row when a live probe lifts a parked mate. The bound counts
+# all `attempt` rows inside its window, including before a `rearmed` row; the whole
 # file is the durable per-mate relaunch record the captain can count to see
 # frequency. Fails when the row cannot be appended.
 fm_secondmate_liveness_ledger_add() {  # <id> <attempt|relaunched|failed|rearmed>
   printf '%s\t%s\n' "$(date +%s)" "$2" >> "$STATE/.secondmate-relaunch-$1" 2>/dev/null
 }
 
-# Count of attempt rows no older than <window-secs> that follow the last
-# `rearmed` row. An absent ledger counts
+# Count of attempt rows no older than <window-secs>. An absent ledger counts
 # zero; an existing ledger that cannot be read fails rather than counting zero.
 fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
   local id=$1 window=$2 now cutoff ledger
@@ -111,7 +110,7 @@ fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
   now=$(date +%s)
   cutoff=$((now - window))
   awk -F '\t' -v cutoff="$cutoff" \
-    '$2 == "rearmed" { n = 0; next } $1 ~ /^[0-9]+$/ && $1 >= cutoff && $2 == "attempt" { n++ } END { print n + 0 }' \
+    '$1 ~ /^[0-9]+$/ && $1 >= cutoff && $2 == "attempt" { n++ } END { print n + 0 }' \
     "$ledger" 2>/dev/null
 }
 
@@ -126,6 +125,7 @@ fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
 #   FM_SM_LIVE_CAUSE   relaunch cause phrase, on relaunchable
 #   FM_SM_LIVE_WHERE   backend=<b> or host=<h>, on relaunchable
 #   FM_SM_LIVE_REASON  exact skip suffix, on skipped
+#   FM_SM_LIVE_STOPPED 1 when the skip is a deliberate stop (a fact, not a fault)
 #   FM_SM_LIVE_LINE    verbose already-live line body, on alive
 #
 # `silent` means the meta records no endpoint at all - that shape is owned by
@@ -135,9 +135,14 @@ fm_secondmate_liveness_recent_attempts() {  # <id> <window-secs>
 # relaunchable verdict could be acted on.
 fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
   local meta=$1 id=$2 mode=$3
-  FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_STATE=unknown FM_SM_LIVE_KILL=0
+  FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_STATE=unknown FM_SM_LIVE_KILL=0 FM_SM_LIVE_STOPPED=0
   FM_SM_LIVE_CAUSE='' FM_SM_LIVE_WHERE='' FM_SM_LIVE_REASON='' FM_SM_LIVE_LINE=''
   local window harness remote_host remote_rc out agent_state readiness_reason route_out remote_backend
+  if [ -e "$STATE/.secondmate-stopped-$id" ] || [ -L "$STATE/.secondmate-stopped-$id" ]; then
+    FM_SM_LIVE_REASON="deliberately stopped; use fm-control relaunch to resume"
+    FM_SM_LIVE_STOPPED=1
+    return 0
+  fi
   window=$(fm_meta_get "$meta" window)
   [ -n "$window" ] || { FM_SM_LIVE_STATUS=silent; return 0; }
   harness=$(fm_meta_get "$meta" harness)
@@ -272,13 +277,18 @@ fm_secondmate_liveness_probe() {  # <meta> <id> <full|poll>
 # spawned and no row is written: the verdict becomes FM_SM_LIVE_STATUS=skipped
 # with FM_SM_LIVE_REASON set and this returns 1.
 # Caller holds the liveness lock and owns reporting.
-fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs]
+fm_secondmate_liveness_relaunch() {  # <meta> <id> [timeout-secs] [max-attempts] [window-secs]
   local meta=$1 id=$2 timeout=${3:-}
   FM_SM_LIVE_OUT='' FM_SM_LIVE_RC=0
-  if ! fm_secondmate_liveness_recent_attempts "$id" 0 >/dev/null; then
-    FM_SM_LIVE_STATUS=skipped
-    FM_SM_LIVE_REASON="relaunch ledger $STATE/.secondmate-relaunch-$id is unreadable; endpoint left $FM_SM_LIVE_STATE"
-    FM_SM_LIVE_RC=1
+  local max=${4:-${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-3}} window=${5:-${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-3600}} attempts
+  case "$max" in ''|*[!0-9]*|0) max=3 ;; esac
+  case "$window" in ''|*[!0-9]*|0) window=3600 ;; esac
+  if ! attempts=$(fm_secondmate_liveness_recent_attempts "$id" "$window"); then
+    FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_REASON="relaunch ledger $STATE/.secondmate-relaunch-$id is unreadable; endpoint left $FM_SM_LIVE_STATE" FM_SM_LIVE_RC=1
+    return 1
+  fi
+  if [ "$attempts" -ge "$max" ] || [ -e "$STATE/.secondmate-relaunch-bound-$id" ] || [ -L "$STATE/.secondmate-relaunch-bound-$id" ]; then
+    FM_SM_LIVE_STATUS=skipped FM_SM_LIVE_REASON="auto-relaunch paused after $max attempts in ${window}s; relaunch manually or retire the route" FM_SM_LIVE_RC=1
     return 1
   fi
   fm_sm_live_require_locks || return 1

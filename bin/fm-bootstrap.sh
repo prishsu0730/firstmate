@@ -759,7 +759,7 @@ secondmate_liveness_one() {  # <meta> <id>
       [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" != 1 ] || echo "BOOTSTRAP_INFO: $FM_SM_LIVE_LINE"
       ;;
     relaunchable)
-      if fm_secondmate_liveness_relaunch "$meta" "$id"; then
+      if fm_secondmate_liveness_relaunch "$meta" "$id" '' "${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-3}" "${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-3600}"; then
         secondmate_note_respawned "$id"
         report_relaunch "$id" "$FM_SM_LIVE_CAUSE" "$FM_SM_LIVE_WHERE"
       elif [ "$FM_SM_LIVE_STATUS" = skipped ]; then
@@ -769,7 +769,12 @@ secondmate_liveness_one() {  # <meta> <id>
       fi
       ;;
     skipped)
-      echo "SECONDMATE_LIVENESS: secondmate $id: skipped: $FM_SM_LIVE_REASON"
+      # A deliberate stop is a fact to leave alone, not a diagnostic to act on.
+      if [ "${FM_SM_LIVE_STOPPED:-0}" = 1 ]; then
+        echo "BOOTSTRAP_INFO: secondmate $id: skipped: $FM_SM_LIVE_REASON"
+      else
+        echo "SECONDMATE_LIVENESS: secondmate $id: skipped: $FM_SM_LIVE_REASON"
+      fi
       ;;
   esac
   fm_secondmate_liveness_unlock "$id"
