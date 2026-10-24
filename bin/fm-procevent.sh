@@ -66,8 +66,9 @@
 #            A task-owned source instead keeps its terminal round open and
 #            registered until its owner concludes it with `handled`.
 # reconcile  Idempotent liveness entry the watcher calls on its ordinary cycle:
-#            republish every durably captured result with no handled
-#            acknowledgement yet - regardless of any earlier publication - and
+#            reconsider every durably captured result with no handled
+#            acknowledgement yet, suppressing proven no-ops and reusing a
+#            matching wake still queued for that source and sequence, and
 #            start a runner for any registered source that has no live owner and
 #            no open task-owned round. This is liveness repair only - it never
 #            discovers results by
@@ -917,11 +918,10 @@ result_wake_append_once() {  # <key> <payload>
   return "$status"
 }
 
-# Publish every durably captured result with no handled acknowledgement yet.
-# Capture already happened, so this only turns durable state into durable
-# events - and it republishes on every call regardless of any earlier
-# publication, so a result stays eligible for re-announcement across restarts
-# and drains until `fm_procevent_mark_handled` records it.
+# Reconsider each durably captured result with no handled acknowledgement.
+# Capture already happened; proven no-ops are handled without publication,
+# while a pending wake is reused and an unhandled result remains eligible
+# for re-announcement after a drain until `fm_procevent_mark_handled` records it.
 publish_result() {  # <result-file>
   local result=$1 id seq adapter line status=1 owner_task='' message='' record=''
   local ring_backend ring_target ring_meta inbox_dir handled_dir pre_existing existing new_record
