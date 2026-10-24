@@ -822,6 +822,32 @@ SH
   pass "the return brief shows recorded PR changes and selects one next action by precedence"
 }
 
+test_return_brief_excludes_outcomes_after_return() {
+  local dir out brief gate
+  dir="$TMP_ROOT/brief-post-return-outcomes"
+  install_runner "$dir"
+  contract_in "$dir" enter --words 'watch the work' >/dev/null 2>&1 \
+    || fail "could not enter the away window"
+  outcome_in "$dir" append --task away --verdict routine --summary 'handled while away' >/dev/null \
+    || fail "could not record the away outcome"
+  seed_live_blocker "$dir" tmux dependency
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) || [ "$?" -eq 3 ] || fail "return failed: $out"
+  gate="$dir/home/state/.afk-return-catchup"
+  [ -f "$gate" ] || fail "the return gate was not retained"
+  sleep 1
+  outcome_in "$dir" append --task attended --verdict captain --summary 'attended choice' >/dev/null \
+    || fail "could not record the attended outcome"
+  out=$(run_return "$dir" check) || [ "$?" -eq 3 ] || fail "return check failed: $out"
+  brief=${out#*=== Return brief}
+  assert_contains "$brief" 'Handled while away: 1 outcomes.' "the attended outcome was counted as away work"
+  assert_contains "$brief" 'handled while away' "the away outcome disappeared"
+  assert_not_contains "$brief" 'attended choice' "the attended outcome appeared in the away brief"
+  assert_contains "$brief" 'Next: firstmate resolves the catch-up blocker for repair-task.' "the next action changed while catch-up stayed gated"
+  pass "return checks exclude outcomes recorded after the return began"
+}
+
 test_return_brief_excludes_pr_merged_before_away() {
   local dir out
   dir="$TMP_ROOT/brief-old-merge"
@@ -2081,6 +2107,7 @@ test_missing_final_archive_keeps_retained_contract_gated
 test_return_brief_composes_from_record_store_and_held_set
 test_return_brief_lists_landed_work_awaiting_cleanup
 test_return_brief_files_and_next_action_precedence
+test_return_brief_excludes_outcomes_after_return
 test_return_brief_excludes_pr_merged_before_away
 test_return_brief_reconciles_all_states_and_pr_records
 test_return_brief_points_at_the_drain_on_a_host_home_only

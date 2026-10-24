@@ -168,15 +168,16 @@ window_start_epoch() {
 # Reads the store through its owner so a malformed store refuses rather than
 # misleads.
 STORE_ROWS=
-store_rows_load() {  # <since-epoch>
-  local since=$1 raw
+store_rows_load() {  # <since-epoch> <until-epoch>
+  local since=$1 until=$2 raw
   STORE_ROWS=
   [ -s "$STATE/branch-outcomes.jsonl" ] || return 0
   case "$since" in ''|*[!0-9]*) since=0 ;; esac
+  case "$until" in ''|*[!0-9]*) return 1 ;; esac
   raw=$("$SCRIPT_DIR/fm-branch-outcome.sh" list --recent 1000000 2>/dev/null) \
     || return 1
-  STORE_ROWS=$(printf '%s\n' "$raw" | jq -r --argjson since "$since" \
-    'select(.epoch >= $since) | [.seq, .task, .verdict, (.statusEndpoint // 0), (.summary // ""), (.silent // false)] | @tsv' 2>/dev/null) \
+  STORE_ROWS=$(printf '%s\n' "$raw" | jq -r --argjson since "$since" --argjson until "$until" \
+    'select(.epoch >= $since and .epoch <= $until) | [.seq, .task, .verdict, (.statusEndpoint // 0), (.summary // ""), (.silent // false)] | @tsv' 2>/dev/null) \
     || { STORE_ROWS=; return 1; }
 }
 
@@ -1077,7 +1078,7 @@ EOF
     append_evidence escalation "$escalations" "$evidence"
   fi
 
-  if store_rows_load "$since"; then
+  if store_rows_load "$since" "$(awk -F '\t' '$1 == "started" { print $2; exit }' "$GATE" 2>/dev/null)"; then
     remove_evidence lifecycle 'outcome store unreadable, catch-up stays gated' "$evidence" || lifecycle_ok=0
   else
     append_evidence lifecycle 'outcome store unreadable, catch-up stays gated' "$evidence"
