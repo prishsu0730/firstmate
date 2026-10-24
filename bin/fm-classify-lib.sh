@@ -843,7 +843,7 @@ _fm_decision_drop() {  # <open-set> <key>
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     case "$line" in
-      "$key"$'\t'*) : ;;
+      "$key"$'\t'*|"@$key"$'\t'*) : ;;
       *) out="${out}${line}"$'\n' ;;
     esac
   done <<EOF
@@ -914,8 +914,18 @@ _fm_status_kind() {
   case "$kind" in ship|scout|secondmate) printf '%s' "$kind" ;; *) printf unknown ;; esac
 }
 
-_fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb> <kind>
-  local open=$1 line=$2 resolve=$3 held=$4 kind=$5 verb key note unstamped
+_fm_decision_public_set() {
+  local row
+  while IFS= read -r row || [ -n "$row" ]; do
+    case "$row" in @*) ;; *) [ -z "$row" ] || printf '%s\n' "$row" ;; esac
+  done
+}
+
+# Internal @key rows retain the opening byte offset for episode-qualified closes;
+# an episode tag must match that opening, so a delayed close cannot clear a reopen.
+# Public open-set readers strip these identity rows before returning decisions.
+_fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb> <kind> [<byte-offset>]
+  local open=$1 line=$2 resolve=$3 held=$4 kind=$5 position=${6:-} verb key note unstamped episode row head
   # Both colon tests below ask where the head ends, the same question the note
   # and key readers ask, so they read the same unstamped copy those readers do.
   # A worker-written time tag must never decide whether a decision opens or
@@ -952,8 +962,17 @@ _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb
       open=$(_fm_decision_drop "$open" "$key")
       [ -n "$open" ] && open="${open}"$'\n'
       open="${open}${key}"$'\t'"${verb}"$'\t'"${note}"$'\n'
+      [ -z "$position" ] || open="${open}@${key}"$'\t'"byte-$position"$'\n'
       ;;
     "$resolve"|"$held")
+      head=${unstamped%%:*}
+      case "$head" in
+        *"[episode="*]*)
+          episode=${head#*"[episode="}; episode=${episode%%]*}
+          row=$(printf '%s\n' "$open" | awk -F '\t' -v key="@$key" '$1 == key {print $2}')
+          [ "$episode" = "$row" ] && [ -n "$row" ] || { printf '%s' "$open"; return 0; }
+          ;;
+      esac
       open=$(_fm_decision_drop "$open" "$key")
       [ -n "$open" ] && open="${open}"$'\n'
       ;;
@@ -976,7 +995,7 @@ _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb
 # subprocess read, which exists for that function's much narrower payload-driven
 # path resolution rather than this directory-local glob.
 status_open_decisions() {  # <status-file> [<kind>]
-  local f=$1 kind=${2:-} line resolve held open='' verb
+  local f=$1 kind=${2:-} line resolve held open='' verb position=0 LC_ALL=C
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   kind=$(_fm_status_kind "$f" "$kind")
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
@@ -985,11 +1004,12 @@ status_open_decisions() {  # <status-file> [<kind>]
     status_line_verb "$line" verb
     case "$verb" in
       needs-decision|blocked|done|failed|"$resolve"|"$held")
-        open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind")
+        open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" "$position")
         ;;
     esac
+    position=$((position + ${#line} + 1))
   done < "$f"
-  printf '%s' "$open"
+  printf '%s\n' "$open" | _fm_decision_public_set
 }
 
 # Resolve the log's current declaration at one boundary for crew-state consumers.
@@ -1097,25 +1117,18 @@ EOF
 # _fm_decision_fold_line rule the two folds use, and the reported verb is read
 # off the transitions that rule produces.
 #
-# One `grep` pre-selects those candidates so the bash fold below costs the log's
-# TRANSITIONS rather than its whole lifetime length - status files are only ever
-# appended to, and this runs per open task on every supervision presentation.
-# The pre-select deliberately over-includes: it takes any line whose leading word
-# could be a fold verb (including the ship/scout terminals, which carry no key
-# token), and the fold alone decides which of them really moves the set. A line
-# whose leading word is followed by neither whitespace, a colon, nor a bracket
-# tag cannot be a transition, because the fold's own declaration guard rejects it.
+# Read the complete stream to preserve byte offsets for episode matching, even
+# across lines that do not change the open set.
 status_key_closing_verb() {  # <status-file> <key>
-  local f=$1 want=$2 line resolve held open='' was verb='' kind event candidates
+  local f=$1 want=$2 line resolve held open='' was verb='' kind event position=0 start LC_ALL=C
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   [ -n "$want" ] || return 0
   kind=$(_fm_status_kind "$f")
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
-  candidates=$(grep -E \
-    "^[[:space:]]*(needs-decision|blocked|done|failed|$resolve|$held)[[:space:]:[]" \
-    "$f") || [ "$?" -eq 1 ] || candidates=$(cat "$f")
   while IFS= read -r line || [ -n "$line" ]; do
+    start=$position
+    position=$((position + ${#line} + 1))
     status_line_verb "$line" event
     case "$event:$kind" in
       done:ship|done:scout|failed:ship|failed:scout) ;;
@@ -1131,13 +1144,11 @@ status_key_closing_verb() {  # <status-file> <key>
     esac
     was=0
     _fm_open_set_has "$open" "$want" && was=1
-    open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind")
+    open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" "$start")
     if [ "$was" = 1 ] && ! _fm_open_set_has "$open" "$want"; then
       verb=$event
     fi
-  done <<EOF
-$candidates
-EOF
+  done < "$f"
   if _fm_open_set_has "$open" "$want"; then
     _fm_open_set_verb "$open" "$want"
     return 0
@@ -1277,7 +1288,7 @@ _fm_open_decisions_cursor_path() {  # <status-file>
 # Version 4 was already spent on the bracketed-tag parser change above, and a
 # cursor persisted under that reading predates this one, so it must still be
 # discarded and rebuilt from byte 0 under the new reading.
-FM_OPEN_DECISIONS_FOLD_VERSION=9
+FM_OPEN_DECISIONS_FOLD_VERSION=10
 
 # Portable device:inode identity for the rotation/recreation check below.
 _fm_open_decisions_file_ident() {  # <file> -> strongest available identity
@@ -1352,7 +1363,7 @@ _fm_status_read_span() {  # <status-file> <start-offset> <byte-length>
 status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [readonly]
   local f=$1 captured_end=${2:-} readonly=${3:-false} cf offset ident open='' trusted_open='' cursor_data first rest offset_line ident_line
   local version='' size actual_size cur_ident resolve held chunk_file chunk_size line cursor_dirty=0
-  local target_cursor kind fold_version
+  local target_cursor kind fold_version position LC_ALL=C
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   kind=$(_fm_status_kind "$f")
   fold_version="$FM_OPEN_DECISIONS_FOLD_VERSION:$kind"
@@ -1403,17 +1414,17 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [
   # A stat/size-read failure is a genuine I/O error, not "the file is empty" -
   # report the already-trusted persisted set unchanged rather than risking a
   # silent invalidation that would wipe it.
-  cur_ident=$(_fm_open_decisions_file_ident "$f") || { printf '%s' "$trusted_open"; return 0; }
-  [ -n "$cur_ident" ] || { printf '%s' "$trusted_open"; return 0; }
+  cur_ident=$(_fm_open_decisions_file_ident "$f") || { printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0; }
+  [ -n "$cur_ident" ] || { printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0; }
   actual_size=$(_fm_status_file_size "$f") \
-    || { printf '%s' "$trusted_open"; return 0; }
+    || { printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0; }
   actual_size=${actual_size//[[:space:]]/}
-  case "$actual_size" in ''|*[!0-9]*) printf '%s' "$trusted_open"; return 0 ;; esac
+  case "$actual_size" in ''|*[!0-9]*) printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0 ;; esac
   if [ -n "$captured_end" ]; then
     case "$captured_end" in
-      ''|*[!0-9]*) printf '%s' "$trusted_open"; return 0 ;;
+      ''|*[!0-9]*) printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0 ;;
     esac
-    [ "$captured_end" -le "$actual_size" ] || { printf '%s' "$trusted_open"; return 0; }
+    [ "$captured_end" -le "$actual_size" ] || { printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0; }
     size=$captured_end
   else
     size=$actual_size
@@ -1429,12 +1440,12 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [
   if [ "$offset" -lt "$size" ]; then
     chunk_file="$cf.read.$$"
     _fm_status_read_span "$f" "$offset" "$((size - offset))" > "$chunk_file" 2>/dev/null \
-      || { rm -f "$chunk_file"; printf '%s' "$trusted_open"; return 0; }
+      || { rm -f "$chunk_file"; printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0; }
     chunk_size=$(LC_ALL=C wc -c < "$chunk_file" 2>/dev/null) \
-      || { rm -f "$chunk_file"; printf '%s' "$trusted_open"; return 0; }
+      || { rm -f "$chunk_file"; printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0; }
     chunk_size=${chunk_size//[[:space:]]/}
     case "$chunk_size" in
-      ''|*[!0-9]*) rm -f "$chunk_file"; printf '%s' "$trusted_open"; return 0 ;;
+      ''|*[!0-9]*) rm -f "$chunk_file"; printf '%s\n' "$trusted_open" | _fm_decision_public_set; return 0 ;;
     esac
     # Test-only observability seam (off by default, no production behavior
     # change): when set, records exactly how many bytes THIS call folded, so a
@@ -1444,8 +1455,10 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [
       && printf '%s\t%s\n' "$f" "$chunk_size" >> "$FM_OPEN_DECISIONS_READ_PROBE"
     resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
     held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
+    position=$offset
     while IFS= read -r line || [ -n "$line" ]; do
-      open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind")
+      open=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" "$position")
+      position=$((position + ${#line} + 1))
     done < "$chunk_file"
     rm -f "$chunk_file"
     offset=$size
@@ -1461,7 +1474,7 @@ status_open_decisions_incremental() {  # <status-file> [<captured-end-offset>] [
     } > "$target_cursor" || return 1
     mv -f "$target_cursor" "$cf" || return 1
   fi
-  printf '%s' "$open"
+  printf '%s\n' "$open" | _fm_decision_public_set
 }
 
 # Incremental sibling of scan_open_decisions: same fleet-wide directory walk and
@@ -2409,13 +2422,15 @@ EOF
 
 _fm_status_open_decision_origins() {  # <status-file> [<kind>]
   local f=$1 line open='' after key verb note number=0 origins=''
-  local resolve held kind
+  local resolve held kind position=${3:-0} start LC_ALL=C public_after
   kind=$(_fm_status_kind "$f" "${2:-}")
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
     number=$((number + 1))
-    after=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind")
+    start=$position
+    position=$((position + ${#line} + 1))
+    after=$(_fm_decision_fold_line "$open" "$line" "$resolve" "$held" "$kind" "$start")
     [ -n "$after" ] || origins=''
     key=$(_fm_decision_key "$line") || { open=$after; continue; }
     verb=$(status_line_verb "$line")
@@ -2424,7 +2439,8 @@ _fm_status_open_decision_origins() {  # <status-file> [<kind>]
       needs-decision|blocked)
         if _fm_open_set_has "$after" "$key" \
           && [ "$(_fm_open_set_verb "$after" "$key")" = "$verb" ]; then
-          case "$after" in
+          public_after=$(printf '%s\n' "$after" | _fm_decision_public_set)
+          case "$public_after" in
             "$key"$'\t'"$verb"$'\t'"$note"|*$'\n'"$key"$'\t'"$verb"$'\t'"$note")
               origins=$(_fm_decision_origin_drop "$origins" "$key")
               [ -n "$origins" ] && origins="${origins}"$'\n'
@@ -2501,7 +2517,7 @@ status_span_first_actionable_record() {  # <status-file> <start-offset> [record-
           continue
         }
         if [ "$folded" -eq 0 ]; then
-          origins=$(_fm_status_open_decision_origins "$chunk_file" "$(_fm_status_kind "$f")") || { failed=1; break; }
+          origins=$(_fm_status_open_decision_origins "$chunk_file" "$(_fm_status_kind "$f")" "$start") || { failed=1; break; }
           folded=1
         fi
         live_line=$(while IFS=$(printf '\t') read -r _key _line; do
