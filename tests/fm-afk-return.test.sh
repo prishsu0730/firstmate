@@ -758,9 +758,15 @@ SH
       git -C "$dir/repo" checkout -q -b changes
       touch "$dir/repo/a" "$dir/repo/b" "$dir/repo/c" "$dir/repo/d" "$dir/repo/e"
       git -C "$dir/repo" add .
-      git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m 'Changes (#7)'
+      # A squash merge leaves no local commit naming the PR, including on the branch.
+      if [ "$scenario" = squash-moving ]; then
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m 'Changes'
+      else
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q -m 'Changes (#7)'
+      fi
       git -C "$dir/repo" checkout -q main
       if [ "$scenario" = squash-moving ]; then
+        git -C "$dir/repo" -c user.name=Test -c user.email=test@example.com commit -q --allow-empty -m "unrelated main work"
         git -C "$dir/repo" checkout -q changes
         touch "$dir/repo/later"
         git -C "$dir/repo" add later
