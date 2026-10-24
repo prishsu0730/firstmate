@@ -88,6 +88,19 @@ ack_return() {  # <case-dir> <return-output>
     "$dir/bin/fm-wake-drain.sh" --ack-through "$sequence" --recovery-generation "$generation"
 }
 
+count_fold_calls() {  # <case-dir>  Counts runs of the origins fold in this case's copied library.
+  local dir=$1
+  cat >> "$dir/bin/fm-classify-lib.sh" <<SH
+
+eval "\$(declare -f _fm_status_open_decision_origins | sed '1s/.*/_fm_counted_origins ()/')"
+_fm_status_open_decision_origins() {
+  printf 'x\\n' >> '$dir/fold-calls'
+  _fm_counted_origins "\$@"
+}
+SH
+  : > "$dir/fold-calls"
+}
+
 seed_live_blocker() {  # <case-dir> <backend> <key>
   local dir=$1 backend=$2 key=$3 target
   case "$backend" in
@@ -99,7 +112,7 @@ window=$target
 backend=$backend
 kind=ship
 EOF
-  printf 'blocked [key=%s]: firstmate can refresh the synthetic token\n' "$key" > "$dir/home/state/repair-task.status"
+  printf 'blocked [key=%s] [at=1700000000]: firstmate can refresh the synthetic token\n' "$key" > "$dir/home/state/repair-task.status"
 }
 
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings() {
@@ -1635,6 +1648,411 @@ test_missing_final_archive_keeps_retained_contract_gated() {
   pass "the retained contract epoch requires its final archive on every check"
 }
 
+test_guarded_blocker_resolution() {
+  local dir out rc before
+  dir="$TMP_ROOT/resolve"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  printf 'blocked [key=repair-key]: firstmate can refresh the synthetic token\n' > "$dir/home/state/repair-task.status"
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" begin ignored-extra-argument 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "begin with an extra argument did not retain the blocker gate (rc=$rc): $out"
+  before=$(cat "$dir/home/state/repair-task.status")
+  for args in 'unknown|a reason' 'repair-key|   '; do
+    set +e
+    out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve "${args%%|*}" --reason "${args#*|}" 2>&1)
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "invalid resolution accepted: $args"
+    [ "$(cat "$dir/home/state/repair-task.status")" = "$before" ] || fail "invalid resolution wrote status"
+  done
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1) || fail "resolution failed: $out"
+  assert_contains "$(cat "$dir/home/state/repair-task.status")" 'repaired the cause' "reason missing from status"
+  before=$(cat "$dir/home/state/repair-task.status")
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'another reason' 2>&1) || fail "repeat resolution failed: $out"
+  assert_contains "$out" 'already resolved' "repeat did not explain no-op"
+  [ "$(cat "$dir/home/state/repair-task.status")" = "$before" ] || fail "repeat appended duplicate"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" check ignored-extra-argument 2>&1) || fail "check with an extra argument kept the gate: $out"
+  assert_contains "$out" 'catch-up clear' "gate did not clear"
+  pass "guarded resolution validates, records reason, and clears catch-up"
+}
+
+test_legacy_gate_blocker_row() {
+  local dir out rc status gate before
+  dir="$TMP_ROOT/resolve-legacy-gate"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  gate="$dir/home/state/.afk-return-catchup"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "legacy gate fixture did not open catch-up: $out"
+  awk -F '\t' 'BEGIN { OFS="\t" } $1 == "blocker" { print $1, $2, $3, $5; next } { print }' "$gate" > "$gate.old"
+  mv "$gate.old" "$gate"
+  set +e
+  out=$(run_return "$dir" guard)
+  rc=$?
+  set -e
+  [ "$rc" -eq 4 ] || fail "guard did not retain the legacy gate: $out"
+  assert_contains "$out" 'firstmate-actionable blocker: repair-task [key=repair-key] firstmate can refresh the synthetic token' "guard lost the legacy blocker summary"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "resolve accepted a legacy row without refreshing its identity"
+  assert_contains "$out" 'run bin/fm-afk-return.sh check' "legacy row refusal did not direct a refresh"
+  [ "$(cat "$status")" = "$before" ] || fail "legacy row resolution changed status"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "check did not retain the open blocker: $out"
+  assert_contains "$out" 'still blocked, firstmate remediates before ordinary work: firstmate can refresh the synthetic token' "refreshed brief lost the blocker summary"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1) || fail "refreshed legacy blocker did not resolve: $out"
+  out=$(run_return "$dir" check) || fail "resolved legacy blocker did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "resolved legacy blocker left catch-up gated"
+  pass "legacy gate rows remain readable and require identity refresh before resolution"
+}
+
+test_resolution_refuses_changed_unstamped_blocker() {
+  local dir out rc before status
+  dir="$TMP_ROOT/resolve-unstamped-reopened"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=repair-key]: first issue\n' > "$status"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "unstamped blocker did not open catch-up: $out"
+  printf 'resolved [key=repair-key]: first issue handled\nblocked [key=repair-key]: new issue\n' >> "$status"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'old issue handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "stale unstamped gate row closed a new blocker"
+  assert_contains "$out" 'rerun begin/check' "unstamped stale gate refusal omitted refresh instruction"
+  [ "$(cat "$status")" = "$before" ] || fail "stale unstamped gate row appended a resolution"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "new unstamped blocker did not retain catch-up: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'new issue handled' 2>&1) || fail "refreshed unstamped blocker did not resolve: $out"
+  out=$(run_return "$dir" check) || fail "refreshed unstamped resolution did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "refreshed unstamped resolution left gate closed"
+  pass "unstamped blockers bind to their saved status line"
+}
+
+test_resolution_refuses_identically_reopened_blocker() {
+  local dir out rc before status stamped
+  for stamped in 0 1; do
+    dir="$TMP_ROOT/resolve-identical-reopen-$stamped"
+    install_runner "$dir"
+    seed_live_blocker "$dir" tmux repair-key
+    sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+    touch "$dir/home/state/.last-watcher-beat"
+    : > "$dir/home/state/.fake-drain"
+    status="$dir/home/state/repair-task.status"
+    if [ "$stamped" -eq 1 ]; then
+      printf 'blocked [key=repair-key] [at=1700000000]: token expired\n' > "$status"
+    else
+      printf 'blocked [key=repair-key]: token expired\n' > "$status"
+    fi
+    set +e
+    out=$(run_return "$dir" begin)
+    rc=$?
+    set -e
+    [ "$rc" -eq 3 ] || fail "blocker did not open catch-up (stamped=$stamped): $out"
+    out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'token refreshed' 2>&1) || fail "first resolve failed (stamped=$stamped): $out"
+    if [ "$stamped" -eq 1 ]; then
+      printf 'blocked [key=repair-key] [at=1700000000]: token expired\n' >> "$status"
+    else
+      printf 'blocked [key=repair-key]: token expired\n' >> "$status"
+    fi
+    before=$(cat "$status")
+    set +e
+    out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'token refreshed' 2>&1)
+    rc=$?
+    set -e
+    [ "$rc" -ne 0 ] || fail "identical reopened blocker was closed with the old reason (stamped=$stamped): $out"
+    [ "$(cat "$status")" = "$before" ] || fail "identical reopened blocker got a resolution appended (stamped=$stamped)"
+    set +e
+    out=$(run_return "$dir" check)
+    rc=$?
+    set -e
+    [ "$rc" -eq 3 ] || fail "identical reopened blocker did not retain catch-up (stamped=$stamped): $out"
+  done
+  pass "identically reopened blockers are not treated as resolved"
+}
+
+test_blocker_scan_folds_each_status_file_once() {
+  local dir out rc status count_one count_three
+  dir="$TMP_ROOT/scan-fold-once-one"
+  install_runner "$dir"
+  count_fold_calls "$dir"
+  seed_live_blocker "$dir" tmux key-a
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "one blocker did not open catch-up: $out"
+  count_one=$(wc -l < "$dir/fold-calls" | tr -d ' ')
+  dir="$TMP_ROOT/scan-fold-once-three"
+  install_runner "$dir"
+  count_fold_calls "$dir"
+  seed_live_blocker "$dir" tmux key-a
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=key-b] [at=1700000001]: second\nblocked [key=key-c] [at=1700000002]: third\n' >> "$status"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "three blockers did not open catch-up: $out"
+  count_three=$(wc -l < "$dir/fold-calls" | tr -d ' ')
+  [ "$count_one" -ge 1 ] || fail "origins fold counter never ran; the shim is vacuous"
+  [ "$count_three" -eq "$count_one" ] || fail "origins fold ran $count_three times for three blockers but $count_one for one"
+  pass "blocker scan folds each status file once"
+}
+
+test_resolution_refuses_reopened_blocker() {
+  local dir out rc before status
+  dir="$TMP_ROOT/resolve-reopened"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "reopened-blocker fixture did not open catch-up: $out"
+  status="$dir/home/state/repair-task.status"
+  printf 'resolved [key=repair-key] [at=1700000001]: first issue handled\nblocked [key=repair-key] [at=1700000002]: new issue\n' >> "$status"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'old issue handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "stale gate row closed a new blocker"
+  assert_contains "$out" 'rerun begin/check' "stale gate refusal omitted refresh instruction"
+  [ "$(cat "$status")" = "$before" ] || fail "stale gate row appended a resolution"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "new blocker did not retain catch-up: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'new issue handled' 2>&1) || fail "refreshed blocker did not resolve: $out"
+  out=$(run_return "$dir" check) || fail "refreshed resolution did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "refreshed resolution left gate closed"
+  pass "resolution binds the listed blocker to its opening event"
+}
+
+test_resolution_routes_pending_reply_to_owner() {
+  local dir out rc before status
+  dir="$TMP_ROOT/resolve-pending-reply"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux pending-reply-fixture
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=pending-reply-fixture] [at=1700000000]: pending-reply-missed: fixture\n' > "$status"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "pending-reply fixture did not open catch-up: $out"
+  before=$(cat "$status")
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve pending-reply-fixture --reason 'handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "pending-reply blocker accepted general resolution"
+  assert_contains "$out" 'bin/fm-pending-reply-lib.sh / fm-send resend path' "pending-reply refusal omitted owner workflow"
+  [ "$(cat "$status")" = "$before" ] || fail "pending-reply refusal wrote status"
+  pass "pending-reply resolution stays with its owner workflow"
+}
+
+test_resolution_selects_task_for_duplicate_keys() {
+  local dir out rc first second
+  dir="$TMP_ROOT/resolve-duplicate-keys"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux default
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  first="$dir/home/state/repair-task.status"
+  printf 'blocked: first issue\n' > "$first"
+  printf 'window=synthetic:fm-other-task\nbackend=tmux\nkind=secondmate\n' > "$dir/home/state/other-task.meta"
+  second="$dir/home/state/other-task.status"
+  printf 'blocked: second issue\n' > "$second"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "duplicate blockers did not open catch-up: $out"
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve default --reason 'handled first issue' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "key-only resolution accepted ambiguous blockers"
+  assert_contains "$out" '--task <id>' "ambiguous blocker did not request a task selector"
+  [ "$(cat "$first")" = 'blocked: first issue' ] || fail "ambiguous resolution changed first status"
+  [ "$(cat "$second")" = 'blocked: second issue' ] || fail "ambiguous resolution changed second status"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve default --task repair-task --reason 'handled first issue' 2>&1) || fail "first task resolution failed: $out"
+  assert_contains "$(cat "$first")" 'handled first issue' "first task reason was not recorded"
+  [ "$(cat "$second")" = 'blocked: second issue' ] || fail "first task resolution changed second status"
+  set +e
+  out=$(run_return "$dir" check)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "second task did not keep catch-up gated: $out"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve default --task other-task --reason 'handled second issue' 2>&1) || fail "second task resolution failed: $out"
+  assert_contains "$(cat "$second")" 'handled second issue' "second task reason was not recorded"
+  out=$(run_return "$dir" check) || fail "duplicate-key resolutions did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "duplicate-key gate did not clear"
+  pass "duplicate blocker keys resolve within the selected task"
+}
+
+test_resolution_uses_configured_close_verb() {
+  local dir out rc status before
+  dir="$TMP_ROOT/resolve-configured-verb"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  status="$dir/home/state/repair-task.status"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  set +e
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered run_return "$dir" begin)
+  rc=$?
+  set -e
+  [ "$rc" -eq 3 ] || fail "configured-verb blocker did not open catch-up: $out"
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'repaired the cause' 2>&1) || fail "configured close verb resolution failed: $out"
+  assert_contains "$(cat "$status")" 'answered [key=repair-key]' "configured close verb was not written"
+  before=$(cat "$status")
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'another reason' 2>&1) || fail "configured close verb no-op failed: $out"
+  assert_contains "$out" 'already resolved' "configured close verb did not recognize no-op"
+  [ "$(cat "$status")" = "$before" ] || fail "configured close verb no-op appended status"
+  out=$(FM_CLASSIFY_RESOLVE_VERB=answered run_return "$dir" check) || fail "configured close verb did not clear catch-up: $out"
+  assert_contains "$out" 'catch-up clear' "configured close verb left gate closed"
+  pass "configured close verb closes blocker and supports repeated resolution"
+}
+
+test_resolution_racing_with_reopen() {
+  local dir out rc status
+  dir="$TMP_ROOT/resolve-racing-reopen"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=repair-key]: old issue\n' > "$status"
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  out=$(run_return "$dir" begin) && fail "blocker did not retain gate"
+  cat >> "$dir/bin/fm-wake-lib.sh" <<'SH'
+eval "$(declare -f fm_wake_status_append_self_announced | sed '1s/fm_wake_status_append_self_announced/original_append/')"
+fm_wake_status_append_self_announced() {
+  printf 'resolved [key=repair-key]: worker handled old issue\nblocked [key=repair-key]: new issue\n' >> "$2"
+  original_append "$@"
+}
+SH
+  set +e
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'old issue handled' 2>&1)
+  rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "racing close reported success: $out"
+  out=$(run_return "$dir" check) && fail "racing reopen cleared catch-up"
+  (
+    . "$ROOT/bin/fm-classify-lib.sh"
+    local expected=$'repair-key\tblocked\tnew issue' open
+    open=$(status_open_decisions "$status" secondmate)
+    [ "$open" = "$expected" ] || fail "whole fold closed reopened blocker: $open"
+    open=$(status_open_decisions_incremental "$status")
+    [ "$open" = "$expected" ] || fail "incremental fold closed reopened blocker: $open"
+    [ "$(status_key_closing_verb "$status" repair-key)" = blocked ] || fail "closing verb lost reopened blocker"
+    printf 'note: unrelated prefix\n' > "$dir/span.status"
+    local start offset
+    start=$(wc -c < "$dir/span.status" | tr -d ' ')
+    printf 'blocked [key=span-key]: issue\n' >> "$dir/span.status"
+    open=$(status_open_decisions_incremental "$dir/span.status")
+    [ "$open" = $'span-key\tblocked\tissue' ] || fail "incremental opening failed"
+    printf 'resolved [key=span-key] [episode=byte-%s]: handled\n' "$start" >> "$dir/span.status"
+    [ -z "$(status_open_decisions "$dir/span.status" secondmate)" ] || fail "matching episode did not close"
+    [ -z "$(status_open_decisions_incremental "$dir/span.status")" ] || fail "cached episode did not close"
+    open=$(_fm_status_open_decision_origins "$dir/span.status" secondmate)
+    [ -z "$open" ] || fail "origin fold retained closed episode"
+    set +e
+    status_span_first_actionable_record "$dir/span.status" "$start" >/dev/null
+    offset=$?
+    set -e
+    [ "$offset" -eq 1 ] || fail "span retained a matching closed episode"
+  ) || return 1
+  pass "episode-qualified closes preserve concurrent reopens across status readers"
+}
+
+test_listing_uses_one_status_snapshot() {
+  local dir out status
+  dir="$TMP_ROOT/listing-snapshot"
+  install_runner "$dir"
+  seed_live_blocker "$dir" tmux repair-key
+  status="$dir/home/state/repair-task.status"
+  printf 'blocked [key=repair-key]: old issue\n' > "$status"
+  sed -i.bak 's/kind=ship/kind=secondmate/' "$dir/home/state/repair-task.meta"
+  touch "$dir/home/state/.last-watcher-beat"
+  : > "$dir/home/state/.fake-drain"
+  cat >> "$dir/bin/fm-classify-lib.sh" <<'SH'
+eval "$(declare -f status_open_decisions | sed '1s/status_open_decisions/original_open/')"
+status_open_decisions() {
+  original_open "$@"
+  if [ ! -e "$FM_HOME/injected" ]; then
+    touch "$FM_HOME/injected"
+    printf 'resolved [key=repair-key]: handled\nblocked [key=repair-key]: new issue\n' >> "$FM_HOME/state/repair-task.status"
+  fi
+}
+SH
+  out=$(run_return "$dir" begin) && fail "listing did not retain blocker"
+  [ -f "$dir/home/injected" ] || fail "listing race never ran"
+  out=$(FM_HOME="$dir/home" "$dir/bin/fm-afk-return.sh" resolve repair-key --reason 'handled old issue' 2>&1) && fail "listing paired old summary with new identity"
+  assert_contains "$out" 'blocker changed' "listing did not retain original episode"
+  pass "listing retains one snapshot for blocker summary and episode"
+}
+
+test_resolution_racing_with_reopen
+test_listing_uses_one_status_snapshot
+test_guarded_blocker_resolution
+test_legacy_gate_blocker_row
+test_resolution_selects_task_for_duplicate_keys
+test_resolution_uses_configured_close_verb
+test_resolution_refuses_changed_unstamped_blocker
+test_resolution_refuses_identically_reopened_blocker
+test_blocker_scan_folds_each_status_file_once
+test_resolution_refuses_reopened_blocker
+test_resolution_routes_pending_reply_to_owner
 test_return_gate_owns_remediation_and_reports_catchup_to_bearings
 test_explicit_reclassification_requires_durable_reason
 test_captain_decision_does_not_masquerade_as_firstmate_blocker
