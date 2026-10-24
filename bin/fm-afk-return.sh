@@ -29,7 +29,7 @@
 # durable reason, before an ordinary captain request may proceed.
 # `needs-decision:` is deliberately not part of this blocker gate. The gate
 # keeps every open blocker until that blocker's own resolution is proven.
-# Captain-verdict outcomes are listed under "waiting on you", but cannot exempt
+# Captain-verdict outcomes are listed under "Needs Me", but cannot exempt
 # a blocker: per-blocker decision-key provenance is deferred, with no owner,
 # because the gate fails safe by keeping every open blocker. Away-window
 # attribution uses second-resolution epochs; a durable sequence boundary and
