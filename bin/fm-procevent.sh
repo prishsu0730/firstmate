@@ -934,8 +934,8 @@ publish_result() {  # <result-file>
   owner_task=$(fm_procevent_result_owner_task "$result" 2>/dev/null || true)
   fm_procevent_source_lock_acquire "$id" || return 1
   if ! fm_procevent_is_handled "$STATE" "$id" "$seq"; then
-    if ! adapter_result_is_terminal "$adapter" "$result" \
-      && capture_unchanged "$id" "$seq" "$result" "$adapter"; then
+    if capture_unchanged "$id" "$seq" "$result" "$adapter" \
+      && ! adapter_result_is_terminal "$adapter" "$result"; then
       fm_procevent_mark_handled "$STATE" "$id" "$seq"
       case "$?" in
         0|1) fm_procevent_source_lock_release "$id"; return 1 ;;
