@@ -422,6 +422,7 @@ The away-posture restriction on queued merges and its residual limits are owned 
 A captain call can have two records, and closing one does not close the other.
 The status-log fold is the open-decision set `bin/fm-classify-lib.sh` reads from a task's status log, where a keyed `needs-decision` or `blocked` line opens a decision.
 A `resolved [key=...]` line closes the status-log fold.
+A close line tagged `[episode=...]`, which `bin/fm-afk-return.sh resolve` writes, closes only the opening it names, and the fold ignores it when a later reopening has a different episode.
 The structured captain-held task closes only through `answer`.
 
 Until this guard existed, closing on the status side alone left no trace of the disagreement.

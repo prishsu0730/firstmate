@@ -1520,7 +1520,9 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   printf '%s' "$dir/smhome" > "$dir/fake/cwd"
   # No --note: a secondmate reconciles its own home's records at startup, so
   # the note is optional there.
+  printf "deliberate stop\n" > "$home/state/.secondmate-stopped-sm1"
   out=$(run_control "$dir" sm1 relaunch); rc=$?
+  [ ! -e "$home/state/.secondmate-stopped-sm1" ] || fail "successful explicit relaunch must clear the stop marker"
   expect_code 0 "$rc" "a checkpointed secondmate should relaunch"$'\n'"$out"
   [ "$(journal_field "$dir" sm1 children)" = 2 ] \
     || fail "the checkpoint must account for the secondmate's child work, got '$(journal_field "$dir" sm1 children)'"
