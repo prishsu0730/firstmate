@@ -687,7 +687,7 @@ case "$1" in
 esac
 SH
     chmod +x "$dir/bin/fm-crew-state.sh"
-    if [ "$scenario" != none ]; then
+    if [ "$scenario" != none ] && [ "$scenario" != captain-only ]; then
       printf 'window=synthetic:fm-ready\nbackend=tmux\nkind=ship\npr=https://github.com/example/ready/pull/9\n' > "$dir/home/state/ready.meta"
       if [ "$scenario" = unrecorded ]; then
         printf 'done: PR https://github.com/example/ready/pull/9 checks green\n' > "$dir/home/state/ready.status"
@@ -725,7 +725,7 @@ SH
     if [ "$scenario" = blocker ]; then
       seed_live_blocker "$dir" tmux dependency
     fi
-    if [ "$scenario" != none ] && [ "$scenario" != unrecorded ]; then
+    if [ "$scenario" != none ] && [ "$scenario" != unrecorded ] && [ "$scenario" != captain-only ]; then
       outcome_in "$dir" append --task ready --verdict routine --summary 'PR ready for review' >/dev/null \
         || fail "could not record the review-ready outcome for $scenario"
       case "$scenario" in
