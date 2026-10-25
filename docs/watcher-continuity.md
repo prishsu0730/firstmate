@@ -121,11 +121,11 @@ The Claude turn-end guard owns that notice commit contract, the monotonic failur
 
 ## Heartbeat cleanup
 
-On each scheduled heartbeat, the watcher attempts ordinary cleanup for every non-secondmate task whose final status line starts with a `done` declaration.
-It delegates every attempt to `bin/fm-teardown.sh`, so the teardown's landed-work, completion, and safety checks remain the only authority for removing a task record or returning its worktree.
+On each scheduled heartbeat, the watcher identifies non-secondmate task records with a `done` declaration and the shared completion proof in `fm_task_record_finished`.
+It delegates cleanup of only those proven records to `bin/fm-teardown.sh`, so the teardown's landed-work and safety checks remain the final authority for removing a task record or returning its worktree.
 The watcher never forces that cleanup.
-When teardown refuses, it preserves the task and emits one actionable check wake naming the record, rather than leaving a finished-looking task silently in flight.
-Secondmate homes remain outside this automatic cleanup path.
+When teardown refuses, it preserves the task and emits an actionable check wake naming the record, rather than leaving a proven-finished task silently in flight.
+Records whose `kind` is `secondmate` remain outside this automatic cleanup path.
 
 ### Supervision host
 
@@ -483,7 +483,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 `tests/fm-watch-triage.test.sh` proves TERM stops a watcher blocked inside a poll's pane capture and still releases its lock and records an acknowledgeable stop.
 It also exercises a single TERM with a live foreign downtime-marker lock holder, retained stale singleton and subsequent arm-style recovery, including decimal `08` and zero `00` cleanup bounds.
 It checks that a newly appended keyed decision is classified without rereading earlier status bytes, so signal handling can return to the watcher's beacon refresh even when the status history is long.
-Its heartbeat cases prove guarded cleanup of a completed scout plus squash-merged and local-main ships, while an unlanded ship or another teardown refusal remains recorded and produces an actionable check wake.
+Its heartbeat cases include a completed scout, squash-merged and local-main ships, and an unlanded ship or another teardown refusal that remains recorded and produces an actionable check wake.
 `tests/fm-wake-queue.test.sh` proves TERM likewise stops a watcher blocked in the drain-ring idle check's pane capture.
 
 `tests/fm-watcher-lock.test.sh` covers:
