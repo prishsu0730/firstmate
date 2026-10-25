@@ -2051,7 +2051,7 @@ Discovery is never a timer.
 Each registered source has its own child process blocking on that source.
 On every cycle, the watcher's `reconcile`:
 
-- Republishes every captured result without a durable handled acknowledgement, regardless of earlier publication.
+- Reconsiders every captured result without a durable handled acknowledgement, applying the no-op rules below and reusing its wake while that source and sequence remain queued; after a drain, an unhandled result can be announced again.
 - Restarts a source whose owner is gone.
 - Stops this home's runner if its registration disappeared unexpectedly.
 
@@ -2064,13 +2064,17 @@ Whether a captured result is a routine no-op is adapter knowledge too, and the r
 - Before publishing, the runner asks the immutable captured owner through the built-in `silent` command or external `result.silent` operation and treats exit 0 as the only silence verdict: the result is recorded as durably handled and never announced, so it neither wakes a handler now nor returns on a later reconcile.
 - The task-owned terminal exception is evaluated first, so an empty terminal board round goes to its owner's steering inbox for the required conclusion instead of entering this generic silence path.
 - A missing command, an error, any other exit, or a silence the runner cannot durably record all publish the `check` wake exactly as before, so an adapter with no notion of a no-op needs no change and an unknown or degraded result always reaches its handler.
+- Consecutive nonterminal captures from the same source registration, captured adapter, and owner task may also be suppressed when the built-in adapter's `unchanged` comparison proves a repeat and the runner durably records it as handled.
+  Missing registration evidence or comparison support leaves the result publishable.
 - For built-ins, silence remains independent of the keyed-answer feed below: suppressing an announcement never suppresses the captain's own answer.
 
 **Lavish silence rules**
 
-- For Lavish that verdict covers two shapes - a session the adapter classifies `ended` that carries no queued content block at all, which is a review surface closed with nothing said, and `browser_disconnected` (classified `disconnected`), which carries no answer while the session remains open.
+- For Lavish that verdict covers an empty `ended` session, `browser_disconnected` (classified `disconnected`), and an exact `LISTENER_ACTIVE` error with no queued content, which indicates an already-running listener rather than a new review result.
 - Any recognized top-level `prompts` or `feedback` block counts as content regardless of its declared count, and a malformed header makes the result indeterminate rather than empty.
-- A `Send & End` close carrying the captain's answer arrives as `status: feedback` with `session_ended`, so it classifies `feedback` and is announced unchanged, as is any `ended` result that still carries content, and every `waiting`, `missing`, `unknown`, or unreadable result.
+- The `unchanged` comparison accepts only byte-identical results with no queued content; identical feedback from separate polls still announces each send.
+- A `Send & End` close carrying the captain's answer arrives as `status: feedback` with `session_ended`, so it classifies `feedback` and is announced, as is any `ended` result that still carries content.
+  Other results remain publishable unless the comparison above proves a repeat.
 
 **Retire terminal sources**
 
@@ -2310,8 +2314,10 @@ A value this command cannot use is refused by name before anything is launched, 
 
 The runner proves exactly one durability boundary: output that reached the runner is stored at mode `0600` before any event referencing it is published, and a captured result with no durable handled acknowledgement remains eligible for bounded re-announcement across any number of drains and restarts, not only the crash window right after capture.
 
-- `bin/fm-procevent.sh handled <source-id> <sequence>` is the only thing that stops re-announcement: a generation-keyed, private, path-safe, durable, and idempotent acknowledgement that atomically checks and deduplicates by the exact source and sequence, so a paired effect gated on its first-time-vs-repeat report is never authorized twice.
-- Default and fallback `check` publication is still best-effort, so the same source and sequence can repeat even before any restart; handlers deduplicate that identity rather than assuming a wake is unique.
+- `bin/fm-procevent.sh handled <source-id> <sequence>` durably stops an actionable result from re-announcement: a generation-keyed, private, path-safe, and idempotent acknowledgement that atomically checks and deduplicates by the exact source and sequence, so a paired effect gated on its first-time-vs-repeat report is never authorized twice.
+  The runner can also mark a proven no-op handled without an announcement.
+- Default and fallback `check` publication reuses an already queued wake for the same source and sequence; after a drain, an unhandled result can be announced again.
+  Handlers deduplicate that identity rather than assuming a wake is unique across drains.
 - The runner proves nothing about the source side, and the handled acknowledgement proves nothing about a paired external effect performed before it: a crash between that effect and the acknowledgement call can still repeat the effect on replay, so this is never a generic exactly-once guarantee.
 - The published `lavish-axi poll` clears feedback destructively before returning it, so a result lost between that clearing and the runner reading process output is unrecoverable.
 - Never describe this path as at-least-once, no-loss, or lossless.

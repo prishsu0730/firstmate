@@ -66,8 +66,9 @@
 #            A task-owned source instead keeps its terminal round open and
 #            registered until its owner concludes it with `handled`.
 # reconcile  Idempotent liveness entry the watcher calls on its ordinary cycle:
-#            republish every durably captured result with no handled
-#            acknowledgement yet - regardless of any earlier publication - and
+#            reconsider every durably captured result with no handled
+#            acknowledgement yet, suppressing proven no-ops and reusing a
+#            matching wake still queued for that source and sequence, and
 #            start a runner for any registered source that has no live owner and
 #            no open task-owned round. This is liveness repair only - it never
 #            discovers results by
@@ -154,9 +155,14 @@
 # conclude the board. A missing command, an error, or any other exit publishes
 # the wake exactly as before, so an adapter with no notion of a
 # no-op needs no change and an unknown or degraded result always reaches its
-# handler. This runner still inspects nothing and still names no adapter-specific
-# condition. For built-ins, silence remains independent of the keyed-answer feed
+# handler. For built-ins, silence remains independent of the keyed-answer feed
 # below: suppressing an announcement never suppresses the captain's own answer.
+#
+# Consecutive captures from the same registration and owner are also eligible
+# for the built-in adapter's `unchanged` comparison. A missing comparison,
+# identity, or handled marker fails open to publication. Re-announcing one
+# unhandled result reuses its queued wake while that wake is still pending; a
+# later drain still permits the usual re-announcement.
 #
 # Applying a built-in result is adapter-owned through the same kind of seam. Some results
 # carry no judgement at all - they must simply be applied idempotently to the
@@ -880,11 +886,42 @@ cmd_register_extension() {
   printf 'retire: bin/fm-procevent.sh retire %s --if-owner %s\n' "$id" "$registration_token"
 }
 
-# Publish every durably captured result with no handled acknowledgement yet.
-# Capture already happened, so this only turns durable state into durable
-# events - and it republishes on every call regardless of any earlier
-# publication, so a result stays eligible for re-announcement across restarts
-# and drains until `fm_procevent_mark_handled` records it.
+# Only consecutive captures bound to the same registration and owner may be
+# compared by their adapter. Missing sidecars fail open to a wake.
+capture_unchanged() {  # <id> <seq> <result> <adapter>
+  local id=$1 seq=$2 result=$3 adapter=$4 previous previous_owner current_owner script
+  [ "$seq" -gt 1 ] || return 1
+  previous="$(dirname "$result")/$id.$((seq - 1)).result"
+  [ -f "$previous" ] && [ ! -L "$previous" ] || return 1
+  [ -f "${result%.result}.registration" ] && [ ! -L "${result%.result}.registration" ] || return 1
+  [ -f "${previous%.result}.registration" ] && [ ! -L "${previous%.result}.registration" ] || return 1
+  cmp -s "${result%.result}.registration" "${previous%.result}.registration" || return 1
+  [ "$(fm_procevent_result_adapter "$previous" 2>/dev/null)" = "$adapter" ] || return 1
+  previous_owner=$(fm_procevent_result_owner_task "$previous" 2>/dev/null || true)
+  current_owner=$(fm_procevent_result_owner_task "$result" 2>/dev/null || true)
+  [ "$previous_owner" = "$current_owner" ] || return 1
+  script=$(adapter_script "$adapter")
+  [ -f "$script" ] && [ ! -L "$script" ] || return 1
+  "$script" unchanged "$previous" "$result" >/dev/null 2>&1
+}
+
+# Keep a pending wake unique while retaining re-announcement after drain.
+result_wake_append_once() {  # <key> <payload>
+  local key=$1 payload=$2 status=0
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
+  if [ -f "$FM_WAKE_QUEUE" ] && awk -F '\t' -v key="$key" '$3 == "check" && $4 == key { found=1 } END { exit !found }' "$FM_WAKE_QUEUE"; then
+    status=0
+  else
+    fm_wake_append_locked check "$key" "$payload" || status=$?
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+  return "$status"
+}
+
+# Reconsider each durably captured result with no handled acknowledgement.
+# Capture already happened; proven no-ops are handled without publication,
+# while a pending wake is reused and an unhandled result remains eligible
+# for re-announcement after a drain until `fm_procevent_mark_handled` records it.
 publish_result() {  # <result-file>
   local result=$1 id seq adapter line status=1 owner_task='' message='' record=''
   local ring_backend ring_target ring_meta inbox_dir handled_dir pre_existing existing new_record
@@ -897,6 +934,13 @@ publish_result() {  # <result-file>
   owner_task=$(fm_procevent_result_owner_task "$result" 2>/dev/null || true)
   fm_procevent_source_lock_acquire "$id" || return 1
   if ! fm_procevent_is_handled "$STATE" "$id" "$seq"; then
+    if capture_unchanged "$id" "$seq" "$result" "$adapter" \
+      && ! adapter_result_is_terminal "$adapter" "$result"; then
+      fm_procevent_mark_handled "$STATE" "$id" "$seq"
+      case "$?" in
+        0|1) fm_procevent_source_lock_release "$id"; return 1 ;;
+      esac
+    fi
     if [ -n "$owner_task" ]; then
       if adapter_result_is_terminal "$adapter" "$result"; then
         message="Lavish review result $id sequence $seq is terminal at $result. Read it with bin/fm-procevent-lavish.sh read $result, stop and conclude the review, and do not re-arm the board. The board stays yours until you acknowledge this round with bin/fm-procevent.sh handled $id $seq, which retires it."
@@ -967,7 +1011,7 @@ EOF
       esac
     fi
     unset FM_PROCEVENT_CAPTURE_SOURCE_LOCK_HELD
-    if fm_wake_append check "procevent:$id:$seq" "check: $line"; then
+    if result_wake_append_once "procevent:$id:$seq" "check: $line"; then
       status=0
     fi
   fi
@@ -1274,7 +1318,7 @@ cmd_start() {
   fi
   # Built-in adapters do not run the extension capture helper, so keep this
   # sentinel defined while sharing the no-result branch below under `set -u`.
-  local truncated=0 capture_state='' durable='' reservation_terminal='' reservation_silent=''
+  local truncated=0 capture_state='' durable='' reservation_terminal='' reservation_silent='' registration_tmp=''
   # One poll per iteration. A relisten adapter stays in this process; every
   # other adapter falls out after a single result.
   while :; do
@@ -1441,6 +1485,17 @@ EOF
     fi
   fi
   [ "$extension_owner" -eq 1 ] || rm -f -- "$out"
+  # The captured registration identity is advisory for deduplication only. If
+  # it cannot be stored, the result remains publishable and cannot be dropped.
+  if [ "$extension_owner" -eq 0 ]; then
+    registration_tmp=$(umask 077; mktemp "$(dirname "$durable")/.registration.XXXXXX") || registration_tmp=''
+    if [ -n "$registration_tmp" ]; then
+      if ! printf '%s\n' "$CLAIM_REG_IDENTITY" > "$registration_tmp" \
+        || ! mv "$registration_tmp" "${durable%.result}.registration"; then
+        rm -f -- "$registration_tmp"
+      fi
+    fi
+  fi
   STAGED_OUTPUT=
   [ "$truncated" -eq 1 ] && printf 'truncated: %s at %s bytes\n' "$id" "$MAX_OUTPUT_BYTES" >&2
 

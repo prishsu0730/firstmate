@@ -25,8 +25,8 @@
 # Contributions project cached coverage and required actors from fm-contributions.sh;
 # only captain rows are exposed, with counts for the other actors and unmeasured homes. It never infers
 # decisions from report or visual-review prose or reimplements snapshot semantics.
-# Underway (in_flight) projects every main live worker plus every active child
-# from every readable secondmate ledger, independently of that home's
+# Underway (in_flight) projects every main worker metadata row plus active
+# children and held_workers from readable secondmate ledgers, independently of each home's
 # bearings_state, plus each main In flight backlog row of kind program as
 # firstmate's own direct work (kind "direct"), which has no worker record.
 # A direct row never claims to be running, because nothing measures its
@@ -508,7 +508,6 @@ MODEL=$(printf '%s' "$SNAP" | jq \
   | ([ .tasks[]
        | select(.kind != "secondmate")
        | select(.backlog.current_role != "program")
-       | select(.backlog.current_role != "held" or .current_state.state == "working")
        | {id, kind,
         state: .current_state.state,
         repo:(.backlog.repo // .project // null),
@@ -527,6 +526,11 @@ MODEL=$(printf '%s' "$SNAP" | jq \
                   | (if (($name | type) == "string" and ($name | test("[^[:space:]]")))
                      then $name else ($m.id + "/" + .id) end) | trunc(70)),
             doing:((.doing // .state) | trunc(90))} ]
+     + [ $secondmate_views[] as $m
+         | $m.held_workers[]?
+         | select(.state != null)
+         | {id:($m.id + "/" + .id), kind:(.kind // "secondmate"), state,
+            repo:null, name:(.title // .id), doing:(.reason | trunc(90))} ]
      + [ .backlog.records[]
          | select(.structured and .current_role == "program")
          | ((.unresolved_blocker_ids // []) | join(", ")) as $waits_on

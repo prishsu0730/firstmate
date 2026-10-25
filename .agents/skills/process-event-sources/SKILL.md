@@ -107,7 +107,7 @@ Two rules the commands cannot enforce for you:
   Use the generic path below only after fully handling a result whose adapter has no applying command.
   [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent) owns the automatic-application contract and its failure boundary.
 : When this home has `config/procevent-recorder`, `handled` refuses a capture that has no record yet; fix the recorder failure it reports, then retry with `bin/fm-procevent.sh record <source-id> <sequence>`; [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent) owns that contract.
-: A captured result with no durable handled acknowledgement stays eligible for bounded re-announcement on the existing wake queue - across any number of drains and firstmate restarts, not only the crash window right after capture - until it is explicitly acknowledged. Once you have fully handled a result, durably record it:
+: A captured result with no durable handled acknowledgement stays eligible for bounded re-announcement on the existing wake queue - across any number of drains and firstmate restarts, not only the crash window right after capture - until it is acknowledged or the runner proves it a no-op repeat under the contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent). Once you have fully handled a result, durably record it:
   ```sh
   bin/fm-procevent.sh handled <source-id> <sequence>
   ```
@@ -145,7 +145,7 @@ Supported by tests:
 - the remote-reply adapter reads its append-only source non-destructively from an offset plus prefix hash, so a pre-capture retry can derive the same bytes again, while source truncation or replacement is detected rather than silently rebased;
 - proactive delivery, adapter-owned terminal retirement, and adapter-owned automatic application follow the operating contract in [`docs/configuration.md`](../../../docs/configuration.md);
 - a durably captured result with no handled acknowledgement remains eligible for bounded re-announcement across any number of drains and restarts, and repeat wakes retain the same source and sequence for deduplication;
-- the handled acknowledgement is generation-keyed to the exact source and sequence, private, path-safe, durable, and idempotent, and is the only thing that stops re-announcement;
+- the handled acknowledgement is generation-keyed to the exact source and sequence, private, path-safe, durable, and idempotent; what else stops re-announcement is owned by the contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent);
 - one identity-matched owner per canonical source, across homes that share one underlying source store;
 - registration and ownership transitions share one per-source boundary, release is generation-bound, and uncertain process identity preserves the source for retry;
 - leaderless PID/PGID-reuse ambiguity preserves the claim without signalling or replacement, as owned by the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent);
@@ -155,7 +155,7 @@ Supported by tests:
 
 The `when` adapter's guarantees are part of the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent).
 
-**Not true, and never to be claimed:** at-least-once, no-loss, or lossless delivery, and no generic exactly-once effect either - the handled acknowledgement only stops re-announcement, it says nothing about whether a paired external effect performed before the acknowledgement call actually completed, so a crash between that effect and the call can still repeat the effect on the next replay.
+**Not true, and never to be claimed:** at-least-once, no-loss, or lossless delivery, and no generic exactly-once effect either - the handled acknowledgement stops re-announcement (see the contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent)), it says nothing about whether a paired external effect performed before the acknowledgement call actually completed, so a crash between that effect and the call can still repeat the effect on the next replay.
 Also never claim that a source cannot refresh its owning home's lease: that rule is confused-agent-grade and a deliberately marker-stripping source is out of scope, per the operating contract in [`docs/configuration.md`](../../../docs/configuration.md#process-to-event-sources-stateprocevent).
 
 The currently published `lavish-axi poll` destructively clears feedback before returning it.

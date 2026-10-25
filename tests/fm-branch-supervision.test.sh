@@ -1319,7 +1319,7 @@ test_away_record_relocates_main_owned_actions_to_the_branch() {
     "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   status=$?
   [ "$status" -eq 1 ] || fail "spend-cap refusal exited $status, not 1: $out"
-  assert_contains "$out" "caps concurrent workers at 2 and 2 ordinary task(s) are live" "spend-cap refusal lost its count"
+  assert_contains "$out" "caps concurrent workers at 2 and 2 ordinary task(s) are live or have unknown liveness" "spend-cap refusal lost its count"
   # The cap binds main too: the posture, not the actor, is what caps spend.
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
   status=$?
@@ -1481,7 +1481,7 @@ test_quiet_record_never_caps_a_present_captains_spawn() {
   assert_not_contains "$out" "caps concurrent workers" "a quiet record capped a present captain's spawn"
   FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 1 >/dev/null 2>&1 || fail "away entry over quiet failed"
   out=$(FM_HOME="$home" FM_ROOT_OVERRIDE="$root" "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
-  assert_contains "$out" "caps concurrent workers at 1 and 2 ordinary task(s) are live" "the away record's cap no longer binds"
+  assert_contains "$out" "caps concurrent workers at 1 and 2 ordinary task(s) are live or have unknown liveness" "the away record's cap no longer binds"
   pass "a quiet-mode record never caps a present captain's spawn, while the away record's cap still binds"
 }
 
@@ -1534,12 +1534,52 @@ WRAPPER
   : > "$home/competitor-published"
   wait || true
   out=$(cat "$home/q1.out" 2>/dev/null || true)
-  assert_contains "$out" "caps concurrent workers at 1 and 1 ordinary task(s) are live" \
+  assert_contains "$out" "caps concurrent workers at 1 and 1 ordinary task(s) are live or have unknown liveness" \
     "the paused spawn did not recheck the cap after the competitor published: $out"
   [ ! -f "$home/state/task-q1.meta" ] || fail "the stale-count spawn published after a competitor landed"
   pass "the away spend cap is rechecked under the task-set lock so concurrent spawns cannot both publish"
 }
 
+test_away_cap_counts_only_live_or_unknown_endpoints() {
+  local home root fakebin out mode id
+  home="$TMP_ROOT/away-liveness-home"
+  root="$TMP_ROOT/away-liveness-root"
+  fakebin="$TMP_ROOT/away-liveness-bin"
+  mkdir -p "$home/state" "$root" "$fakebin"
+  git init -q -b main "$root"
+  git -C "$root" commit -q --allow-empty -m init
+  cat > "$fakebin/tmux" <<'FAKE'
+#!/usr/bin/env bash
+case "$1" in
+  list-windows)
+    case "$FM_TEST_ENDPOINT" in
+      missing) printf 'another-window\n' ;;
+      live) printf 'fm-task-a\nfm-task-b\n' ;;
+      unknown) exit 1 ;;
+      no_server) printf "can't find session: fm\n" >&2; exit 1 ;;
+    esac ;;
+  display-message)
+    case "$*" in *pane_current_command*) printf 'claude\n' ;; *) exit 1 ;; esac ;;
+  *) exit 1 ;;
+esac
+FAKE
+  chmod +x "$fakebin/tmux"
+  FM_HOME="$home" "$ROOT/bin/fm-afk-contract.sh" enter --spend 2 >/dev/null || fail 'away entry failed'
+  for id in task-a task-b; do
+    fm_write_meta "$home/state/$id.meta" "window=fm:fm-$id" "worktree=$root" "project=sample" "kind=ship"
+  done
+  for mode in missing live unknown no_server; do
+    out=$(PATH="$fakebin:$PATH" FM_TEST_ENDPOINT="$mode" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+      "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
+    case "$mode" in
+      missing|no_server) assert_not_contains "$out" 'caps concurrent workers' "$mode endpoints must release capacity" ;;
+      live|unknown) assert_contains "$out" 'caps concurrent workers' "$mode endpoints must consume capacity" ;;
+    esac
+  done
+  pass 'away capacity excludes dead and missing endpoints while retaining uncertain liveness'
+}
+
+test_away_cap_counts_only_live_or_unknown_endpoints
 test_branch_prompt_is_byte_stable_and_above_cache_floor
 test_outcome_store_is_append_only_with_cursor_reads
 test_outcome_append_keeps_a_bounded_display_tail

@@ -87,7 +87,11 @@
 #     observed status file's mtime instead: freshness is how fresh this snapshot's
 #     own observation is, never when a worker emitted the event.
 #     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, and omitted. provenance.summary_source
+#     held_workers, queued, landed, endpoints, counts, and omitted.
+#     held_workers preserves non-working held-role children and other child-state
+#     holds independently of the queued-hold bound, with id, title, state, kind,
+#     reason, and source. Older summaries without it project an empty list.
+#     provenance.summary_source
 #     distinguishes "local-ledger", "remote-ledger", and "remote-ledger-cache";
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
 #     come from the selected summary's generation. Every successfully sampled home also carries
@@ -821,6 +825,7 @@ task_json_lines() {
     open_decisions_tsv=$(status_open_decisions "$status_log" "$kind")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
+           && [ "$current_state" != conflict ] \
            && [ "$current_state" != parked ] && [ "$current_state" != blocked ]; } \
          || { [ "$current_state" = "done" ] || [ "$current_state" = "failed" ]; }; }; then
       open_decisions_tsv=""
@@ -1021,7 +1026,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
             report_path:((.report_path // null) | if . == null then null else trunc(500) end),
             local_note:((.local_note // null) | if . == null then null else trunc(120) end),completion} ]
        | sort_by([(.completion.date // ""), .id]) | reverse) as $landed_all
-    | ([ $tasks[] | select(.current_state.state == "unknown") ]) as $unknown_children
+    | ([ $tasks[] | select(.current_state.state == "unknown" or .current_state.state == "conflict") ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
          | select(.id as $id | [$tasks[].id] | index($id) | not) ]) as $orphan_in_flight
@@ -1066,20 +1071,30 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     | ($captain_holds_all
        + ([ $tasks[] as $t | ($t.hints.open_decisions // [])[]
             | {id:$t.id,key,verb,summary:(.summary | trunc(160)),reason:null,source:"status"} ])) as $decisions_all
-    | ([ $queued_all[]
+    | ([ $owned_in_flight[] as $work
+           | $tasks[]
+           | select(.id == $work.id and .current_state.state != "working"
+               and (.current_state.state as $state
+                 | ["parked", "paused", "blocked", "unknown", "conflict"] | index($state)) != null)
+           | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
+              blocked_by_ids:[],unresolved_blocker_ids:[],state:.current_state.state,kind,
+              reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $child_holds
+    | ([ $owned_in_flight[] as $work
+         | select($work.current_role == "held")
+         | $tasks[]
+         | select(.id == $work.id and .current_state.state != "working")
+         | {id,title:((.backlog.title // .id) | trunc(90)),state:.current_state.state,kind,
+            reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $held_role_workers
+    | ($held_role_workers + [ $child_holds[]
+         | select(.id as $id | [$held_role_workers[].id] | index($id) | not) ]) as $held_workers
+    | ($child_holds + [ $queued_all[]
          | select((.unresolved_blocker_ids | length) > 0 or (.hold_reason != null and .hold_kind != null))
+         | select(.state != "in_flight" or (.id as $id | [$child_holds[].id] | index($id) | not))
          | {id:(.id | trunc(120)),title:(.title | trunc(90)),
             blocked_by:((.unresolved_blocker_ids | join(",")) | if . == "" then null else trunc(120) end),
             blocked_by_ids:(.blocked_by_ids | map(trunc(120))),
             unresolved_blocker_ids:(.unresolved_blocker_ids | map(trunc(120))),
-            reason:((.hold_reason // .blocked_reason // "blocked") | trunc(120)),source:"backlog"} ]
-       + [ $owned_in_flight[] as $work
-           | $tasks[]
-           | select(.id == $work.id and (.current_state.state == "parked" or .current_state.state == "paused" or .current_state.state == "blocked"))
-           | select(($work.hold_reason != null and $work.hold_kind != null) | not)
-           | {id,title:((.backlog.title // .id) | trunc(90)),blocked_by:null,
-              blocked_by_ids:[],unresolved_blocker_ids:[],
-              reason:((.current_state.detail // .current_state.state) | trunc(120)),source:"child-state"} ]) as $holds_all
+            reason:((.hold_reason // .blocked_reason // "blocked") | trunc(120)),source:"backlog"} ]) as $holds_all
     | ($backlog.present == true
        and ($unstructured_current | length) == 0
        and ($unknown_children | length) == 0
@@ -1116,6 +1131,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
         active_children:$active_all[:$child_n],
         decisions_open:$decisions_all[:$decisions_n],
         holds:$holds_all[:$queued_n],
+        held_workers:$held_workers,
         queued:([$queued_all[] | {id:(.id | trunc(120)),title:(.title | trunc(120)),
           blocked_by:((.blocked_by // null) | if . == null then null else trunc(120) end),
           blocked_by_ids:((.blocked_by_ids // []) | map(trunc(120))),
@@ -1681,6 +1697,7 @@ parent_evidence_reconciliation_json() {  # <summary-json-file> <activities-json>
                "active_children")
          elif $e.verb == "paused" then
            ([ $summary.holds[]
+              | select(.source != "child-state" or .state == "paused")
               | select(if ($e.key | keyed) then .id == $e.key or .blocked_by == $e.key else true end)
               | {surface:"holds",id,key:(.blocked_by // null),verb:"paused"}]) as $matches
            | result($e; $matches;
@@ -1704,6 +1721,7 @@ parent_evidence_reconciliation_json() {  # <summary-json-file> <activities-json>
                 | select(if ($e.key | keyed) then .key == $e.key or .id == $e.key else true end)
                 | {surface:"decisions_open",id,key,verb}]
               + [ $summary.holds[]
+                  | select(.source != "child-state" or .state == "blocked")
                   | select(if ($e.key | keyed) then .id == $e.key or .blocked_by == $e.key else true end)
                   | {surface:"holds",id,key:(.blocked_by // null),verb:"blocked"}]) as $matches
              | result($e; $matches;
@@ -1891,7 +1909,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
            trust:(if $summary_valid then "complete" else "partial-structured" end),parent_event_role:"historical-only"},
          freshness:{status:$summary_freshness,observed_at:$observed,age_seconds:$summary_age},
          active_children:$summary.active_children,
-         decisions_open:$summary.decisions_open,holds:$summary.holds,queued:$summary.queued,
+         decisions_open:$summary.decisions_open,holds:$summary.holds,held_workers:($summary.held_workers // []),queued:$summary.queued,
          contributions:($summary.contributions // null),
          landed:$summary.landed,endpoints:$summary.endpoints,counts:$summary.counts,omitted:$summary.omitted,
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan,reconciliation:$reconciliation},
@@ -1924,7 +1942,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          reconcile_inventory:(if $summary_sampled then $summary.invalidity else null end),
          provenance:{selected:$provenance,structured_home:($home | if . == "" then null else . end),parent_event_role:"fallback-only-not-current"},
          freshness:{status:$freshness,observed_at:$observed,age_seconds:$observed_age},
-         active_children:[],decisions_open:[],holds:[],queued:[],landed:[],endpoints:[],counts:{active_children:0,decisions_open:0,holds:0,queued:0,landed:0,endpoints:0},omitted:[],
+         active_children:[],decisions_open:[],holds:[],held_workers:[],queued:[],landed:[],endpoints:[],counts:{active_children:0,decisions_open:0,holds:0,queued:0,landed:0,endpoints:0},omitted:[],
          parent_event:{raw:$event_raw,note:$event_note,age_seconds:$event_age,open_activities:$activities,open_decisions:$decisions,activity_scan:$activity_scan},
          terminal_evidence:$terminal,contradiction:false}' >> "$records_file" || return 1
     fi

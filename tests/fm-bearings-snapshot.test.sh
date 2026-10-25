@@ -216,6 +216,21 @@ run() {  # <home> <fakebin> <args...>
   PATH="$fakebin:$PATH" FM_HOME="$home" FM_BEARINGS_NOW=2026-07-11T18:00:00Z NET_LOG="$home/net.log" "$BEARINGS" "$@"
 }
 
+test_conflict_keeps_open_decision() {
+  local home fakebin json
+  home=$(make_home conflict-decision)
+  write_fixture "$home"
+  printf 'needs-decision [at=1] [key=route]: choose the route\n' > "$home/state/ship-task.status"
+  fakebin=$(make_fakebin "$home")
+  json=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$json" | jq -e '
+    .tasks[] | select(.id == "ship-task")
+    | .current_state.state == "conflict"
+      and (.hints.open_decisions | any(.key == "route" and .verb == "needs-decision"))
+  ' >/dev/null || fail "a worker conflict hid its unresolved decision: $json"
+  pass 'worker conflicts preserve their open captain decisions'
+}
+
 run_captain() {  # <home> <fakebin> <command args...>
   local home=$1 fakebin=$2
   shift 2
@@ -854,7 +869,7 @@ EOF
 }
 
 test_nonprogressing_child_states_are_explicit() {
-  local home mate fakebin canonical
+  local home mate fakebin canonical json
   home=$(make_home child-state-classification)
   mate="$TMP_ROOT/child-state-classification-home"
   make_valid_secondmate_home states "$mate"
@@ -883,6 +898,13 @@ EOF
       and .active_children == []
       and (.holds | any(.id == "parked" and .source == "child-state"))
   ' >/dev/null || fail "parked child was classified as active work: $canonical"
+  printf 'paused: waiting for review\n' > "$mate/state/parked.status"
+  refresh_local_secondmate_ledgers "$home"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    .in_flight | any(.[]; .id == "states/parked" and .state == "paused" and (.doing | contains("waiting for review")))
+  ' >/dev/null || fail "paused child disappeared from bearings: $json"
+  printf 'needs-decision [key=parked]: choose a route\n' > "$mate/state/parked.status"
   cat > "$mate/data/backlog.md" <<'EOF'
 ## In flight
 
@@ -2726,12 +2748,12 @@ EOF
           and .provenance.trust == "partial-structured"
           and .invalidity == {kind:"child_current_unavailable",ids:["unreadable-child"]}
           and [.decisions_open[].id] == ["reviewer-decision"]
-          and [.holds[].id] == ["reviewer-decision"]
+          and [.holds[].id] == ["unreadable-child", "reviewer-decision"]
           and [.queued[].id] == ["reviewer-decision"]
           and [.landed[].id] == ["prior-release"]
           and [.endpoints[].id] == ["unreadable-child"]
           and .counts.decisions_open == 1
-          and .counts.holds == 1
+          and .counts.holds == 2
           and .counts.queued == 1
           and .counts.landed == 1
           and .counts.endpoints == 1)
@@ -2749,7 +2771,8 @@ EOF
   ' >/dev/null || fail "canonical mixed-domain classification was wrong: $canonical"
   json=$(run "$home" "$fakebin" --json --fields bodies --all-landed)
   printf '%s' "$json" | jq -e '
-    ([.in_flight[].id] | sort) == ["hibit/hibit-worker", "home-assistant/prep", "wheel/wheel-worker"]
+    ([.in_flight[].id] | sort) == ["hibit/hibit-worker", "home-assistant/prep", "sshhip/unreadable-child", "wheel/wheel-worker"]
+      and (.in_flight | any(.id == "sshhip/unreadable-child" and .state == "unknown"))
       and (.decisions_open | any(.id == "sshhip/reviewer-decision"))
       and (.decisions_open | any(.id == "home-assistant/captain-run") | not)
       and (.gates | any(.id == "production-observation" and .owner == "wheel"
@@ -2775,7 +2798,7 @@ EOF
       and .provenance.trust == "partial-structured"
       and .invalidity == {kind:"orphan_in_flight",ids:["ordinary-orphan"]}
       and [.decisions_open[].id] == ["reviewer-decision"]
-      and [.holds[].id] == ["reviewer-decision"]
+      and [.holds[].id] == ["unreadable-child", "reviewer-decision"]
       and [.queued[].id] == ["reviewer-decision"]
       and [.landed[].id] == ["prior-release"]
       and [.endpoints[].id] == ["unreadable-child"]
@@ -2817,8 +2840,13 @@ EOF
     .secondmate_current.records[] | select(.id == "wheel")
     | ([.queued[] | select(.id == "production-observation")] | length) == 1
       and ([.holds[] | select(.id == "production-observation")] | length) == 1
+      and (.holds | any(.id == "production-observation" and .source == "child-state" and .state == "paused"))
       and ([.endpoints[] | select(.id == "production-observation")] | length) == 1
   ' >/dev/null || fail "held metadata plus a real child duplicated or discarded the record: $canonical"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    ([.in_flight[] | select(.id == "wheel/production-observation" and .state == "paused")] | length) == 1
+  ' >/dev/null || fail "secondmate held child state disappeared from bearings: $json"
 
   fm_write_meta "$sshhip/state/unreadable-child.meta" \
     "window=firstmate:fm-unreadable-child" "worktree=$sshhip/projects/child" "project=sshhip" \
@@ -2912,13 +2940,15 @@ EOF
   printf 'working: preparing main canary\n' > "$home/state/prep.status"
   fm_write_meta "$home/state/observation.meta" \
     "window=firstmate:fm-observation" "worktree=$home/projects/observation" "project=firstmate" \
-    "harness=codex" "kind=scout" "mode=scout"
+    "harness=claude" "kind=scout" "mode=scout"
+  record_claude_state "$home/state" observation idle
   printf 'paused: observation is deliberately held\n' > "$home/state/observation.status"
   fakebin=$(make_fakebin "$home")
   json=$(run "$home" "$fakebin" --json)
   printf '%s' "$json" | jq -e '
     (.in_flight | any(.id == "prep"))
-      and (.in_flight | any(.id == "observation") | not)
+      and (.in_flight | any(.id == "observation" and .state == "paused"
+        and (.doing | contains("observation is deliberately held"))))
       and ([.gates[] | select(.id == "observation" and .reason == "watch production")] | length) == 1
       and (.decisions_open | any(.id == "captain-run") | not)
       and (.gates | any(.id == "captain-run" and .blocked_by == "prep,review"))
@@ -2958,6 +2988,88 @@ EOF
       and (.gates | any(.id == "captain-run") | not)
   ' >/dev/null || fail "main zero-blocker captain action was not projected exactly once: $json"
   pass "main and secondmate captain actionability use the same blocker readiness"
+}
+
+test_held_child_states_survive_queued_hold_bound() {
+  local home mate fakebin canonical json id state i
+  home=$(make_home held-child-bound)
+  : > "$home/data/secondmates.md"
+  mate="$TMP_ROOT/held-child-bound-mate"
+  make_valid_secondmate_home held-mate "$mate"
+  append_secondmate_registry "$home" held-mate "$mate"
+  cat > "$mate/data/backlog.md" <<'EOF'
+## In flight
+- [ ] held-working - Active observation (repo: sample) (kind: scout) (hold: watch) (hold-kind: external)
+- [ ] held-paused - Paused observation (repo: sample) (kind: scout) (hold: watch) (hold-kind: external)
+- [ ] held-done - Finished observation (repo: sample) (kind: scout) (hold: watch) (hold-kind: external)
+- [ ] held-failed - Failed observation (repo: sample) (kind: scout) (hold: watch) (hold-kind: external)
+
+EOF
+  i=1
+  while [ "$i" -le 20 ]; do
+    printf -- '- [ ] ordinary-%02d - Ordinary paused (repo: sample) (kind: scout)\n' "$i" >> "$mate/data/backlog.md"
+    i=$((i + 1))
+  done
+  printf '\n## Queued\n' >> "$mate/data/backlog.md"
+  i=1
+  while [ "$i" -le 21 ]; do
+    printf -- '- [ ] gate-%02d - Queued hold (repo: sample) (kind: scout) (hold: waiting) (hold-kind: external)\n' \
+      "$i" >> "$mate/data/backlog.md"
+    i=$((i + 1))
+  done
+  printf '\n## Done\n' >> "$mate/data/backlog.md"
+  for id in held-working held-paused held-done held-failed; do
+    mkdir -p "$mate/projects/$id"
+    fm_write_meta "$mate/state/$id.meta" \
+      "window=firstmate:fm-$id" "worktree=$mate/projects/$id" "project=sample" \
+      "harness=claude" "kind=scout" "mode=scout"
+    state=idle
+    [ "$id" != held-working ] || state=busy
+    record_claude_state "$mate/state" "$id" "$state"
+  done
+  printf 'working: observing\n' > "$mate/state/held-working.status"
+  printf 'paused: waiting\n' > "$mate/state/held-paused.status"
+  mkdir -p "$mate/data/held-done"
+  printf 'finished report\n' > "$mate/data/held-done/report.md"
+  printf 'done: report ready\n' > "$mate/state/held-done.status"
+  printf 'failed: observation failed\n' > "$mate/state/held-failed.status"
+  i=1
+  while [ "$i" -le 20 ]; do
+    id=$(printf 'ordinary-%02d' "$i")
+    mkdir -p "$mate/projects/$id"
+    fm_write_meta "$mate/state/$id.meta" \
+      "window=firstmate:fm-$id" "worktree=$mate/projects/$id" "project=sample" \
+      "harness=claude" "kind=scout" "mode=scout"
+    record_claude_state "$mate/state" "$id" idle
+    printf 'paused: ordinary wait\n' > "$mate/state/$id.status"
+    i=$((i + 1))
+  done
+
+  fakebin=$(make_fakebin "$home")
+  refresh_local_secondmate_ledgers "$home"
+  canonical=$(PATH="$fakebin:$PATH" FM_HOME="$home" FM_SNAPSHOT_NOW=2026-07-11T18:00:00Z \
+    "$ROOT/bin/fm-fleet-snapshot.sh" --json)
+  printf '%s' "$canonical" | jq -e '
+    .secondmate_current.records[] | select(.id == "held-mate")
+    | [.active_children[] | select(.id == "held-working" and .state == "working")] | length == 1
+  ' >/dev/null || fail "held working child lost its active row: $canonical"
+  printf '%s' "$canonical" | jq -e '
+    .secondmate_current.records[] | select(.id == "held-mate")
+    | ([.held_workers[] | select(.id | startswith("held-")) | {id,state}]
+       == [{id:"held-paused",state:"paused"},{id:"held-done",state:"done"},{id:"held-failed",state:"failed"}])
+      and ([.holds[] | select(.id == "held-paused" and .source == "child-state")] | length) == 1
+      and ([.holds[] | select(.source == "child-state" and .state != "paused")] | length) == 0
+      and .counts.holds == 44
+  ' >/dev/null || fail "queued holds hid or duplicated held child states: $(printf '%s' "$canonical" | jq -c '.secondmate_current.records[] | select(.id == "held-mate") | {held_workers:[.held_workers[] | {id,state}],holds:[.holds[] | {id,state,source}],counts}')"
+  json=$(run "$home" "$fakebin" --json)
+  printf '%s' "$json" | jq -e '
+    [.in_flight[] | select(.id | startswith("held-mate/held-")) | {id,state}]
+      == [{id:"held-mate/held-working",state:"working"},
+          {id:"held-mate/held-paused",state:"paused"},
+          {id:"held-mate/held-done",state:"done"},
+          {id:"held-mate/held-failed",state:"failed"}]
+  ' >/dev/null || fail "bearings omitted a held child state: $json"
+  pass "all held child states survive queued hold bounds"
 }
 
 test_task_teardown_during_metadata_capture_does_not_abort_snapshot() {
@@ -3444,8 +3556,10 @@ test_newest_filed_gates_are_selected_before_snapshot_bounds
 test_underway_and_gate_rows_carry_the_durable_name_and_filed_date
 test_mixed_secondmate_roles_partial_state_and_captain_readiness
 test_main_captain_readiness_matches_secondmate_projection
+test_held_child_states_survive_queued_hold_bound
 test_completed_scout_report_not_pending
 test_open_decision_surfaces_end_to_end
+test_conflict_keeps_open_decision
 test_report_pointers_surface
 test_queued_item_prose_never_hides_it
 test_include_prs_is_the_only_fetch_path
