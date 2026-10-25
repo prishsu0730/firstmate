@@ -6536,10 +6536,10 @@ test_heartbeat_auto_closes_a_finished_scout() {
   pass "a heartbeat tears down a done scout only after its report proves completion"
 }
 
-test_heartbeat_surfaces_an_unlanded_done_ship_refusal() {
-  local dir state fakebin out pid sig drain_out
+test_heartbeat_leaves_an_unlanded_done_ship_alone() {
+  local dir state fakebin out pid sig
   dir=$(make_case heartbeat-auto-close-ship); state="$dir/state"; fakebin="$dir/fakebin"
-  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  out="$dir/watch.out"
   printf 'done: branch ready\n' > "$state/ship.status"
   fm_write_meta "$state/ship.meta" \
     'kind=ship' \
@@ -6551,17 +6551,16 @@ test_heartbeat_surfaces_an_unlanded_done_ship_refusal() {
   sig=$(seen_sig "$state/ship.status"); printf '%s' "$sig" > "$state/.seen-ship_status"
   mark_heartbeat_surfaced "$state" "$state/ship.status"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
-    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" 2>&1 &
   pid=$!
-  wait_for_exit "$pid" 100 || fail "unlanded done ship did not surface teardown refusal"
-  [ -e "$state/ship.meta" ] || fail "heartbeat tore down a done ship whose work was not proven landed"
-  grep -Fx 'check: automatic finished-task teardown refused: id=ship' "$out" >/dev/null \
-    || fail "unlanded ship did not surface the teardown refusal"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
-    || fail "drain after unlanded ship refusal failed"
-  grep -F 'automatic-finished-teardown-ship' "$drain_out" >/dev/null \
-    || fail "unlanded ship refusal did not produce a durable wake"
-  pass "a heartbeat preserves and surfaces an unlanded done ship"
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "watcher woke for an unlanded done ship: $(cat "$out")"; }
+  [ -e "$state/ship.meta" ] || { reap "$pid"; fail "heartbeat tore down a done ship whose work was not proven landed"; }
+  [ ! -s "$state/.wake-queue" ] || { reap "$pid"; fail "unlanded done ship produced a wake instead of being skipped"; }
+  ! grep -F 'REFUSED:' "$out" >/dev/null \
+    || { reap "$pid"; fail "unlanded done ship attempted teardown instead of being skipped"; }
+  reap "$pid"
+  pass "a heartbeat leaves an unlanded done ship untouched without attempting teardown"
 }
 
 test_heartbeat_auto_closes_a_squash_merged_ship() {
@@ -7217,7 +7216,7 @@ test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
 test_heartbeat_auto_closes_a_finished_scout
-test_heartbeat_surfaces_an_unlanded_done_ship_refusal
+test_heartbeat_leaves_an_unlanded_done_ship_alone
 test_heartbeat_auto_closes_a_squash_merged_ship
 test_heartbeat_auto_closes_a_local_main_ship
 test_heartbeat_surfaces_one_auto_close_refusal

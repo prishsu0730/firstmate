@@ -2498,19 +2498,14 @@ heartbeat_scan_finds_actionable() {
 }
 
 auto_close_finished_records() {
-  local meta id kind last rc
+  local meta id kind rc
   FM_AUTO_CLOSE_REFUSED_ID=''
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
     id=$(basename "$meta" .meta)
     kind=$(fm_meta_get "$meta" kind)
     [ "$kind" = secondmate ] && continue
-    [ -f "$STATE/$id.status" ] && [ ! -L "$STATE/$id.status" ] || continue
-    last=$(tail -n 1 "$STATE/$id.status" 2>/dev/null) || continue
-    case "$last" in
-      "done "*|"done["*|"done:"*) ;;
-      *) continue ;;
-    esac
+    fm_task_record_finished "$STATE" "$id" || continue
     "$SCRIPT_DIR/fm-teardown.sh" "$id"
     rc=$?
     case "$rc" in
