@@ -303,6 +303,9 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derive
 WATCHER_STALL_BOUND=$(fm_watcher_stall_bound "$POLL")
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
+# A refused automatic teardown is surfaced once and not retried by this watcher
+# run. The next watcher run gets a fresh, operator-visible reconciliation pass.
+AUTO_CLOSE_REFUSED_IDS=''
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
@@ -2497,6 +2500,34 @@ heartbeat_scan_finds_actionable() {
   return "$found"
 }
 
+# Reconcile records whose own completion proof says their work is safely held
+# elsewhere. Teardown remains the single owner of every destructive gate; this
+# only gives its existing no-force path a bounded heartbeat caller.
+# Returns 1 after the first refusal and sets FM_AUTO_CLOSE_REFUSED_ID for the
+# normal watcher wake path below.
+auto_close_finished_records() {
+  local meta id kind rc
+  FM_AUTO_CLOSE_REFUSED_ID=''
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    kind=$(fm_meta_get "$meta" kind)
+    [ "$kind" = secondmate ] && continue
+    case " $AUTO_CLOSE_REFUSED_IDS " in *" $id "*) continue ;; esac
+    fm_task_record_finished "$STATE" "$id" || continue
+    "$SCRIPT_DIR/fm-teardown.sh" "$id"
+    rc=$?
+    case "$rc" in
+      0|4) continue ;;
+    esac
+    AUTO_CLOSE_REFUSED_IDS="$AUTO_CLOSE_REFUSED_IDS $id"
+    FM_AUTO_CLOSE_REFUSED_ID=$id
+    triage_log "automatic finished-task teardown refused for $id"
+    return 1
+  done
+  return 0
+}
+
 # event_wait_or_sleep: the terminal wait of each supervision cycle. For a home
 # with push-capable windows (herdr), it replaces the blind `sleep POLL` with a
 # bounded wait on the backend's native transition stream, so a crew going
@@ -3454,6 +3485,12 @@ EOF
   hb=$(( HEARTBEAT * (1 << streak) ))
   [ "$hb" -gt "$HEARTBEAT_MAX" ] && hb=$HEARTBEAT_MAX
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
+    if ! auto_close_finished_records; then
+      reason="check: automatic finished-task teardown refused: id=$FM_AUTO_CLOSE_REFUSED_ID"
+      fm_wake_append check "automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID" "$reason" || exit 1
+      touch "$STATE/.last-heartbeat"
+      wake "$reason"
+    fi
     # Triage: in always-on mode a heartbeat is benign unless the cheap fleet-scan
     # turns up a captain-relevant status the per-wake path missed. Absorb the
     # no-change case (advance the schedule and back off exactly as wake() would,

@@ -191,6 +191,15 @@ reap() {
 
 size_of() { LC_ALL=C wc -c < "$1" | tr -d '[:space:]'; }
 
+mark_heartbeat_surfaced() {  # <state> <status-file>
+  local state=$1 file=$2 task reported ident endpoint
+  task=$(basename "$file" .status)
+  reported=$(status_observed_signature "$file")
+  ident=$(_fm_open_decisions_file_ident "$file")
+  endpoint=$(size_of "$file")
+  printf 'v2\t%s\t%s@%s' "$reported" "$endpoint" "$ident" > "$state/.hb-surfaced-$task"
+}
+
 test_status_span_actionable_classifier() {
   local dir state offset
   dir=$(make_case classify-signal); state="$dir/state"
@@ -6456,6 +6465,95 @@ test_heartbeat_backstop_surfaces_unsurfaced_status() {
   pass "heartbeat backstop fail-safe surfaces a captain-relevant status the per-wake path missed"
 }
 
+# --- heartbeat: proven finished records close through the guarded teardown ---
+
+test_heartbeat_auto_closes_a_finished_scout() {
+  local dir state fakebin out pid sig i windows
+  dir=$(make_case heartbeat-auto-close-scout); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  printf 'done: report ready\n' > "$state/scout.status"
+  fm_write_meta "$state/scout.meta" \
+    'kind=scout' \
+    'backend=tmux' \
+    'window=firstmate:fm-scout' \
+    "project=$dir/project" \
+    "worktree=$dir/missing-worktree" \
+    'decisions_reviewed=1'
+  mkdir -p "$dir/data/scout"
+  printf 'report\n' > "$dir/data/scout/report.md"
+  windows="$dir/windows"
+  printf 'firstmate:fm-scout\n' > "$windows"
+  sig=$(seen_sig "$state/scout.status"); printf '%s' "$sig" > "$state/.seen-scout_status"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOWS_FILE="$windows" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited while closing a finished scout: $(cat "$out")"; }
+  i=0
+  while [ "$i" -lt 200 ] && [ -e "$state/scout.meta" ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ ! -e "$state/scout.meta" ] || { reap "$pid"; fail "heartbeat did not tear down the proven finished scout"; }
+  [ ! -e "$state/scout.status" ] || { reap "$pid"; fail "scout status survived successful automatic teardown"; }
+  reap "$pid"
+  pass "a heartbeat tears down a done scout only after its report proves completion"
+}
+
+test_heartbeat_leaves_an_unlanded_done_ship() {
+  local dir state fakebin out pid sig
+  dir=$(make_case heartbeat-auto-close-ship); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  printf 'done: branch ready\n' > "$state/ship.status"
+  fm_write_meta "$state/ship.meta" \
+    'kind=ship' \
+    'backend=tmux' \
+    "project=$dir/missing-project" \
+    'branch=fm/unlanded' \
+    "worktree=$dir/missing-worktree"
+  sig=$(seen_sig "$state/ship.status"); printf '%s' "$sig" > "$state/.seen-ship_status"
+  mark_heartbeat_surfaced "$state" "$state/ship.status"
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited for an unlanded done ship: $(cat "$out")"; }
+  sleep 1
+  [ -e "$state/ship.meta" ] || { reap "$pid"; fail "heartbeat tore down a done ship whose work was not proven landed"; }
+  [ ! -s "$out" ] || { reap "$pid"; fail "unlanded ship triggered an automatic teardown wake: $(cat "$out")"; }
+  reap "$pid"
+  pass "a heartbeat leaves a done ship whose work is not proven landed"
+}
+
+test_heartbeat_surfaces_one_auto_close_refusal() {
+  local dir state fakebin out pid sig drain_out
+  dir=$(make_case heartbeat-auto-close-refusal); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  printf 'done: report ready\n' > "$state/refused.status"
+  fm_write_meta "$state/refused.meta" \
+    'kind=scout' \
+    'backend=tmux' \
+    "project=$dir/project" \
+    "worktree=$dir/missing-worktree" \
+    'spawn_gen=not-a-valid-generation'
+  mkdir -p "$dir/data/refused"
+  printf 'report\n' > "$dir/data/refused/report.md"
+  sig=$(seen_sig "$state/refused.status"); printf '%s' "$sig" > "$state/.seen-refused_status"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "automatic teardown refusal did not wake the watcher"
+  [ -e "$state/refused.meta" ] || fail "automatic teardown refusal removed the task record"
+  grep -Fx 'check: automatic finished-task teardown refused: id=refused' "$out" >/dev/null \
+    || fail "automatic teardown refusal did not surface its normal check wake"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+    || fail "drain after automatic teardown refusal failed"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out" || true)" = 1 ] \
+    || fail "automatic teardown refusal did not produce exactly one durable wake"
+  pass "a teardown refusal retains the record and surfaces one normal wake"
+}
+
 # --- beacon stays fresh while absorbing -------------------------------------
 
 test_beacon_stays_fresh_while_absorbing() {
@@ -6995,6 +7093,9 @@ test_procevent_marker_failure_exits_and_replays
 test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
+test_heartbeat_auto_closes_a_finished_scout
+test_heartbeat_leaves_an_unlanded_done_ship
+test_heartbeat_surfaces_one_auto_close_refusal
 test_beacon_stays_fresh_while_absorbing
 test_afk_signal_records_heartbeat_endpoint
 test_afk_present_reverts_watcher_to_one_shot
