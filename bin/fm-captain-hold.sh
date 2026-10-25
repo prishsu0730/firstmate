@@ -32,6 +32,7 @@
 #   fm-captain-hold.sh verify <origin-id>
 #   fm-captain-hold.sh open <task-id> [--identity] [--distinguish-absent]
 #   fm-captain-hold.sh diverged
+#   fm-captain-hold.sh check-records
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
@@ -192,6 +193,16 @@
 #
 # `diverged` is the read-only guard over the seam between the two records of
 # one captain call. See "record divergence" beside command_diverged below.
+#
+# `check-records` takes no arguments and prints one
+# `<task-id><TAB><kind><TAB><detail>` line per problem. Kinds are
+# self-decision-key, unresolved-decision-key, and slot-reassigned.
+# It exits 0 after a completed scan (including one with findings), or 2 on a
+# backlog read failure; completed findings remain on stdout in either case.
+# An unavailable tasks-axi or a status directory outside the active home skips
+# backlog checks without making the exit status nonzero.
+# For the read-only check's rules, safety boundaries, and startup presentation,
+# see docs/captain-hold-lifecycle.md, "Record problems".
 #
 # Resolution records: the block written into the body names this script, the
 # decision digest, and a `Resolution mode:` of answered, released, repaired, or
@@ -436,13 +447,20 @@ require_tasks_axi() {
 TASK_SHOW_OUTPUT=
 task_show() {  # <id>; sets TASK_SHOW_OUTPUT
   local data status=0 reason
-  data=$(fm_backlog_data_absolute "$DATA") || fail "data directory cannot be resolved: $DATA"
+  data=$(fm_backlog_data_absolute "$DATA") || {
+    [ "${record_check_reads:-0}" != 1 ] || exit 2
+    fail "data directory cannot be resolved: $DATA"
+  }
   TASK_SHOW_OUTPUT=$(fm_backlog_row_show "$data" "$1" --full 2>/dev/null) || status=$?
   if [ "$status" -eq 124 ]; then
     reason=${TASK_SHOW_OUTPUT%%$'\n'*}
     printf 'fm-captain-hold: %s\n' \
       "${reason:-tasks-axi show $1 exceeded its backlog read bound}" >&2
     exit 124
+  fi
+  if [ "${record_check_reads:-0}" = 1 ] && [ "$status" -ne 0 ] &&
+    ! printf '%s\n' "$TASK_SHOW_OUTPUT" | grep -q '^code: NOT_FOUND$'; then
+    exit 2
   fi
   return "$status"
 }
@@ -2055,6 +2073,66 @@ EOF
   done
 }
 
+# Read-only report of task-record problems relevant to cleanup. Each rule
+# is the existing lifecycle rule, reused rather than restated:
+# the self-inventory test of refuse_self_inventory, resolve_entry plus
+# verify_hold_durable for an entry that must name a hold, and the slot claim
+# read of bin/fm-wake-lib.sh. Nothing here mutates a record, a claim, or the
+# backlog. Output: one `<task-id>\t<kind>\t<detail>` line per problem.
+command_check_records() {
+  local meta id keys entry resolved rc worktree project kind can_resolve=0 owner
+  local record_check_reads=1 incomplete=0
+  [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+  # tasks-axi reads $FM_HOME's backlog, so a state dir pointed elsewhere would
+  # compare one home's records against another home's tasks; stay silent on
+  # that half rather than invent a problem.
+  if [ "$STATE" = "$FM_HOME/state" ] && command -v tasks-axi >/dev/null 2>&1; then
+    can_resolve=1
+  fi
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    id=$(basename "$meta" .meta)
+    keys=$(meta_value "$meta" decision_keys)
+    while IFS= read -r entry; do
+      [ -n "$entry" ] || continue
+      if [ "$entry" = "$id" ]; then
+        printf '%s\tself-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+        continue
+      fi
+      [ "$can_resolve" -eq 1 ] || continue
+      case "$entry" in
+        *[!A-Za-z0-9._-]*)
+          printf '%s\tunresolved-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+          continue
+          ;;
+      esac
+      rc=0
+      resolved=$(resolve_entry "$id" "$entry" 2>/dev/null) || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        (verify_hold_durable "${resolved%% *}") >/dev/null 2>&1 || rc=$?
+      fi
+      if [ "$rc" -eq 1 ]; then
+        printf '%s\tunresolved-decision-key\t%s\n' "$id" "$(sanitize_field "$entry")"
+      elif [ "$rc" -ne 0 ]; then
+        can_resolve=0
+        incomplete=1
+      fi
+    done <<KEYS
+$(printf '%s\n' "$keys" | tr ',' '\n')
+KEYS
+    kind=$(meta_value "$meta" kind)
+    worktree=$(meta_value "$meta" worktree)
+    project=$(meta_value "$meta" project)
+    [ -n "$worktree" ] && [ "$kind" != secondmate ] || continue
+    fm_treehouse_pool_slot "$project" "$worktree" || continue
+    fm_treehouse_slot_owner_state "$worktree" "$id"
+    [ "$FM_TREEHOUSE_SLOT_OWNER" = other ] || continue
+    owner=$(sanitize_field "$FM_TREEHOUSE_SLOT_OWNER_ID")
+    printf '%s\tslot-reassigned\t%s\n' "$id" "$owner"
+  done
+  [ "$incomplete" -eq 0 ] || return 2
+}
+
 # Still an open captain call? Exit 0 yes, 1 no, 2 cannot tell (see the header).
 # A row this home does not carry is 3 when the caller requests the distinction,
 # and so is a home with no backlog file at all, because a backlog that does not
@@ -2139,6 +2217,7 @@ case "${1:-}" in
   verify) shift; command_verify "$@" ;;
   open) shift; command_open "$@" ;;
   diverged) shift; command_diverged "$@" ;;
+  check-records) shift; command_check_records "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
