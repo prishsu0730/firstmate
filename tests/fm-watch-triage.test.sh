@@ -200,6 +200,41 @@ mark_heartbeat_surfaced() {  # <state> <status-file>
   printf 'v2\t%s\t%s@%s' "$reported" "$endpoint" "$ident" > "$state/.hb-surfaced-$task"
 }
 
+make_finished_ship_project() {  # <case-dir>
+  local dir=$1 fakebin="$1/fakebin" seed project worktree
+  seed="$dir/seed"; project="$dir/project"; worktree="$dir/worktree"
+  mkdir -p "$dir/config" "$dir/data"
+  git init -q --bare "$dir/origin.git"
+  git -C "$dir/origin.git" symbolic-ref HEAD refs/heads/main
+  git clone -q "$dir/origin.git" "$seed"
+  git -C "$seed" -c user.email=fmtest@example.invalid -c user.name=fmtest \
+    commit -q --allow-empty -m baseline
+  git -C "$seed" push -q origin main
+  git clone -q "$dir/origin.git" "$project"
+  git -C "$project" remote set-head origin main 2>/dev/null || true
+  git -C "$project" worktree add -q -b fm/ship "$worktree" main
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr view") printf 'MERGED\t%s\thttps://github.com/example/repo/pull/7\n' "${FM_FAKE_MERGED_PR_HEAD:-}" ;;
+esac
+SH
+  chmod +x "$fakebin/treehouse" "$fakebin/no-mistakes" "$fakebin/gh-axi" "$fakebin/gh"
+  printf '%s\t%s\n' "$project" "$worktree"
+}
+
 test_status_span_actionable_classifier() {
   local dir state offset
   dir=$(make_case classify-signal); state="$dir/state"
@@ -6501,28 +6536,116 @@ test_heartbeat_auto_closes_a_finished_scout() {
   pass "a heartbeat tears down a done scout only after its report proves completion"
 }
 
-test_heartbeat_leaves_an_unlanded_done_ship() {
-  local dir state fakebin out pid sig
+test_heartbeat_surfaces_an_unlanded_done_ship_refusal() {
+  local dir state fakebin out pid sig drain_out
   dir=$(make_case heartbeat-auto-close-ship); state="$dir/state"; fakebin="$dir/fakebin"
-  out="$dir/watch.out"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
   printf 'done: branch ready\n' > "$state/ship.status"
   fm_write_meta "$state/ship.meta" \
     'kind=ship' \
     'backend=tmux' \
     "project=$dir/missing-project" \
     'branch=fm/unlanded' \
-    "worktree=$dir/missing-worktree"
+    "worktree=$dir/missing-worktree" \
+    'spawn_gen=heartbeat-test-ship'
   sig=$(seen_sig "$state/ship.status"); printf '%s' "$sig" > "$state/.seen-ship_status"
   mark_heartbeat_surfaced "$state" "$state/ship.status"
   PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 \
     FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
   pid=$!
-  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited for an unlanded done ship: $(cat "$out")"; }
-  sleep 1
-  [ -e "$state/ship.meta" ] || { reap "$pid"; fail "heartbeat tore down a done ship whose work was not proven landed"; }
-  [ ! -s "$out" ] || { reap "$pid"; fail "unlanded ship triggered an automatic teardown wake: $(cat "$out")"; }
+  wait_for_exit "$pid" 100 || fail "unlanded done ship did not surface teardown refusal"
+  [ -e "$state/ship.meta" ] || fail "heartbeat tore down a done ship whose work was not proven landed"
+  grep -Fx 'check: automatic finished-task teardown refused: id=ship' "$out" >/dev/null \
+    || fail "unlanded ship did not surface the teardown refusal"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+    || fail "drain after unlanded ship refusal failed"
+  grep -F 'automatic-finished-teardown-ship' "$drain_out" >/dev/null \
+    || fail "unlanded ship refusal did not produce a durable wake"
+  pass "a heartbeat preserves and surfaces an unlanded done ship"
+}
+
+test_heartbeat_auto_closes_a_squash_merged_ship() {
+  local dir state fakebin out pid sig project worktree head windows i
+  dir=$(make_case heartbeat-auto-close-squash-ship); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  IFS=$'\t' read -r project worktree < <(make_finished_ship_project "$dir")
+  printf 'feature\n' > "$worktree/feature.txt"
+  git -C "$worktree" add feature.txt
+  git -C "$worktree" -c user.email=fmtest@example.invalid -c user.name=fmtest \
+    commit -q -m feature
+  head=$(git -C "$worktree" rev-parse HEAD)
+  printf 'done: squash merged\n' > "$state/ship.status"
+  fm_write_meta "$state/ship.meta" \
+    'kind=ship' \
+    'backend=tmux' \
+    'window=firstmate:fm-ship' \
+    "project=$project" \
+    "worktree=$worktree" \
+    'branch=fm/ship' \
+    'mode=no-mistakes' \
+    'pr=https://github.com/example/repo/pull/7' \
+    "pr_head=$head" \
+    'spawn_gen=heartbeat-test-ship'
+  sig=$(seen_sig "$state/ship.status"); printf '%s' "$sig" > "$state/.seen-ship_status"
+  mark_heartbeat_surfaced "$state" "$state/ship.status"
+  windows="$dir/windows"; printf 'firstmate:fm-ship\n' > "$windows"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOWS_FILE="$windows" FM_FAKE_MERGED_PR_HEAD="$head" \
+    FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited while closing a squash-merged ship: $(cat "$out")"; }
+  i=0
+  while [ "$i" -lt 200 ] && [ -e "$state/ship.meta" ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ ! -e "$state/ship.meta" ] || { reap "$pid"; fail "heartbeat did not tear down the squash-merged ship"; }
+  [ ! -e "$state/ship.status" ] || { reap "$pid"; fail "squash-merged ship status survived automatic teardown"; }
   reap "$pid"
-  pass "a heartbeat leaves a done ship whose work is not proven landed"
+  pass "a heartbeat tears down a squash-merged ship through the guarded teardown"
+}
+
+test_heartbeat_auto_closes_a_local_main_ship() {
+  local dir state fakebin out pid sig project worktree windows i
+  dir=$(make_case heartbeat-auto-close-local-main-ship); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  IFS=$'\t' read -r project worktree < <(make_finished_ship_project "$dir")
+  printf 'feature\n' > "$worktree/feature.txt"
+  git -C "$worktree" add feature.txt
+  git -C "$worktree" -c user.email=fmtest@example.invalid -c user.name=fmtest \
+    commit -q -m feature
+  git -C "$project" -c user.email=fmtest@example.invalid -c user.name=fmtest \
+    merge -q --no-ff fm/ship -m 'merge local ship'
+  printf 'done: landed locally\n' > "$state/ship.status"
+  fm_write_meta "$state/ship.meta" \
+    'kind=ship' \
+    'backend=tmux' \
+    'window=firstmate:fm-ship' \
+    "project=$project" \
+    "worktree=$worktree" \
+    'branch=fm/ship' \
+    'mode=local-only' \
+    'spawn_gen=heartbeat-test-ship'
+  sig=$(seen_sig "$state/ship.status"); printf '%s' "$sig" > "$state/.seen-ship_status"
+  mark_heartbeat_surfaced "$state" "$state/ship.status"
+  windows="$dir/windows"; printf 'firstmate:fm-ship\n' > "$windows"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOWS_FILE="$windows" FM_HOME="$dir" \
+    FM_DATA_OVERRIDE="$dir/data" FM_CONFIG_OVERRIDE="$dir/config" FM_STATE_OVERRIDE="$state" \
+    FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || { reap "$pid"; fail "watcher exited while closing a local-main ship: $(cat "$out")"; }
+  i=0
+  while [ "$i" -lt 200 ] && [ -e "$state/ship.meta" ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ ! -e "$state/ship.meta" ] || { reap "$pid"; fail "heartbeat did not tear down the local-main ship"; }
+  [ ! -e "$state/ship.status" ] || { reap "$pid"; fail "local-main ship status survived automatic teardown"; }
+  reap "$pid"
+  pass "a heartbeat tears down a ship already merged into local main"
 }
 
 test_heartbeat_surfaces_one_auto_close_refusal() {
@@ -7094,7 +7217,9 @@ test_heartbeat_no_change_absorbed
 test_heartbeat_backstop_surfaces_unsurfaced_status
 test_heartbeat_backstop_surfaces_a_masked_status
 test_heartbeat_auto_closes_a_finished_scout
-test_heartbeat_leaves_an_unlanded_done_ship
+test_heartbeat_surfaces_an_unlanded_done_ship_refusal
+test_heartbeat_auto_closes_a_squash_merged_ship
+test_heartbeat_auto_closes_a_local_main_ship
 test_heartbeat_surfaces_one_auto_close_refusal
 test_beacon_stays_fresh_while_absorbing
 test_afk_signal_records_heartbeat_endpoint
