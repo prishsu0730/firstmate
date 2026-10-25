@@ -11,6 +11,7 @@ In this document, an arm is one run of `bin/fm-watch-arm.sh`, which starts a wat
 | --- | --- |
 | Which component re-arms the watcher on each harness | [Ownership](#ownership) |
 | What happens between an actionable close and the wake reaching the model | [Actionable wake ordering](#actionable-wake-ordering) |
+| How finished task records leave the active fleet | [Heartbeat cleanup](#heartbeat-cleanup) |
 | How a watcher-downtime episode is announced and retired | [Recovery episode acknowledgement](#recovery-episode-acknowledgement) |
 | How each actor consumes the wake queue | [Per-actor acknowledgement](#per-actor-acknowledgement) |
 | What `bin/fm-watch-arm.sh` guarantees about each cycle | [Arm-layer cycle contract](#arm-layer-cycle-contract) |
@@ -117,6 +118,14 @@ The beacon is `state/.last-watcher-beat`, which only the watcher process touches
 - After a successful notice, later Stop cycles exit 2 without repeating it until the turn-end guard consumes the attended fail-open.
 
 The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
+
+## Heartbeat cleanup
+
+On each scheduled heartbeat, the watcher attempts ordinary cleanup for every non-secondmate task whose final status line starts with a `done` declaration.
+It delegates every attempt to `bin/fm-teardown.sh`, so the teardown's landed-work, completion, and safety checks remain the only authority for removing a task record or returning its worktree.
+The watcher never forces that cleanup.
+When teardown refuses, it preserves the task and emits one actionable check wake naming the record, rather than leaving a finished-looking task silently in flight.
+Secondmate homes remain outside this automatic cleanup path.
 
 ### Supervision host
 
@@ -474,6 +483,7 @@ They also prove that a legacy or handoff-phase watcher marker from an absent rep
 `tests/fm-watch-triage.test.sh` proves TERM stops a watcher blocked inside a poll's pane capture and still releases its lock and records an acknowledgeable stop.
 It also exercises a single TERM with a live foreign downtime-marker lock holder, retained stale singleton and subsequent arm-style recovery, including decimal `08` and zero `00` cleanup bounds.
 It checks that a newly appended keyed decision is classified without rereading earlier status bytes, so signal handling can return to the watcher's beacon refresh even when the status history is long.
+Its heartbeat cases prove guarded cleanup of a completed scout plus squash-merged and local-main ships, while an unlanded ship or another teardown refusal remains recorded and produces an actionable check wake.
 `tests/fm-wake-queue.test.sh` proves TERM likewise stops a watcher blocked in the drain-ring idle check's pane capture.
 
 `tests/fm-watcher-lock.test.sh` covers:
