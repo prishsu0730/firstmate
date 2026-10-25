@@ -1952,6 +1952,9 @@ test_worker_launch_delivers_role_scope() {
       content=$(cat "$brief")
       content=${content//'{TASK}'/brief for $id}
       content=${content//'{FIRSTMATE_SPEC}'/Exercise the spawn behavior under test.}
+      content=${content//'{BLAST_RADIUS}'/'LOCAL; fixture launch only; targeted screen check.'}
+      content=${content//'{RISK_TIERS}'/'Code review Low and execution Low; fixture-only launch with direct evidence.'}
+      content=${content//'{REVIEW_TIER}'/'No Greptile; no-mistakes only.'}
       printf '%s\n' "$content" > "$brief"
     fi
     cp "$HOME_DIR/data/$id/brief.md" "$CASE_DIR/brief-before"
