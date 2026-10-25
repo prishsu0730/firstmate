@@ -2,13 +2,15 @@
 # Scaffold a crewmate brief or persistent secondmate charter at
 # data/<task-id>/brief.md under the active firstmate home.
 # For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
-# filled in. Ship and scout `# Task` sections have two subsections Firstmate
+# filled in. Ship and scout `# Task` sections have three subsections Firstmate
 # fills before dispatch: `{TASK}` under `## Captain's intent` (the captain's
 # own ask plus the context needed to read it, including the substance of any
 # report, decision, or PR the ask refers to, without added speaker labels or
 # direct address) and `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
-# intent). bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
+# intent), plus `## Risk and review`, whose three placeholders record the
+# task's blast radius, risk tiers, and review tier. bin/fm-dod-lib.sh owns the
+# no-mistakes `--intent` contract the first two subsections
 # subsections feed; bin/fm-spawn.sh refuses leftover placeholders and a
 # `## Captain's intent` line opening with a Captain label or address. Secondmate
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
@@ -34,7 +36,8 @@
 #   Set FM_SECONDMATE_SCOPE='<scope>' to write a routing scope distinct from the charter text.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/fm-herdr-lab.sh.
-#   The flag must be explicit because {TASK} and {FIRSTMATE_SPEC} are filled
+#   The flag must be explicit because {TASK}, {FIRSTMATE_SPEC}, and the Risk
+#   and review placeholders are filled
 #   after scaffolding and the caller-supplied repo string cannot reliably
 #   identify this repo. Briefs made without it carry a loud declaration so an
 #   omitted contract cannot be silent.
@@ -634,6 +637,19 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 
 ## Firstmate spec
 {FIRSTMATE_SPEC}
+
+## Risk and review
+Blast radius: {BLAST_RADIUS}
+Risk tiers: {RISK_TIERS}
+Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)
+
+Before dispatch, classify every implementation change as LOCAL, COMPONENT, FLOW, or SYSTEM; name affected shared components, styles, state, assets, or routes; and match verification: LOCAL targeted screen check, COMPONENT every known usage, FLOW the end-to-end flow, SYSTEM full first-use regression.
+Set code review risk and execution risk independently as Low, Medium, High, or Critical, with a one-line reason covering impact, blast radius, reversibility, evidence, and permissions.
+Use one review depth per PR by consequence: No Greptile (LOW) no-mistakes only; Base (MEDIUM) one fresh reviewer; Plus (HIGH) two independent passes then synthesis; Apex (CRITICAL) four specialist passes then synthesis; never stack depths.
+Higher review tiers spend more review effort; they are not a score or merge authority.
+Triage every review finding as exactly one of: original requirement; later approved addition; regression caused by this work; unrelated improvement with a named follow-up; or an existing safety, privacy, or data-loss issue.
+Only regressions and unmet agreed requirements block delivery.
+Every finding carries severity, file:line, reproduction, consequence, fix, and regression test.
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
@@ -727,7 +743,7 @@ When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\`
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
 append_brief_include
-echo "scaffolded: $BRIEF (scout; replace {TASK} and {FIRSTMATE_SPEC})"
+echo "scaffolded: $BRIEF (scout; fill {TASK}, {FIRSTMATE_SPEC}, and Risk and review placeholders)"
 exit 0
 fi
 
@@ -850,7 +866,7 @@ $DOD
 EOF
 append_brief_include
 if [ "$FORGE" = none ]; then
-  echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE; fill {TASK}, {FIRSTMATE_SPEC}, and Risk and review placeholders)"
 else
-  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE shape=$SHAPE; replace {TASK} and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE shape=$SHAPE; fill {TASK}, {FIRSTMATE_SPEC}, and Risk and review placeholders)"
 fi

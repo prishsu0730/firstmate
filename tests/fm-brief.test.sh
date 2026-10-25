@@ -213,6 +213,14 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
     assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
+    assert_grep "## Risk and review" "$brief" "$id: brief missing Risk and review subsection"
+    assert_grep "{BLAST_RADIUS}" "$brief" "$id: brief missing blast-radius placeholder"
+    assert_grep "{RISK_TIERS}" "$brief" "$id: brief missing risk-tiers placeholder"
+    assert_grep "{REVIEW_TIER}" "$brief" "$id: brief missing review-tier placeholder"
+    assert_grep "No Greptile (LOW) no-mistakes only; Base (MEDIUM) one fresh reviewer; Plus (HIGH) two independent passes then synthesis; Apex (CRITICAL) four specialist passes then synthesis; never stack depths." "$brief" "$id: brief missing the review-depth ladder"
+    assert_grep "Higher review tiers spend more review effort; they are not a score or merge authority." "$brief" "$id: brief missing the review-tier authority boundary"
+    assert_grep "original requirement; later approved addition; regression caused by this work; unrelated improvement with a named follow-up; or an existing safety, privacy, or data-loss issue." "$brief" "$id: brief missing the five-class finding triage rule"
+    assert_grep "Only regressions and unmet agreed requirements block delivery." "$brief" "$id: brief missing finding-triage blocking rule"
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_live_machine_safety_contract "$brief"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
@@ -1028,8 +1036,13 @@ test_scout_and_secondmate_scaffold() {
   assert_grep "report.md" "$brief" "scout brief must point at the report deliverable"
   assert_grep "## Captain's intent" "$brief" "scout brief missing Captain's intent subsection"
   assert_grep "## Firstmate spec" "$brief" "scout brief missing Firstmate spec subsection"
+  assert_grep "## Risk and review" "$brief" "scout brief missing Risk and review subsection"
   assert_grep "{FIRSTMATE_SPEC}" "$brief" "scout brief missing the spec placeholder"
   assert_live_machine_safety_contract "$brief"
+  assert_grep "{BLAST_RADIUS}" "$brief" "scout brief missing the blast-radius placeholder"
+  assert_grep "{RISK_TIERS}" "$brief" "scout brief missing the risk-tiers placeholder"
+  assert_grep "{REVIEW_TIER}" "$brief" "scout brief missing the review-tier placeholder"
+  assert_grep "Higher review tiers spend more review effort; they are not a score or merge authority." "$brief" "scout brief missing the review-tier authority boundary"
 
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-sm-q6 --secondmate alpha >/dev/null 2>&1 \
