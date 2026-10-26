@@ -53,6 +53,7 @@ expect_refused "TMUX_TMPDIR empty" TMUX_TMPDIR= -- kill-server
 expect_refused "TMUX_TMPDIR names a missing directory" TMUX_TMPDIR="$TMP_ROOT/gone" -- kill-server
 expect_refused "-L default with no private dir" -- -L default kill-server
 expect_refused "-S names the live socket" -- -S "/tmp/tmux-$(id -u)/default" kill-server
+expect_refused "attached -S names the live socket despite a private directory" TMUX_TMPDIR="$TMP_ROOT/private" -- "-S/tmp/tmux-$(id -u)/default" kill-server
 expect_refused "TMUX points at the live socket" TMUX="/tmp/tmux-$(id -u)/default,1,0" -- display-message
 
 expect_passed "TMUX_TMPDIR names a real directory" TMUX_TMPDIR="$TMP_ROOT/private" -- kill-server

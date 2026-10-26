@@ -24,7 +24,9 @@ args=("$@")
 i=0
 while [ "$i" -lt "$#" ]; do
   case "${args[i]}" in
+    -L?*) label=${args[i]#-L}; i=$((i + 1)) ;;
     -L) label=${args[i+1]:-}; i=$((i + 2)) ;;
+    -S?*) sock=${args[i]#-S}; i=$((i + 1)) ;;
     -S) sock=${args[i+1]:-}; i=$((i + 2)) ;;
     -c|-f|-T) i=$((i + 2)) ;;
     -*) i=$((i + 1)) ;;

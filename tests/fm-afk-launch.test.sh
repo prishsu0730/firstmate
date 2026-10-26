@@ -42,6 +42,7 @@ export FM_CONFIG_OVERRIDE="$OFF_CONFIG"
 # created on, and killed from, the operator's default server (tests/tmux-guard/tmux
 # refuses that). The path stays short: a unix socket path is capped near 104 bytes.
 FM_TEST_TMUX_DIR=$(mktemp -d /tmp/fmt.XXXXXX)
+unset TMUX
 export TMUX_TMPDIR="$FM_TEST_TMUX_DIR"
 
 FAILED=0
