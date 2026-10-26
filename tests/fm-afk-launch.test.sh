@@ -38,6 +38,12 @@ export CLAUDECODE=1 FM_TEST_HARNESS=claude FM_TEST_SEAM=1
 OFF_CONFIG=$(mktemp -d "${TMPDIR:-/tmp}/fm-afk-off-config.XXXXXX")
 : > "$OFF_CONFIG/supervision-host-off"
 export FM_CONFIG_OVERRIDE="$OFF_CONFIG"
+# The real tmux sessions below live on a private server. Without this they would be
+# created on, and killed from, the operator's default server (tests/tmux-guard/tmux
+# refuses that). The path stays short: a unix socket path is capped near 104 bytes.
+FM_TEST_TMUX_DIR=$(mktemp -d /tmp/fmt.XXXXXX)
+unset TMUX
+export TMUX_TMPDIR="$FM_TEST_TMUX_DIR"
 
 FAILED=0
 fail() { printf 'not ok - %s\n' "$1" >&2; FAILED=1; }
@@ -54,6 +60,8 @@ GLOBAL_CLEANUP() {
   for s in $TRACK_TMUX_SESSIONS; do
     tmux kill-session -t "$s" 2>/dev/null || true
   done
+  tmux -S "$FM_TEST_TMUX_DIR/tmux-$(id -u)/default" kill-server 2>/dev/null || true
+  rm -rf "$FM_TEST_TMUX_DIR" 2>/dev/null || true
 }
 trap GLOBAL_CLEANUP EXIT
 

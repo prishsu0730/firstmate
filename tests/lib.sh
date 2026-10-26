@@ -165,6 +165,17 @@ FM_TEST_OWNER_IDENTITY=$(fm_test_pid_identity "$$") || {
   return 1
 }
 
+# Keep every tmux call off the operator's live default server. tmux falls back to
+# /tmp/tmux-<uid>/default when TMUX_TMPDIR is unset, empty, or names a directory
+# that is gone, so a test that cleans up through a removed TMUX_TMPDIR would kill
+# the whole fleet; tests/tmux-guard/tmux refuses such a call and passes every
+# other one to the real tmux. Skipped without a real tmux so tmux-gated suites
+# still skip, and for FM_TEST_ALLOW_LIVE_TMUX.
+if [ -z "${FM_TEST_ALLOW_LIVE_TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+  PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmux-guard:$PATH"
+  export PATH
+fi
+
 # --- process-event runner reaping -------------------------------------------
 #
 # A process-event runner is detached into its own process group and reparents to
