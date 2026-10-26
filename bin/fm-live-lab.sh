@@ -161,7 +161,9 @@ load_lab() {  # <root>: refuse anything up did not build, then load its record
 
 lab_tmux() {
   [ -n "${TMUX_DIR:-}" ] || return 1
-  env -u TMUX TMUX_TMPDIR="$TMUX_DIR" tmux "$@"
+  # -S, not TMUX_TMPDIR: tmux falls back to /tmp (the live default server) when
+  # the directory is gone, which is exactly the state down's kill-server can meet.
+  env -u TMUX tmux -S "$TMUX_DIR/tmux-$(id -u)/default" "$@"
 }
 
 # The empty-environment base every lab process starts from.

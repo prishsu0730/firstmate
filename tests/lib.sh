@@ -68,6 +68,17 @@ unset FM_TASK_ID
 # against an ambient override sets TASKS_AXI_FILE itself.
 unset TASKS_AXI_FILE TASKS_AXI_BACKEND
 
+# Keep every tmux call off the operator's live default server. tmux falls back to
+# /tmp/tmux-<uid>/default when TMUX_TMPDIR is unset, empty, or names a directory
+# that is gone, so a test that cleans up through a removed TMUX_TMPDIR would kill
+# the whole fleet; tests/tmux-guard/tmux refuses such a call and passes every
+# other one to the real tmux. Skipped without a real tmux so tmux-gated suites
+# still skip, and for FM_TEST_ALLOW_LIVE_TMUX.
+if [ -z "${FM_TEST_ALLOW_LIVE_TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+  PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmux-guard:$PATH"
+  export PATH
+fi
+
 # Write the tracked default backlog configuration into a fixture home. Never copy
 # "$ROOT/.tasks.toml": an operator's primary checkout keeps a gitignored override
 # there (for example a beads backend at its live backlog), so a copy points the
