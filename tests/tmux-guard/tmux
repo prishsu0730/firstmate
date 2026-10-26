@@ -10,13 +10,33 @@
 # directory it created, or names its socket with -S/-L; set
 # FM_TEST_ALLOW_LIVE_TMUX=1 only to exercise the live server on purpose.
 set -u
+
+log_guard_diagnostic() {  # <event> <tmux args...>
+  local event=$1 caller command tmux_value tmpdir_value path_value record
+  shift
+  caller=$(ps -o args= -p "$PPID" 2>/dev/null || :)
+  printf -v command '%q ' tmux "$@"
+  tmux_value=${TMUX:-}
+  tmpdir_value=${TMUX_TMPDIR:-}
+  path_value=${PATH:-}
+  printf -v record \
+    'tmux-guard: event=%s\ntmux-guard: command=%s\ntmux-guard: caller_pid=%s caller_args=%q\ntmux-guard: TMUX=%q TMUX_TMPDIR=%q PATH=%q\n' \
+    "$event" "$command" "$PPID" "$caller" "$tmux_value" "$tmpdir_value" "$path_value"
+  printf '%s' "$record" >&2
+  printf '%s' "$record" >> "${TMPDIR:-/tmp}/tmux-guard-refusals.log" 2>/dev/null || :
+}
+
 self=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 rest=''
 IFS=: read -r -a parts <<< "$PATH"
 for p in "${parts[@]}"; do
   [ "$(cd "$p" 2>/dev/null && pwd -P)" = "$self" ] || rest="$rest:$p"
 done
-real=$(PATH=${rest#:} command -v tmux) || { echo "tmux-guard: no real tmux on PATH" >&2; exit 127; }
+if ! real=$(PATH=${rest#:} command -v tmux); then
+  log_guard_diagnostic 'real-tmux-not-found' "$@"
+  echo "tmux-guard: no real tmux on PATH" >&2
+  exit 127
+fi
 [ -z "${FM_TEST_ALLOW_LIVE_TMUX:-}" ] || exec "$real" "$@"
 
 uid=$(id -u) label='' sock='' have_cmd=0
@@ -48,6 +68,7 @@ fi
 canon=$( (cd -P "$(dirname "$path")" 2>/dev/null && pwd -P) || dirname "$path" )/$(basename "$path")
 live=$( (cd -P "/tmp/tmux-$uid" 2>/dev/null && pwd -P) || echo "/tmp/tmux-$uid" )/default
 if [ "$canon" = "$live" ]; then
+  log_guard_diagnostic 'refused-live-default-socket' "$@"
   echo "tmux-guard: refused 'tmux $*': it would reach the live default tmux server ($live)." >&2
   echo "tmux-guard: set TMUX_TMPDIR to a directory the test created, or name a private socket with -S/-L." >&2
   exit 1
