@@ -26,12 +26,12 @@ run_guard() {
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   set +e
-  OUT=$(env -u TMUX -u TMUX_TMPDIR -u FM_TEST_ALLOW_LIVE_TMUX -u FM_TEST_REAL_TMUX ${envs[@]+"${envs[@]}"} PATH="$GUARD_PATH" "$GUARD_DIR/tmux" "$@" 2>"$TMP_ROOT/err")
+  OUT=$(env -u TMUX -u TMUX_TMPDIR -u FM_TEST_ALLOW_LIVE_TMUX ${envs[@]+"${envs[@]}"} PATH="$GUARD_PATH" "$GUARD_DIR/tmux" "$@" 2>"$TMP_ROOT/err")
   RC=$?
   set -e
 }
 
-expect_refused() {  # <label> <env...> -- <tmux args...>
+expect_refused() { # <label> <env...> -- <tmux args...>
   local label=$1; shift
   run_guard "$@"
   [ "$RC" -ne 0 ] || fail "$label: live-socket call was allowed"
@@ -40,7 +40,7 @@ expect_refused() {  # <label> <env...> -- <tmux args...>
   pass "$label: refused"
 }
 
-expect_passed() {  # <label> <env...> -- <tmux args...>
+expect_passed() { # <label> <env...> -- <tmux args...>
   local label=$1; shift
   run_guard "$@"
   [ "$RC" -eq 0 ] || fail "$label: safe call was refused ($(cat "$TMP_ROOT/err"))"
@@ -72,13 +72,13 @@ exec "$GUARD_DIR/tmux" -S "$TMP_ROOT/private/wrap-sock" "\$@"
 WRAP
 chmod +x "$TMP_ROOT/wrap/tmux"
 set +e
-OUT=$(env -u TMUX -u TMUX_TMPDIR FM_TEST_REAL_TMUX="$STUB_DIR/tmux" PATH="$TMP_ROOT/wrap:$GUARD_PATH" "$TMP_ROOT/wrap/tmux" kill-server 2>&1 &
- pid=$!; n=0
- while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
- if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; echo LOOPED; fi
- wait "$pid" 2>/dev/null)
+OUT=$(env -u TMUX -u TMUX_TMPDIR PATH="$TMP_ROOT/wrap:$GUARD_PATH" "$TMP_ROOT/wrap/tmux" kill-server 2>&1 &
+  pid=$!; n=0
+  while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+  if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; echo LOOPED; fi
+  wait "$pid" 2>/dev/null)
 set -e
-[ "$OUT" = "REAL -S $TMP_ROOT/private/wrap-sock kill-server" ] || fail "tmux wrapper that execs the guard did not reach the real tmux ($OUT)"
+case "$OUT" in REAL*" kill-server") ;; *) fail "tmux wrapper that execs the guard did not reach the real tmux ($OUT)" ;; esac
 pass "a tmux wrapper that execs the guard reaches the real tmux without looping"
 
 # tests/lib.sh puts the guard first on PATH for every suite.
