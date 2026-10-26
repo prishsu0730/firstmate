@@ -171,7 +171,12 @@ FM_TEST_OWNER_IDENTITY=$(fm_test_pid_identity "$$") || {
 # the whole fleet; tests/tmux-guard/tmux refuses such a call and passes every
 # other one to the real tmux. Skipped without a real tmux so tmux-gated suites
 # still skip, and for FM_TEST_ALLOW_LIVE_TMUX.
+# The guard runs the real tmux recorded here, never one found by scanning PATH:
+# a test's own `tmux` wrapper that execs the tmux it captured with `command -v`
+# would otherwise reach the guard again and exec itself forever.
 if [ -z "${FM_TEST_ALLOW_LIVE_TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
+  FM_TEST_REAL_TMUX=${FM_TEST_REAL_TMUX:-$(command -v tmux)}
+  export FM_TEST_REAL_TMUX
   PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/tmux-guard:$PATH"
   export PATH
 fi

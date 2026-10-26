@@ -15,16 +15,21 @@
 # `default` through symlinks.
 set -u
 me=${BASH_SOURCE[0]}
-real=''
-oldifs=$IFS
-IFS=:
-set -f
-for p in $PATH; do
-[ -n "$p" ] || p=.
-if [ -x "$p/tmux" ] && ! [ "$p/tmux" -ef "$me" ]; then real=$p/tmux; break; fi
-done
-set +f
-IFS=$oldifs
+# tests/lib.sh records the real tmux before it puts this guard on PATH; scanning
+# PATH instead could find a test's own `tmux` wrapper that execs this guard.
+real=${FM_TEST_REAL_TMUX:-}
+if [ ! -x "$real" ] || [ "$real" -ef "$me" ]; then
+ real=''
+ oldifs=$IFS
+ IFS=:
+ set -f
+ for p in $PATH; do
+ [ -n "$p" ] || p=.
+ if [ -x "$p/tmux" ] && ! [ "$p/tmux" -ef "$me" ]; then real=$p/tmux; break; fi
+ done
+ set +f
+ IFS=$oldifs
+fi
 [ -n "$real" ] || { echo "tmux-guard: no real tmux on PATH" >&2; exit 127; }
 [ -z "${FM_TEST_ALLOW_LIVE_TMUX:-}" ] || exec "$real" "$@"
 
@@ -32,39 +37,39 @@ uid=$UID label='' sock='' have_cmd=0
 args=("$@")
 i=0
 while [ "$i" -lt "$#" ]; do
-case "${args[i]}" in
--L?*) label=${args[i]#-L}; i=$((i + 1)) ;;
--L) label=${args[i+1]:-}; i=$((i + 2)) ;;
--S?*) sock=${args[i]#-S}; i=$((i + 1)) ;;
--S) sock=${args[i+1]:-}; i=$((i + 2)) ;;
--c|-f|-T) i=$((i + 2)) ;;
--*) i=$((i + 1)) ;;
-*) have_cmd=1; break ;;
-esac
+ case "${args[i]}" in
+ -L?*) label=${args[i]#-L}; i=$((i + 1)) ;;
+ -L) label=${args[i+1]:-}; i=$((i + 2)) ;;
+ -S?*) sock=${args[i]#-S}; i=$((i + 1)) ;;
+ -S) sock=${args[i+1]:-}; i=$((i + 2)) ;;
+ -c|-f|-T) i=$((i + 2)) ;;
+ -*) i=$((i + 1)) ;;
+ *) have_cmd=1; break ;;
+ esac
 done
 case " $* " in *" -V "*) [ "$have_cmd" = 1 ] || exec "$real" "$@" ;; esac
 
 if [ -n "$sock" ]; then
-path=$sock
+ path=$sock
 else
-base=/tmp
-if [ -n "${TMUX_TMPDIR:-}" ] && [ -d "$TMUX_TMPDIR" ]; then base=$TMUX_TMPDIR; fi
-if [ -n "$label" ]; then path=$base/tmux-$uid/$label
-elif [ -n "${TMUX:-}" ]; then path=${TMUX%%,*}
-else path=$base/tmux-$uid/default
-fi
+ base=/tmp
+ if [ -n "${TMUX_TMPDIR:-}" ] && [ -d "$TMUX_TMPDIR" ]; then base=$TMUX_TMPDIR; fi
+ if [ -n "$label" ]; then path=$base/tmux-$uid/$label
+ elif [ -n "${TMUX:-}" ]; then path=${TMUX%%,*}
+ else path=$base/tmux-$uid/default
+ fi
 fi
 # Only a socket named `default` can be the live one, so resolve symlinks for
 # those alone; the literal /private/tmp alias of /tmp (macOS) needs no fork.
 if [ "${path##*/}" = default ]; then
-dir=${path%/*}
-[ "$dir" != "$path" ] || dir=.
-canon=$( (cd -P "$dir" 2>/dev/null && pwd -P) || echo "$dir" )/default
-case $canon in /private/tmp/*) canon=${canon#/private} ;; esac
-if [ "$canon" = "/tmp/tmux-$uid/default" ]; then
-echo "tmux-guard: refused 'tmux $*': it would reach the live default tmux server (/tmp/tmux-$uid/default)." >&2
-echo "tmux-guard: set TMUX_TMPDIR to a directory the test created, or name a private socket with -S/-L." >&2
-exit 1
-fi
+ dir=${path%/*}
+ [ "$dir" != "$path" ] || dir=.
+ canon=$( (cd -P "$dir" 2>/dev/null && pwd -P) || echo "$dir" )/default
+ case $canon in /private/tmp/*) canon=${canon#/private} ;; esac
+ if [ "$canon" = "/tmp/tmux-$uid/default" ]; then
+ echo "tmux-guard: refused 'tmux $*': it would reach the live default tmux server (/tmp/tmux-$uid/default)." >&2
+ echo "tmux-guard: set TMUX_TMPDIR to a directory the test created, or name a private socket with -S/-L." >&2
+ exit 1
+ fi
 fi
 exec "$real" "$@"

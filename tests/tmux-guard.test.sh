@@ -26,7 +26,7 @@ run_guard() {
   while [ "$1" != -- ]; do envs+=("$1"); shift; done
   shift
   set +e
-  OUT=$(env -u TMUX -u TMUX_TMPDIR -u FM_TEST_ALLOW_LIVE_TMUX ${envs[@]+"${envs[@]}"} PATH="$GUARD_PATH" "$GUARD_DIR/tmux" "$@" 2>"$TMP_ROOT/err")
+  OUT=$(env -u TMUX -u TMUX_TMPDIR -u FM_TEST_ALLOW_LIVE_TMUX -u FM_TEST_REAL_TMUX ${envs[@]+"${envs[@]}"} PATH="$GUARD_PATH" "$GUARD_DIR/tmux" "$@" 2>"$TMP_ROOT/err")
   RC=$?
   set -e
 }
@@ -63,6 +63,23 @@ expect_passed "-V needs no server" -- -V
 run_guard FM_TEST_ALLOW_LIVE_TMUX=1 -- kill-server
 { [ "$RC" -eq 0 ] && [ "$OUT" = "REAL kill-server" ]; } || fail "FM_TEST_ALLOW_LIVE_TMUX did not opt out"
 pass "FM_TEST_ALLOW_LIVE_TMUX opts out"
+
+# A test's own tmux wrapper that execs the guard must reach the real tmux, not loop.
+mkdir -p "$TMP_ROOT/wrap"
+cat > "$TMP_ROOT/wrap/tmux" <<WRAP
+#!/usr/bin/env bash
+exec "$GUARD_DIR/tmux" -S "$TMP_ROOT/private/wrap-sock" "\$@"
+WRAP
+chmod +x "$TMP_ROOT/wrap/tmux"
+set +e
+OUT=$(env -u TMUX -u TMUX_TMPDIR FM_TEST_REAL_TMUX="$STUB_DIR/tmux" PATH="$TMP_ROOT/wrap:$GUARD_PATH" "$TMP_ROOT/wrap/tmux" kill-server 2>&1 &
+ pid=$!; n=0
+ while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+ if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; echo LOOPED; fi
+ wait "$pid" 2>/dev/null)
+set -e
+[ "$OUT" = "REAL -S $TMP_ROOT/private/wrap-sock kill-server" ] || fail "tmux wrapper that execs the guard did not reach the real tmux ($OUT)"
+pass "a tmux wrapper that execs the guard reaches the real tmux without looping"
 
 # tests/lib.sh puts the guard first on PATH for every suite.
 case "$(PATH="$STUB_DIR:/usr/bin:/bin" bash -c ". '$ROOT/tests/lib.sh'; printf %s \"\$PATH\"")" in
