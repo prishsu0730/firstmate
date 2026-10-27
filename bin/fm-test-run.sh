@@ -2470,18 +2470,27 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
       # Expansion is intentionally deferred to the child bash passed to -c.
       # shellcheck disable=SC2016
-      fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash -c \
+      fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" env \
+        -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+        -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND bash -c \
         'bash "$1" 2>&1 | tee "$2"; exit "${PIPESTATUS[0]}"' _ "$script" "$out"
       rc=$?
     else
-      bash "$script" 2>&1 | tee "$out"
+      env -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+        -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND \
+        bash "$script" 2>&1 | tee "$out"
       rc=${PIPESTATUS[0]}
     fi
   elif [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
-    fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash "$script" >"$out" 2>&1
+    fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" env \
+      -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+      -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND \
+      bash "$script" >"$out" 2>&1
     rc=$?
   else
-    bash "$script" >"$out" 2>&1
+    env -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+      -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND \
+      bash "$script" >"$out" 2>&1
     rc=$?
   fi
   if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] && [ "$rc" -eq 124 ]; then
