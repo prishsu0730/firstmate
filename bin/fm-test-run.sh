@@ -119,6 +119,11 @@
 # Every selected script runs isolated from the host's global and system Git
 # configuration, including one that sources no test helper of its own;
 # tests/git-config-helpers.sh owns that contract and its limits.
+# Before each selected script starts, the runner also unsets FM_HOME,
+# FM_STATE_OVERRIDE, FM_DATA_OVERRIDE, FM_ROOT_OVERRIDE, FM_PROJECTS_OVERRIDE,
+# FM_CONFIG_OVERRIDE, and FM_BACKEND so fixtures cannot inherit the operator's
+# home paths or backend selection. Direct invocations bypass this cleanup;
+# tests/lib.sh owns the inherited-path refusal for suites that source it.
 #
 # Family labels, the changed-file map, and production portable-shard composition
 # live in this script only (one owner). The proven-isolated candidate set remains
