@@ -2032,6 +2032,11 @@ test_tmux_identity_refuses_when_the_window_is_alive_or_unreadable() {
   printf '%s\n' "fm-$id" > "$dir/fake/windows-sock"
   assert_tmux_missing_refuses "$dir" "$id" "window still alive on the recorded server"
 
+  : > "$dir/fake/windows-sock"
+  assert_tmux_missing_refuses "$dir" "$id" "window moved on the recorded server"
+  : > "$dir/fake/session-missing"
+  assert_tmux_missing_refuses "$dir" "$id" "session renamed on the recorded server"
+
   dir=$(new_case tmux-unreadable rl66); id=rl66
   add_ship_task "$dir" "$id" claude
   add_tmux_identity "$dir" "$id" /tmp/fm-test-tmux/default 100 1000

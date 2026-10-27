@@ -88,8 +88,8 @@
 #   still read the recorded pane as gone once that session's server is running
 #   again, and on TMUX when the record carries the endpoint's server identity
 #   (tmux_socket, tmux_server_pid, tmux_server_start, written at spawn): the
-#   recorded socket must have no server, a restarted one, or the exact server
-#   must lack the window. A tmux record without that identity refuses, because
+#   recorded socket must have no server or a restarted one.
+#   A tmux record without that identity refuses, because
 #   no read here can tell a destroyed window from one on a tmux server this
 #   process cannot address. A rebound tmux window is created on the server this
 #   process addresses and the record re-records that server. An endpoint that turns out
@@ -336,7 +336,9 @@
 #   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
 #   task teardown removes only the current home's launch namespace.
 # Launch environment (config/launch-env-allowlist):
-#   Absent means unchanged ambient inheritance. A present readable regular file
+#   Absent means ambient inheritance subject to explicit launch assignments and
+#   clearing (see docs/configuration.md's worker launch environment contract).
+#   A present readable regular file
 #   opts every launch (ship, scout, secondmate, raw command, and relaunch) into
 #   /usr/bin/env -i followed by /bin/sh -c of the existing launch command.
 #   Each line is one POSIX environment name, never a value or shell expression;
@@ -1674,7 +1676,7 @@ if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
 spawn_refuse_if_away_spend_cap() {
-  local cap live meta
+  local cap live meta task_id verdict kind remote_host
   [ "$RELAUNCH" -ne 1 ] || return 0
   [ "$KIND" != secondmate ] || return 0
   [ -f "$STATE/.afk-contract" ] || return 0
@@ -1687,20 +1689,33 @@ spawn_refuse_if_away_spend_cap() {
   live=0
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
-    [ "$(grep '^kind=' "$meta" 2>/dev/null | tail -1 | cut -d= -f2-)" != secondmate ] || continue
+    kind=$(fm_meta_get "$meta" kind)
+    [ "$kind" != secondmate ] || continue
+    task_id=${meta##*/}
+    task_id=${task_id%.meta}
+    if ! fm_backend_validate_task_endpoint "$meta" "$task_id" >/dev/null 2>&1; then
+      # An endpoint that cannot be validated has unknown liveness, which counts.
+      live=$((live + 1))
+      continue
+    fi
+    verdict=unknown
+    remote_host=$(fm_meta_get "$meta" remote_host)
+    if [ -z "$remote_host" ]; then
+      verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
+    fi
+    case "$verdict" in dead|missing) continue ;; esac
     live=$((live + 1))
   done
   if [ "$live" -ge "$cap" ]; then
-    echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
+    echo "error: spawn refused - the away-posture record caps concurrent workers at $cap and $live ordinary task(s) are live or have unknown liveness in this home; task $ID stays queued for the captain's return or for a worker to finish (spend cap: bin/fm-afk-contract.sh)" >&2
     exit 1
   fi
 }
 # Spend cap (bin/fm-afk-contract.sh's spend_max_concurrent_workers): while an
 # away record exists (never a quiet-mode one, whose captain is present and
 # spends as attended: bin/fm-afk-contract.sh mode), a fresh ordinary spawn
-# refuses for BOTH actors once this home already holds that many ordinary task
-# records, counted the same way the return brief counts tasks live at return
-# (every state/*.meta whose kind is not secondmate). A relaunch replaces a
+# refuses for BOTH actors once this home holds that many ordinary workers
+# whose endpoints are live or whose liveness cannot be proven absent. A relaunch replaces a
 # worker that already counts, and a secondmate is a persistent home rather than
 # spend, so both are exempt. Checked before any endpoint, worktree, or record
 # exists, so a refusal costs nothing to unwind; rechecked after the task-set
@@ -1855,6 +1870,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
   fm_backend_validate_spawn "$BACKEND" || exit 1
   fm_backend_source "$BACKEND" || exit 1
+  [ "$BACKEND" != tmux ] || fm_backend_tmux_clear_stale_client_env
   # A relaunch must PROVE the previous agent is gone before it launches another
   # one into the same endpoint, and only tmux and herdr have a recovery-grade
   # classifier that can (bin/fm-control-lib.sh owns that capability table).
@@ -1882,8 +1898,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           pane itself did not survive.
   #   tmux  - when the record carries the endpoint's server identity (written
   #           at spawn), the recorded socket itself is asked (-S): no server, a
-  #           restarted server, or the exact server without the window proves
-  #           it gone. A record without that identity REFUSES, with the reason
+  #           restarted server proves it gone. A record without that identity REFUSES, with the reason
   #           stated, because a server-wide inventory describes only the server
   #           this process addresses and cannot tell "gone" from "on a server
   #           I cannot see".
@@ -3215,6 +3230,10 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
     exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
   fi
 fi
+if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" = tmux ]; then
+  fm_backend_tmux_clear_stale_client_env
+fi
+
 [ -f "$BRIEF" ] || {
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
@@ -4571,6 +4590,20 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Written under the Treehouse project lock held from before slot allocation
   # through metadata publication, so no other spawn or return sees a half-claim.
   if fm_treehouse_pool_slot "$PROJ_ABS" "$WT"; then
+    # A slot another task record still names, whose task is not proven finished,
+    # may still hold that task's work: claiming it would leave two records on one
+    # copy and strand both teardowns. Treehouse offers no way to ask for a
+    # different slot, so refuse here, before the claim, leaving that record the
+    # slot's only owner. A record proven finished (see fm_task_record_finished)
+    # is a harmless leftover and the claim below replaces its claim.
+    if ! fm_treehouse_slot_blocking_records "$WT" "$ID" "$STATE"; then
+      echo "error: could not check which task records name Treehouse pool slot $WT ($FM_LOCAL_FIRSTMATE_ERROR); refusing to launch a worker onto a slot that may belong to another task; inspect window $T" >&2
+      exit 1
+    fi
+    if [ "${#FM_SLOT_BLOCKING_RECORDS[@]}" -gt 0 ]; then
+      echo "error: Treehouse pool slot $WT is still named by unfinished task record ${FM_SLOT_BLOCKING_RECORDS[0]%% *} (${FM_SLOT_BLOCKING_RECORDS[0]}); refusing to launch task $ID onto a slot another task's work may still live in. Finish or tear down that task (bin/fm-crew-state.sh ${FM_SLOT_BLOCKING_RECORDS[0]%% *}), then spawn again; inspect window $T" >&2
+      exit 1
+    fi
     if ! fm_treehouse_slot_owner_claim "$WT" "$ID" "$FM_HOME"; then
       echo "error: could not claim Treehouse pool slot $WT for task $ID; refusing to launch a worker whose slot cannot later be proved to be its own; inspect window $T" >&2
       exit 1
@@ -5462,7 +5495,23 @@ if [ "$KIND" = secondmate ]; then
   # not enable them across the launch boundary (bin/fm-trace-context-lib.sh header).
   # Reuse the single frozen decision from the carrier resolution above so the
   # injected carrier and this on/off snapshot are guaranteed to agree.
-  LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
+  # A secondmate pane can inherit another run's state from a long-lived terminal
+  # daemon. FM_HOME and the five relocation overrides are established explicitly;
+  # the names below are
+  # per-run state or secondary home pointers that nothing here re-establishes,
+  # so they are removed from the agent's environment instead of inherited.
+  # FM_TASK_ID is included because only ship and scout panes receive it, so an
+  # inherited one is another task's marker and would make bin/fm-test-run.sh
+  # refuse this home's own primary checkout.
+  sm_foreign_unset=
+  for sm_foreign_name in FM_PENDING_REPLY_DIR_OVERRIDE FM_SECONDMATE_PARENT_HOME \
+    FM_PROCEVENT_CLAIM_HOME FM_PROCEVENT_CLAIM_ROOT FM_PROCEVENT_CLAIM_STATE_ROOT \
+    FM_BOOTSTRAP_NETWORK FM_BOOTSTRAP_NETWORK_LOCK_PID FM_BOOTSTRAP_PARALLEL_DIR \
+    FM_SESSION_START_STAGE_FILE FM_SPAWN_NO_GUARD FM_TIMING_EPOCH_MS FM_TIMING_LOG \
+    FM_TASK_ID; do
+    sm_foreign_unset="$sm_foreign_unset -u $sm_foreign_name"
+  done
+  LAUNCH="env$sm_foreign_unset FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME=$sq_primary_home FM_HOME=$sq_home FM_TRACE_CONTEXT=$SPAWN_TRACE_EFFECTIVE FM_SUPERVISION_MODEL=$supervision_model $LAUNCH"
 fi
 # Pane-scoped override: git in this worker reads our commit-msg strip without
 # rewriting the project's core.hooksPath. GIT_CONFIG_* takes precedence over
@@ -5799,6 +5848,13 @@ if [ -n "$SPAWN_DEFERRED_SIGNAL" ]; then
 fi
 fm_lock_release "$SPAWN_META_LOCK"
 SPAWN_META_LOCK_HELD=0
+
+# A secondmate launched after a deliberate stop is running again, so the stop
+# marker must not keep the liveness probes skipping it.
+if [ "$KIND" = secondmate ]; then
+  rm -f "$STATE/.secondmate-stopped-$ID" \
+    || { echo "error: secondmate $ID launched but its stop marker $STATE/.secondmate-stopped-$ID could not be cleared" >&2; exit 1; }
+fi
 
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"

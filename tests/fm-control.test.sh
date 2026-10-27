@@ -878,7 +878,7 @@ test_tmux_socket_without_a_server_proves_the_endpoint_gone() {
   pass "fm-control exit: a recorded tmux socket with no server proves the endpoint gone"
 }
 
-test_same_tmux_server_without_the_window_proves_the_endpoint_gone() {
+test_same_tmux_server_without_the_window_stays_unproven() {
   local dir out rc
   dir=$(new_case window-absent)
   add_task "$dir" t1 claude
@@ -887,9 +887,10 @@ test_same_tmux_server_without_the_window_proves_the_endpoint_gone() {
   : > "$dir/fake/windows"
   : > "$dir/fake/windows-sock"
   out=$(run_control "$dir" t1 exit); rc=$?
-  expect_code 0 "$rc" "a window absent from the exact recorded server is gone"$'\n'"$out"
-  assert_contains "$out" "endpoint-gone t1" "exit should report the endpoint gone"
-  pass "fm-control exit: a window absent from the exact recorded tmux server proves the endpoint gone"
+  expect_code 1 "$rc" "a window may have moved on the recorded server"$'\n'"$out"
+  assert_not_contains "$out" "endpoint-gone" "exit must not claim the agent stopped"
+  [ -z "$(literals "$dir")" ] || fail "an unproven endpoint must receive nothing"
+  pass "fm-control exit: a missing window on a surviving server stays unproven"
 }
 
 test_same_tmux_server_with_the_window_is_not_gone() {
@@ -1357,7 +1358,7 @@ test_already_stopped_exit_is_idempotent
 test_missing_tmux_endpoint_refuses_rather_than_claiming_a_stop
 test_tmux_server_restart_proves_the_endpoint_gone
 test_tmux_socket_without_a_server_proves_the_endpoint_gone
-test_same_tmux_server_without_the_window_proves_the_endpoint_gone
+test_same_tmux_server_without_the_window_stays_unproven
 test_same_tmux_server_with_the_window_is_not_gone
 test_unreadable_tmux_socket_stays_unproven
 test_incomplete_tmux_identity_stays_unproven

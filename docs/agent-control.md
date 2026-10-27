@@ -114,7 +114,7 @@ An unreachable endpoint can still hold the live agent a rebind would duplicate, 
   So in that state `exit` - which otherwise reads as a read-only inspection - leaves an idle herdr server behind.
 - **tmux can, when the record names its server.** `list-windows -a` describes only the tmux server the *current process* addresses (its `TMUX_TMPDIR`/socket), so a different but running server would answer "not anywhere" about a window it was never able to see.
   Spawn therefore records the endpoint's server in the task record: `tmux_socket`, `tmux_server_pid`, and `tmux_server_start` (the server's own start time).
-  With all three present, the proof asks that exact socket (`tmux -S <socket>`) and calls the endpoint gone only when the socket no longer has a server, the server there has a different pid or start time (it was restarted), or that same server is up and the recorded window is absent from it.
+  With all three present, the proof asks that exact socket (`tmux -S <socket>`) and calls the endpoint gone only when the socket no longer has a server, or the server there has a different pid or start time (it was restarted).
   A window still present on the recorded server, an unreadable socket, a partial identity, and a record without the identity all stay unproven and refuse.
   A rebind creates the fresh window on the server this process addresses and re-records that server's identity.
 

@@ -191,10 +191,9 @@ fm_backend_tmux_server_identity() {
 # provably gone, judged against the EXACT tmux server a task was spawned on
 # (-S <socket>), never the server this process happens to address. Prints
 # "<verdict>\t<reason>" like fm_control_endpoint_absence_verdict, which owns the
-# vocabulary and calls this. `gone` only when one of three things is proven:
+# vocabulary and calls this. `gone` only when one of these is proven:
 #   - the recorded socket no longer has a server,
-#   - the server there has a different pid or start time (it was restarted), or
-#   - the same server is still up and its session or window is absent.
+#   - the server there has a different pid or start time (it was restarted).
 # Everything else - a malformed identity, an unreadable socket, any tmux error
 # that does not definitively say "no server" - is `unproven`.
 fm_backend_tmux_endpoint_absence_proof() {  # <target> <socket> <pid> <start>
@@ -224,18 +223,7 @@ fm_backend_tmux_endpoint_absence_proof() {  # <target> <socket> <pid> <start>
     printf 'gone\t'
     return 0
   fi
-  if out=$(LC_ALL=C tmux -S "$socket" list-windows -t "=$session" -F '#{window_name}' 2>&1); then
-    if printf '%s\n' "$out" | grep -qxF -- "$window"; then
-      printf 'unproven\tthe window is still present on the recorded tmux server'
-    else
-      printf 'gone\t'
-    fi
-    return 0
-  fi
-  case "$out" in
-    *"can't find session:"*) printf 'gone\t' ;;
-    *) printf 'unproven\tthe recorded tmux server could not list the session %s' "$session" ;;
-  esac
+  printf 'unproven\tthe recorded tmux server is still running'
 }
 
 # fm_backend_tmux_kill: remove one explicitly named task window.

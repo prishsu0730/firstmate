@@ -337,8 +337,8 @@ fm_control_backend_state_verified() {  # <backend>
 #     addresses, so without that identity a window absent from it may still be
 #     alive on another server, and a record without it stays `unproven`. With
 #     it, fm_backend_tmux_endpoint_absence_proof asks the recorded socket
-#     itself (-S): no server there, a restarted server, or the exact server
-#     without the window is `gone`; anything else is `unproven`.
+#     itself (-S): no server there or a restarted server is `gone`;
+#     anything else is `unproven`.
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
