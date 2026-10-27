@@ -92,6 +92,8 @@
 #   FM_TASK_INBOX_GRACE_SECS   default 90; delivery-attempt grace and spacing
 #   FM_TASK_INBOX_RING_MAX     default 3; delivery attempts before escalation
 #   FM_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before escalation
+#   FM_TASK_INBOX_START_ACK_SECS default 900; bounded window for a worker status
+#                               line or inbox acknowledgement after a steer
 
 _FM_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -106,6 +108,7 @@ FM_TASK_INBOX_SCHEMA='fm-task-inbox.v1'
 FM_TASK_INBOX_GRACE_DEFAULT=90
 FM_TASK_INBOX_RING_MAX_DEFAULT=3
 FM_TASK_INBOX_BUSY_MAX_DEFAULT=2
+FM_TASK_INBOX_START_ACK_DEFAULT=900
 FM_TASK_INBOX_LOCK_WAIT_DEFAULT=5
 
 fm_task_inbox_grace_secs() {
@@ -128,6 +131,15 @@ fm_task_inbox_busy_max() {
     m=$FM_TASK_INBOX_BUSY_MAX_DEFAULT
   fi
   printf '%s' "$m"
+}
+
+fm_task_inbox_start_ack_secs() {
+  local s=${FM_TASK_INBOX_START_ACK_SECS:-$FM_TASK_INBOX_START_ACK_DEFAULT}
+  case "$s" in ''|*[!0-9]*) s=$FM_TASK_INBOX_START_ACK_DEFAULT ;; esac
+  if [ "${#s}" -gt 9 ] || [ "$s" -eq 0 ]; then
+    s=$FM_TASK_INBOX_START_ACK_DEFAULT
+  fi
+  printf '%s' "$s"
 }
 
 # Persist before returning the new count, so a fresh watcher continues the same
@@ -416,13 +428,26 @@ fm_task_inbox_is_fire_and_forget() {  # <record-path>
   ' "$rec"
 }
 
-# Oldest escalation-tracked unhandled record, or fail when none is due.
+# A later status line is a worker's start acknowledgement for every earlier
+# unhandled steer. The inbox record remains durable until its normal ack.
+fm_task_inbox_status_acknowledges() {  # <state-dir> <task-id> <record-path>
+  local status record_mtime status_mtime
+  status="$1/$2.status"
+  [ -s "$status" ] || return 1
+  record_mtime=$(fm_path_mtime "$3") || return 1
+  status_mtime=$(fm_path_mtime "$status") || return 1
+  [ "$status_mtime" -ge "$record_mtime" ]
+}
+
+# Oldest escalation-tracked unhandled record without a later status line, or
+# fail when every record has a worker start acknowledgement.
 fm_task_inbox_oldest_unhandled() {  # <state-dir> <task-id>
   local dir best='' best_n=0 f n
   dir=$(fm_task_inbox_dir "$1" "$2")
   for f in "$dir"/*.msg; do
     [ -e "$f" ] || continue
     fm_task_inbox_is_fire_and_forget "$f" && continue
+    fm_task_inbox_status_acknowledges "$1" "$2" "$f" && continue
     n=$(fm_task_inbox_seq_of "${f##*/}") || continue
     if [ -z "$best" ] || [ "$n" -lt "$best_n" ]; then
       best=$f
@@ -460,7 +485,7 @@ fm_task_inbox_clear_retry() {  # <state-dir> <task-id> <record-path>
 # An empty inbox also resets the ladder bookkeeping so the next message starts
 # a fresh ladder.
 fm_task_inbox_due_action() {  # <state-dir> <task-id>
-  local dir oldest base now grace max ladder rec_base count last
+  local dir oldest base now grace max start_ack ladder rec_base count last
   dir=$(fm_task_inbox_dir "$1" "$2")
   if ! oldest=$(fm_task_inbox_oldest_unhandled "$1" "$2"); then
     rm -f "$dir/.ring-state" "$dir/.escalated" "$dir/.busy-state" 2>/dev/null || true
@@ -501,8 +526,13 @@ EOF
     return 0
   fi
   max=$(fm_task_inbox_ring_max)
+  start_ack=$(fm_task_inbox_start_ack_secs)
   if [ "$count" -ge "$max" ]; then
-    printf 'escalate %s %s' "$oldest" "$count"
+    if [ "$(fm_path_age "$oldest")" -ge "$start_ack" ]; then
+      printf 'escalate %s %s' "$oldest" "$count"
+    else
+      printf 'quiet'
+    fi
     return 0
   fi
   now=$(date +%s)

@@ -454,6 +454,7 @@ IFS= read -r -d '' INBOX_SECTION <<EOF || true
 Firstmate steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by running \`$ACK_SCRIPT --inbox $INBOX_DIR NNN\` (the id of that message, such as 001) as its own command, never inside a compound command and never as a bare \`mv\`.
 The move that script makes IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+After reading a new brief or a steering message that assigns work, append a \`working\` status line naming that work among your first actions.
 EOF
 if [ -e "$CONFIG/wait-no-turns" ]; then
   INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'
