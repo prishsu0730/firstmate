@@ -3634,36 +3634,20 @@ ensure_spawn_worktree_gh_default() { # <worktree>
   # gh otherwise chooses another configured remote in a multi-remote worker
   # checkout. Limit this to github.com origins so non-GitHub forges retain
   # their existing launch behavior.
-  local worktree=$1 origin current repo
+  local worktree=$1 origin current
   origin=$(git -C "$worktree" config --get remote.origin.url 2>/dev/null || true)
   case "$origin" in
     https://github.com/*|git@github.com:*|ssh://git@github.com/*) ;;
     *) return 0 ;;
   esac
 
-  if current=$(cd "$worktree" && gh repo set-default --view 2>&1); then
-    return 0
-  fi
-  case "$current" in
-    *'no default repository has been configured'*) ;;
-    *)
-      echo "error: could not determine gh's default repository for worker worktree '$worktree': $current" >&2
-      return 1
-      ;;
-  esac
-  repo=$(cd "$worktree" && gh repo view origin --json nameWithOwner --jq .nameWithOwner) || {
-    echo "error: could not resolve origin to a GitHub repository for worker worktree '$worktree'" >&2
+  current=$(cd "$worktree" && gh repo set-default --view) || {
+    echo "error: could not determine gh's default repository for worker worktree '$worktree'" >&2
     return 1
   }
-  case "$repo" in
-    */?*) ;;
-    *)
-      echo "error: gh resolved origin for worker worktree '$worktree' to invalid repository '${repo:-empty}'" >&2
-      return 1
-      ;;
-  esac
-  (cd "$worktree" && gh repo set-default "$repo") || {
-    echo "error: could not set gh's default repository to origin '$repo' for worker worktree '$worktree'" >&2
+  [ -z "$current" ] || return 0
+  (cd "$worktree" && gh repo set-default origin) || {
+    echo "error: could not set gh's default repository to origin for worker worktree '$worktree'" >&2
     return 1
   }
 }
