@@ -483,6 +483,11 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
   WAIT_BLOCK="$WAIT_SECTION"$'\n\n'
 fi
 
+IFS= read -r -d '' LIVE_MACHINE_SAFETY_RULE <<'EOF' || true
+7. Never run CPU-load, stress, or busy-loop experiments on the live machine; when checks time out, check machine load with `uptime` before blaming the code.
+EOF
+LIVE_MACHINE_SAFETY_RULE=${LIVE_MACHINE_SAFETY_RULE%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -515,6 +520,9 @@ $SECONDMATE_SCOPE
 
 # Project clones
 $PROJECT_CLONES_BODY
+
+# Live machine safety
+${LIVE_MACHINE_SAFETY_RULE#7. }
 
 # Operating model
 You are in an isolated firstmate home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
@@ -658,11 +666,6 @@ IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
    `blocked [at=<epoch>]: {what you need}` and stop; firstmate arranges it.
 EOF
 SHARED_INFRA_RULE=${SHARED_INFRA_RULE%$'\n'}
-
-IFS= read -r -d '' LIVE_MACHINE_SAFETY_RULE <<'EOF' || true
-7. Never run CPU-load, stress, or busy-loop experiments on the live machine; when checks time out, check machine load with `uptime` before blaming the code; stop every background process you start before reporting.
-EOF
-LIVE_MACHINE_SAFETY_RULE=${LIVE_MACHINE_SAFETY_RULE%$'\n'}
 
 if [ -n "$BASE_BRANCH" ]; then
   SETUP_BASE="You are in a disposable git worktree of $REPO, at a detached HEAD on a clean copy of its base branch.
