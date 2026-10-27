@@ -10,8 +10,8 @@
 # under `## Firstmate spec` (build instructions, which are never the captain's
 # intent), plus `## Risk and review`, whose three placeholders record the
 # task's blast radius, risk tiers, and review tier. bin/fm-dod-lib.sh owns the
-# no-mistakes `--intent` contract the first two subsections
-# subsections feed; bin/fm-spawn.sh refuses leftover placeholders and a
+# no-mistakes `--intent` contract the first two subsections feed;
+# bin/fm-spawn.sh refuses leftover placeholders and a
 # `## Captain's intent` line opening with a Captain label or address. Secondmate
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
