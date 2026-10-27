@@ -331,14 +331,6 @@ fm_control_backend_state_verified() {  # <backend>
 #     passes `--session <session>`, so the recheck starts and reads the session
 #     the RECORD names, through that session's own socket. The answer is about
 #     the task's endpoint and nothing else.
-#   tmux can prove it only when the task record carries the endpoint's server
-#     identity (tmux_socket, tmux_server_pid, tmux_server_start, written at
-#     spawn). `list-windows -a` describes only the server the CURRENT process
-#     addresses, so without that identity a window absent from it may still be
-#     alive on another server, and a record without it stays `unproven`. With
-#     it, fm_backend_tmux_endpoint_absence_proof asks the recorded socket
-#     itself (-S): no server there or a restarted server is `gone`;
-#     anything else is `unproven`.
 #
 # Both control-plane callers share this one implementation so the proof cannot
 # drift into two answers for the same endpoint.
@@ -348,6 +340,10 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta>]
     || { printf 'unproven\tbackend %s could not be loaded to prove anything about that endpoint' "'$backend'"; return 0; }
   case "$backend" in
     tmux)
+      if [ -n "$meta" ] && fm_control_record_predates_boot "$meta"; then
+        printf 'gone\t'
+        return 0
+      fi
       t_socket='' t_pid='' t_start=''
       if [ -n "$meta" ] && [ -f "$meta" ]; then
         t_socket=$(fm_meta_get "$meta" tmux_socket)
@@ -375,6 +371,39 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta>]
       printf 'unproven\tbackend %s has no recovery-grade classifier, so absence cannot be proven on it at all' "'$backend'"
       ;;
   esac
+}
+
+fm_control_boot_epoch() {
+  local raw='' epoch=''
+  if [ "${FM_BOOT_EPOCH_OVERRIDE+set}" = set ]; then
+    raw=$FM_BOOT_EPOCH_OVERRIDE
+  elif raw=$(sysctl -n kern.boottime 2>/dev/null) && [ -n "$raw" ]; then
+    raw=$(printf '%s' "$raw" | sed -n 's/^{ *sec = \([0-9][0-9]*\),.*/\1/p')
+  elif [ -r /proc/stat ]; then
+    raw=$(sed -n 's/^btime \([0-9][0-9]*\)$/\1/p' /proc/stat 2>/dev/null)
+  else
+    raw=''
+  fi
+  case "$raw" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  epoch=$((10#$raw))
+  [ "$epoch" -gt 0 ] || return 1
+  printf '%s\n' "$epoch"
+}
+
+fm_control_record_predates_boot() {
+  local meta=${1-} gen launched boot
+  gen=$(fm_meta_get "$meta" spawn_gen)
+  case "$gen" in
+    s[0-9]*.*) launched=${gen#s}; launched=${launched%%.*} ;;
+    *) return 1 ;;
+  esac
+  case "$launched" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  boot=$(fm_control_boot_epoch) || return 1
+  [ "$((10#$launched))" -lt "$boot" ]
 }
 
 # The per-task wiring artifacts a harness leaves behind, so a relaunch that
