@@ -57,6 +57,9 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=$(cat "$file")
   content=${content//'{TASK}'/$intent}
   content=${content//'{FIRSTMATE_SPEC}'/$spec}
+  content=${content//'{BLAST_RADIUS}'/'LOCAL; only the named task files; targeted screen check.'}
+  content=${content//'{RISK_TIERS}'/'Code review Low and execution Low; isolated, reversible, and evidenced.'}
+  content=${content//'{REVIEW_TIER}'/'No Greptile; no-mistakes only.'}
   printf '%s\n' "$content" > "$file"
 }
 
@@ -568,7 +571,7 @@ EOF
 }
 
 # Spawn and promotion refuse leftover Task-subsection placeholders through the
-# public brief/spawn/promote path. Filling both subsections lets the spawn
+# public brief/spawn/promote path. Filling every required Task section lets the spawn
 # delivery checks proceed (the fake tmux still fails later).
 test_spawn_and_promote_require_filled_task_subsections() {
   local rec home proj fakebin out status id brief meta intent_body spec_body authorized
@@ -583,11 +586,28 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
   status=$?
   [ "$status" -ne 0 ] || fail "spawn of an unfilled ship brief should exit non-zero"
-  assert_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
     "unfilled ship spawn did not name the leftover placeholders"
   assert_contains "$out" "## Captain's intent" \
     "unfilled ship spawn did not name the intent subsection to fill"
+  assert_contains "$out" "## Risk and review" \
+    "unfilled ship spawn did not name the risk-and-review section to fill"
   assert_absent "$home/state/$id.meta" "unfilled ship spawn wrote task metadata"
+
+  id=delivery-unfilled-risk
+  FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
+    || fail "risk-unfilled brief should still scaffold"
+  brief="$home/data/$id/brief.md"
+  content=$(cat "$brief")
+  content=${content//'{TASK}'/'Fill the task body but leave the risk record unfinished.'}
+  content=${content//'{FIRSTMATE_SPEC}'/'Exercise only the placeholder refusal.'}
+  printf '%s\n' "$content" > "$brief"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn with an unfilled Risk and review section should exit non-zero"
+  assert_contains "$out" "{BLAST_RADIUS}" "unfilled risk spawn did not name the blast-radius placeholder"
+  assert_contains "$out" "## Risk and review" "unfilled risk spawn did not name the risk section"
+  assert_absent "$home/state/$id.meta" "unfilled risk spawn wrote task metadata"
 
   id=delivery-filled-ship
   FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
@@ -596,7 +616,7 @@ EOF
     "Fix replacement of \`{TASK}\` in Herdr briefs." \
     "Keep literal \`{FIRSTMATE_SPEC}\` examples intact."
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
-  assert_not_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_not_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
     "a filled ship brief mentioning placeholder tokens was refused as unfilled"
   assert_not_contains "$out" "must contain nonempty" \
     "a filled ship brief mentioning placeholder tokens failed content validation"
@@ -622,7 +642,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
   assert_not_contains "$out" "must contain nonempty" \
     "fenced example headings made a filled legacy Task fail validation"
-  assert_not_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_not_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
     "fenced example headings made a filled legacy Task look unfilled"
 
   id=delivery-legacy-no-mistakes
@@ -717,7 +737,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --scout)
   status=$?
   [ "$status" -ne 0 ] || fail "spawn of an unfilled scout brief should exit non-zero"
-  assert_contains "$out" "still contains {TASK} or {FIRSTMATE_SPEC}" \
+  assert_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
     "unfilled scout spawn did not name the leftover placeholders"
   assert_absent "$home/state/$id.meta" "unfilled scout spawn wrote task metadata"
 
@@ -884,7 +904,7 @@ EOF
     "legacy promotion did not place promotion ship instructions in Firstmate spec"
   assert_not_contains "$spec_body" "This is a SCOUT task" \
     "legacy promotion copied the scout Setup section into Firstmate spec"
-  pass "fm-spawn/fm-promote: leftover Task placeholders are refused until both subsections are filled"
+  pass "fm-spawn/fm-promote: leftover Task placeholders are refused until every required section is filled"
 }
 
 # Exercise the serialized input a worker is told to pass to no-mistakes, not
