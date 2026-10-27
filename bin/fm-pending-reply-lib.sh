@@ -5,7 +5,8 @@
 # to a secondmate, this library records a durable parent-owned pending-reply
 # expectation BEFORE delivery, embeds a privacy-safe correlation id in the
 # outbound message, and later resolves that expectation only from a correlated
-# line in the asked task's own parent status log, or a document it points to -
+# non-working line in the asked task's own parent status log, or a document
+# that line points to - a working start reply leaves the final answer pending -
 # never from transport success, chat content, unrelated status activity, or
 # another task's line that echoes or quotes the token.
 #
@@ -589,6 +590,7 @@ fm_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
 fm_pending_reply_line_resolves() {  # <line> <corr_id>
   local line=$1 corr=$2
   [ -n "$line" ] && [ -n "$corr" ] || return 1
+  [ "$(status_line_verb "$line")" != working ] || return 1
   case "$line" in
     *pending-reply-missed*) return 1 ;;
   esac

@@ -33,7 +33,7 @@
 #      once delivered, and its delivery-unknown decision still closes on resolve
 #  17. Recovery and escalation grace are measured from the relevant turn's
 #      completion, never from delivery or send time, and each takes one fresh,
-#      uncached status read - accepting any verb - immediately before firing
+#      uncached status read for a completed reply immediately before firing
 #  18. A same-kind escalation after an operator close appends again and reopens
 #      the decision; a retry while that decision is still open appends nothing
 set -u
@@ -343,12 +343,12 @@ test_recovery_fresh_status_read_resolves_before_firing() {
     fail "setup: nothing should resolve yet"
   fi
 
-  # The correlated reply lands, carrying a non-terminal verb, in a write the
+  # The correlated completed reply lands in a write the
   # cached signature cannot see (for example a same-size rewrite inside the
   # stat timestamp granularity): the cache now matches the file that holds it,
   # so only a read that bypasses the cache can find the reply.
   rec=$(fm_pending_reply_path "$state" "$corr")
-  printf 'working [corr=%s]: still wrapping up\n' "$corr" >> "$status"
+  printf 'done [corr=%s]: audit complete\n' "$corr" >> "$status"
   fm_pending_reply_set "$rec" parent_status_scan_signature "$(fm_pending_reply_file_signature "$status")"
   if fm_pending_reply_try_resolve "$state" "$corr"; then
     fail "setup: the cached signature should hide the reply from a cached read"
@@ -374,7 +374,7 @@ test_recovery_fresh_status_read_resolves_before_firing() {
   export FM_PENDING_REPLY_NOW=31120
   fm_pending_reply_send_recovery "$state" "$corr" || fail "setup: recovery send failed"
   fm_pending_reply_mark_turn_completed "$state" "$corr" recovery
-  printf 'working [corr=%s]: still wrapping up\n' "$corr" >> "$status"
+  printf 'done [corr=%s]: audit complete\n' "$corr" >> "$status"
   fm_pending_reply_set "$rec" parent_status_scan_signature "$(fm_pending_reply_file_signature "$status")"
   export FM_PENDING_REPLY_NOW=31240
   fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null \
@@ -387,7 +387,40 @@ test_recovery_fresh_status_read_resolves_before_firing() {
 
   unset FM_PENDING_REPLY_SEND_HOOK
   export FM_PENDING_REPLY_GRACE_SECS=0
-  pass "one fresh status read immediately before firing catches a just-landed reply, any verb"
+  pass "one fresh status read immediately before firing catches a just-landed completed reply"
+}
+
+test_working_start_keeps_recovery_and_escalation_active() {
+  local home state corr rec
+  home=$(setup_parent working-start-recovery)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=32000
+  export FM_PENDING_REPLY_GRACE_SECS=0
+  export FM_PENDING_REPLY_SEND_HOOK=true
+  corr=$(fm_pending_reply_create "$home" "$state" hibit "finish the audit")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_mark_delivered "$state" "$corr"
+  printf 'working [corr=%s]: starting audit\n' "$corr" >> "$state/hibit.status"
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "a working start must not resolve the final-answer expectation"
+  fi
+  fm_pending_reply_mark_turn_completed "$state" "$corr" request
+  fm_pending_reply_send_recovery "$state" "$corr" \
+    || fail "a working start must not suppress recovery"
+  [ "$(phase_of "$state" "$corr")" = recovery_sent ] \
+    || fail "recovery must remain active after a working start"
+  printf 'working [corr=%s]: resuming audit\n' "$corr" >> "$state/hibit.status"
+  fm_pending_reply_mark_turn_completed "$state" "$corr" recovery
+  fm_pending_reply_maybe_escalate "$state" "$corr" \
+    || fail "a working recovery reply must not suppress escalation"
+  [ "$(phase_of "$state" "$corr")" = escalated ] \
+    || fail "a missed final answer must escalate after working replies"
+  [ -z "$(fm_pending_reply_get "$rec" resolved_epoch)" ] \
+    || fail "working replies must leave the final answer unresolved"
+  grep -qF "blocked [key=pending-reply-$corr]" "$state/hibit.status" \
+    || fail "the missed final answer must publish an escalation"
+  unset FM_PENDING_REPLY_SEND_HOOK
+  pass "working start replies leave recovery and missed-answer escalation active"
 }
 
 test_partial_resolve_write_blocks_firing() {
@@ -413,7 +446,7 @@ test_partial_resolve_write_blocks_firing() {
     corr=$(fm_pending_reply_create "$home" "$state" "hibit" "partial resolve before recovery")
     fm_pending_reply_mark_delivered "$state" "$corr"
     fm_pending_reply_mark_turn_completed "$state" "$corr" request
-    printf 'working [corr=%s]: still wrapping up\n' "$corr" >> "$status"
+    printf 'done [corr=%s]: audit complete\n' "$corr" >> "$status"
     if FAIL_RESOLVED_EPOCH=1 FM_PENDING_REPLY_SEND_HOOK=recovery_hook fm_pending_reply_send_recovery "$state" "$corr" 2>/dev/null; then
       fail "recovery must not fire after a partial resolve"
     fi
@@ -427,7 +460,7 @@ test_partial_resolve_write_blocks_firing() {
     FM_PENDING_REPLY_SEND_HOOK=true fm_pending_reply_send_recovery "$state" "$corr" \
       || fail "setup: recovery send failed"
     fm_pending_reply_mark_turn_completed "$state" "$corr" recovery
-    printf 'working [corr=%s]: still wrapping up\n' "$corr" >> "$status"
+    printf 'done [corr=%s]: audit complete\n' "$corr" >> "$status"
     FAIL_RESOLVED_EPOCH=1 fm_pending_reply_maybe_escalate "$state" "$corr" 2>/dev/null || true
     [ "$(phase_of "$state" "$corr")" = resolved ] \
       || fail "partial resolve should block escalation, got $(phase_of "$state" "$corr")"
@@ -1859,13 +1892,27 @@ test_mechanical_helper_writes_parent_channel() {
   export FM_PENDING_REPLY_NOW=11200
   corr=$(fm_pending_reply_create "$home" "$state" mate "status of the audit")
   fm_pending_reply_mark_delivered "$state" "$corr"
+  FM_HOME="$sm_home" "$REPORT" "working" "$corr" "starting audit" \
+    || fail "mechanical helper should deliver the start reply"
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "a start reply must leave the final answer pending"
+  fi
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "a start reply must preserve the awaiting-report phase"
+  printf 'working [corr=%s]: starting audit\n' "$corr" > "$sm_home/state/mate.status"
+  fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" \
+    || fail "start reply inspection should succeed"
+  [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" wrong_home_hits)" = 0 ] \
+    || fail "a start reply must not count as a stranded answer"
+  if fm_pending_reply_restatement_copy_same_basename "$state" "$corr" "$sm_home"; then
+    fail "a start reply must not be copied as a final answer"
+  fi
   FM_HOME="$sm_home" "$REPORT" "done" "$corr" "audit clean" \
     || fail "mechanical helper should succeed from a seeded mate home"
   grep -Fq "corr=$corr" "$state/mate.status" \
     || fail "mechanical helper must append to the parent channel"
-  if [ -e "$sm_home/state/mate.status" ]; then
-    fail "mechanical helper must not write the mate home's same-basename status file"
-  fi
+  [ "$(cat "$sm_home/state/mate.status")" = "working [corr=$corr]: starting audit" ] \
+    || fail "mechanical helper must not write the mate home's same-basename status file"
   fm_pending_reply_try_resolve "$state" "$corr" \
     || fail "a mechanical helper line on the parent channel must resolve"
   [ "$(phase_of "$state" "$corr")" = resolved ] || fail "phase should be resolved"
@@ -2109,6 +2156,7 @@ test_recovery_waits_while_the_mate_has_an_open_decision
 test_recovery_sends_during_an_open_decision_without_the_flag
 test_recovery_grace_measures_from_turn_completion
 test_recovery_fresh_status_read_resolves_before_firing
+test_working_start_keeps_recovery_and_escalation_active
 test_partial_resolve_write_blocks_firing
 test_escalation_grace_measures_from_recovery_turn_completion
 test_recovery_attempt_is_never_reinjected
