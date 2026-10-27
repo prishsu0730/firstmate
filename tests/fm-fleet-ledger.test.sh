@@ -138,6 +138,25 @@ EOF
   pass "flag on: a PR merge is recorded once, after the task's pending status lines"
 }
 
+test_shared_setup_refuses_an_unowned_home_before_a_merge_wake() {
+  local unsafe out rc=0
+  unsafe=$(mktemp -d "$FM_TEST_TMPDIR/fm-fleet-ledger-unsafe.XXXXXX") \
+    || fail "could not create unsafe-home probe"
+  mkdir -p "$unsafe/state"
+  out=$(FM_HOME="$unsafe" FM_STATE_OVERRIDE="$unsafe/state" \
+    bash -c '. "$1/tests/lib.sh"; . "$1/bin/fm-merge-outcome-lib.sh"; fm_merge_outcome_report "$FM_HOME" "$FM_STATE_OVERRIDE" on-pr-t1 https://github.com/acme/sample/pull/7 self' \
+    _ "$ROOT" 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail "shared setup accepted an unowned home: $out"
+  assert_contains "$out" 'refused inherited FM_HOME outside an owned temporary fixture' \
+    "shared setup did not explain the unsafe home refusal"
+  assert_absent "$unsafe/state/.wake-queue" \
+    "unsafe inherited home received a merge wake"
+  assert_absent "$unsafe/state/on-pr-t1.status" \
+    "unsafe inherited home received task state"
+  rm -rf "$unsafe"
+  pass "shared test setup refuses an inherited non-fixture home before merge outcome can write state"
+}
+
 test_flag_on_records_a_pr_registration() {
   local pr_url=https://github.com/acme/sample/pull/9 rows out
   make_case on-pr-ready on
@@ -277,6 +296,7 @@ test_flag_off_writes_nothing() {
 
 test_flag_on_records_the_task_lifecycle
 test_flag_on_records_a_pr_merge_once
+test_shared_setup_refuses_an_unowned_home_before_a_merge_wake
 test_flag_on_records_a_pr_registration
 test_worker_status_line_is_recorded_when_written
 test_worker_status_line_is_recorded_under_a_state_override

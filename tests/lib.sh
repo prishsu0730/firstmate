@@ -151,6 +151,40 @@ fm_test_tmpdir() {
 
 FM_TEST_TMPDIR=$(fm_test_tmpdir) || return 1
 
+# A test that sources a production library directly can inherit the operator's
+# FM_HOME before its fixture helper has supplied a temporary replacement. Those
+# libraries commonly bind their state destination at source time, so continuing
+# would let a fixture wake or status write reach the live home. Admit only an
+# existing descendant of a fixture root that fm_test_tmproot has marked. The
+# normal runner clears these variables before every suite; this guard protects
+# direct test invocation and nested test shells too.
+fm_test_temporary_path() {  # <path>
+  local path=$1 root=$FM_TEST_TMPDIR marker
+  path=$(CDPATH='' cd -- "$path" 2>/dev/null && pwd -P) || return 1
+  root=$(CDPATH='' cd -- "$root" 2>/dev/null && pwd -P) || return 1
+  while :; do
+    marker="$path/.fm-test-fixture"
+    [ -f "$marker" ] && [ ! -L "$marker" ] && return 0
+    [ "$path" = "$root" ] && return 1
+    case "$path" in "$root"/*) ;; *) return 1 ;; esac
+    path=${path%/*}
+    [ -n "$path" ] || return 1
+  done
+}
+
+fm_test_refuse_unsafe_inherited_paths() {
+  local name value
+  for name in FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_CONFIG_OVERRIDE FM_PROJECTS_OVERRIDE FM_ROOT_OVERRIDE; do
+    value=${!name-}
+    [ -z "$value" ] || fm_test_temporary_path "$value" || {
+      printf 'tests/lib.sh: refused inherited %s outside an owned temporary fixture: %s\n' "$name" "$value" >&2
+      return 1
+    }
+  done
+}
+
+fm_test_refuse_unsafe_inherited_paths || exit 1
+
 FM_TEST_CLEANUP_DIRS=()
 FM_TEST_CLEANUP_REGISTRY=$(mktemp "$FM_TEST_TMPDIR/.fm-test-cleanup.$$.XXXXXX") || return 1
 
