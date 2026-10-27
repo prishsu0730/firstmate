@@ -72,9 +72,10 @@
 # inactive-path fingerprint binds only the spawn incarnation, task id, terminal
 # state, and PR text, never the child's last status line, so a child that keeps
 # appending routine prose after one terminal outcome yields at most one parent
-# event across scans and restarts. The parent-facing fallback includes a
-# single-line, bounded copy of that last status as context, while status_head
-# retains it as receipt evidence. The ledger-path fingerprint instead binds the incarnation, task id,
+# event across scans and restarts. The parent-facing fallback includes nonempty
+# last status as last_status context, with tabs, CR, and LF replaced by spaces
+# and truncated to 1200 bytes, while status_head retains its SHA-256 hash as
+# receipt evidence. The ledger-path fingerprint instead binds the incarnation, task id,
 # terminal state, literal `ledger` origin, and complete terminal ledger line.
 # When a terminal ledger append races just after the inactive path's final read,
 # ledger_claim binds that one ledger fingerprint to the already-delivered
