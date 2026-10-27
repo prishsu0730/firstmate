@@ -483,6 +483,11 @@ if [ -e "$CONFIG/wait-no-turns" ]; then
   WAIT_BLOCK="$WAIT_SECTION"$'\n\n'
 fi
 
+IFS= read -r -d '' LIVE_MACHINE_SAFETY_RULE <<'EOF' || true
+7. Never run CPU-load, stress, or busy-loop experiments on the live machine; when checks time out, check machine load with `uptime` before blaming the code.
+EOF
+LIVE_MACHINE_SAFETY_RULE=${LIVE_MACHINE_SAFETY_RULE%$'\n'}
+
 if [ "$KIND" = secondmate ]; then
 SECONDMATE_PROJECTS=""
 idx=1
@@ -515,6 +520,9 @@ $SECONDMATE_SCOPE
 
 # Project clones
 $PROJECT_CLONES_BODY
+
+# Live machine safety
+${LIVE_MACHINE_SAFETY_RULE#7. }
 
 # Operating model
 You are in an isolated firstmate home. The local \`AGENTS.md\` is your job description, and your local \`data/\`, \`state/\`, \`config/\`, and \`projects/\` dirs are yours to operate.
@@ -634,7 +642,7 @@ TASK_SECTION=${TASK_SECTION%$'\n'}
 # The secondmate charter deliberately omits this rule because a secondmate
 # legitimately allocates and returns slots for crewmates in its own home.
 IFS= read -r -d '' SHARED_INFRA_RULE <<'EOF' || true
-7. Never administer infrastructure that every lane shares. Two things are shared:
+8. Never administer infrastructure that every lane shares. Two things are shared:
    - The `no-mistakes` daemon - one instance serving every lane/home, so stopping, restarting, or
      updating it kills other lanes' in-flight pipeline runs; only firstmate manages the daemon.
      Before you append `blocked:` about the pipeline, run `no-mistakes daemon status` and
@@ -705,6 +713,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
    append \`needs-decision [at=<epoch>]: {summary of options}\` and stop. Firstmate will reply with the decision.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+$LIVE_MACHINE_SAFETY_RULE
 $SHARED_INFRA_RULE
 
 $WAIT_BLOCK$INBOX_SECTION
@@ -826,6 +835,7 @@ $CREWMATE_PAUSE_INSTRUCTIONS
 $ASK_USER_BLOCK
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved [at=<epoch>]: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
+$LIVE_MACHINE_SAFETY_RULE
 $SHARED_INFRA_RULE
 
 $ALLOWED_BLOCK$WAIT_BLOCK$INBOX_SECTION
