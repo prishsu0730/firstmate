@@ -687,7 +687,7 @@ test_secondmate_marked_request_reporting_contract() {
 
   assert_grep 'A marked request requires one correlated answer after the work.' "$brief" \
     "secondmate generated instructions must require a correlated final reply"
-  assert_grep 'When it assigns work, also send a correlated `working` start reply among your first actions.' "$brief" \
+  assert_grep "When it assigns work, also send a correlated \`working\` start reply among your first actions." "$brief" \
     "secondmate generated instructions must require a correlated start reply"
   assert_grep 'Use this for the required start reply, material phase changes' "$brief" \
     "secondmate generated instructions must allow the required start reply"
