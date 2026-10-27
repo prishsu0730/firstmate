@@ -1014,6 +1014,8 @@ assert_live_machine_safety_contract() {
     "generated brief missing the live-machine experiment prohibition"
   assert_grep "when checks time out, check machine load with \`uptime\` before blaming the code" "$1" \
     "generated brief missing the timeout load check"
+  assert_grep 'The no-mistakes test step must complete, never be skipped, and runs only focused tests for the files you touch; GitHub CI runs the full suite.' "$1" \
+    "generated brief missing the focused no-mistakes test-step rule"
   assert_no_grep 'stop every background process' "$1" \
     "generated brief contains the blanket background-process cleanup requirement"
 }
