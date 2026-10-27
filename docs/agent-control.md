@@ -97,7 +97,7 @@ Switching harness is therefore one ordinary relaunch rather than a separate mech
 A Herdr pane or workspace can be destroyed out from under a live task by churn or a session restart.
 The task's worktree, branch, commits, and uncommitted changes all survive that; only its terminal does not.
 
-**Reclaim is Herdr and tmux.** On tmux, both verbs refuse a `missing` endpoint unless the task record carries the endpoint's tmux server identity, written at spawn; a record from before that was recorded stays refused, with the reason stated rather than guessed past.
+**Reclaim is Herdr and tmux.** On tmux, both verbs require the [absence proof below](#reclaiming-a-task-whose-endpoint-is-gone): recorded server absence or replacement, or `spawn_gen` strictly before this machine’s boot, including for legacy records without server identity.
 
 Two endpoint verdicts are agent-free, and both license a relaunch:
 

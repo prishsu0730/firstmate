@@ -89,9 +89,9 @@
 #   again, and on TMUX when the record carries the endpoint's server identity
 #   (tmux_socket, tmux_server_pid, tmux_server_start, written at spawn): the
 #   recorded socket must have no server or a restarted one.
-#   A tmux record without that identity refuses, because
-#   no read here can tell a destroyed window from one on a tmux server this
-#   process cannot address. A rebound tmux window is created on the server this
+#   Independently, spawn_gen strictly before this machine's boot proves absence,
+#   including for legacy records without server identity; otherwise they refuse.
+#   A rebound tmux window is created on the server this
 #   process addresses and the record re-records that server. An endpoint that turns out
 #   to have survived refuses too. The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
@@ -1898,10 +1898,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           pane itself did not survive.
   #   tmux  - when the record carries the endpoint's server identity (written
   #           at spawn), the recorded socket itself is asked (-S): no server, a
-  #           restarted server proves it gone. A record without that identity REFUSES, with the reason
-  #           stated, because a server-wide inventory describes only the server
-  #           this process addresses and cannot tell "gone" from "on a server
-  #           I cannot see".
+  #           restarted server proves it gone. Independently, spawn_gen strictly
+  #           before this machine's boot proves absence, including for legacy
+  #           records without server identity; otherwise they refuse.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -2860,25 +2859,7 @@ effort_flag_for_harness() {
   esac
 }
 
-case "$LAUNCH" in
-*__MUSEBIN__*)
-  MUSE_BIN=$(resolve_muse_binary) || exit 1
-  MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
-  MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
-  MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
-  if ! muse_credential_present "$MUSE_AUTH_FILE"; then
-    if [ -n "${META_API_KEY:-}" ]; then
-      echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
-    else
-      echo "error: muse has no worker-reachable credential; META_API_KEY cannot be proven present in the $BACKEND worker environment and '$MUSE_AUTH_FILE' is absent or empty. Store the fleet credential with 'muse login' or 'muse auth set --api-key-stdin'." >&2
-    fi
-    exit 1
-  fi
-  LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
-  LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
-  LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
-  ;;
-esac
+
 
 case "$LAUNCH" in
 *__KIMIBIN__*)
@@ -3233,6 +3214,26 @@ fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$BACKEND" = tmux ]; then
   fm_backend_tmux_clear_stale_client_env
 fi
+
+case "$LAUNCH" in
+*__MUSEBIN__*)
+  MUSE_BIN=$(resolve_muse_binary) || exit 1
+  MUSE_CONFIG_HOME=$(resolve_directory_input XDG_CONFIG_HOME "${XDG_CONFIG_HOME:-${HOME:-}/.config}") || exit 1
+  MUSE_DATA_HOME=$(resolve_directory_input XDG_DATA_HOME "${XDG_DATA_HOME:-${HOME:-}/.local/share}") || exit 1
+  MUSE_AUTH_FILE="$MUSE_CONFIG_HOME/muse/auth.json"
+  if ! muse_credential_present "$MUSE_AUTH_FILE"; then
+    if [ -n "${META_API_KEY:-}" ]; then
+      echo "error: muse has no worker-reachable credential; META_API_KEY is set for fm-spawn but cannot be proven present in the $BACKEND worker environment. Store the fleet credential at '$MUSE_AUTH_FILE' with 'muse login' or 'muse auth set --api-key-stdin'. The secret will not be copied into the launch command." >&2
+    else
+      echo "error: muse has no worker-reachable credential; META_API_KEY cannot be proven present in the $BACKEND worker environment and '$MUSE_AUTH_FILE' is absent or empty. Store the fleet credential with 'muse login' or 'muse auth set --api-key-stdin'." >&2
+    fi
+    exit 1
+  fi
+  LAUNCH=${LAUNCH//__MUSEBIN__/$(shell_quote "$MUSE_BIN")}
+  LAUNCH=${LAUNCH//__MUSECONFIG__/$(shell_quote "$MUSE_CONFIG_HOME")}
+  LAUNCH=${LAUNCH//__MUSEDATA__/$(shell_quote "$MUSE_DATA_HOME")}
+  ;;
+esac
 
 [ -f "$BRIEF" ] || {
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
