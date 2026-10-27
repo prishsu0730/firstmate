@@ -53,7 +53,9 @@
 # FM_TASK_INBOX_GRACE_SECS is due one delivery attempt per grace period; an
 # attempt may ring or be skipped to protect another draft in a proven pending
 # composer; an unsubmitted copy of this doorbell is retried. After
-# FM_TASK_INBOX_RING_MAX attempts without an acknowledgement it escalates. The
+# FM_TASK_INBOX_RING_MAX attempts without an acknowledgement it waits until
+# the message is at least FM_TASK_INBOX_START_ACK_SECS old before escalating.
+# A working status reply does not replace the handled/ acknowledgement. The
 # caller owns the busy and recovery-grade endpoint checks: due actions deferred
 # by a busy pane consume a separate durable consecutive-poll budget,
 # FM_TASK_INBOX_BUSY_MAX. At that bound the same escalation path surfaces a
@@ -466,7 +468,7 @@ fm_task_inbox_clear_retry() {  # <state-dir> <task-id> <record-path>
 #   quiet                     nothing due (healthy, within grace or spacing,
 #                             or already escalated for the current oldest)
 #   ring <record-path>        one doorbell re-ring is due
-#   escalate <record-path> <count>   attempt budget spent; surface as stale
+#   escalate <record-path> <count>   attempt budget and acknowledgement window spent
 #   retry <record-path>       a fire-and-forget record's one retry ring is due
 # An empty inbox also resets the ladder bookkeeping so the next message starts
 # a fresh ladder.
