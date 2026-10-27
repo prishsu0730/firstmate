@@ -1859,13 +1859,27 @@ test_mechanical_helper_writes_parent_channel() {
   export FM_PENDING_REPLY_NOW=11200
   corr=$(fm_pending_reply_create "$home" "$state" mate "status of the audit")
   fm_pending_reply_mark_delivered "$state" "$corr"
+  FM_HOME="$sm_home" "$REPORT" "working" "$corr" "starting audit" \
+    || fail "mechanical helper should deliver the start reply"
+  if fm_pending_reply_try_resolve "$state" "$corr"; then
+    fail "a start reply must leave the final answer pending"
+  fi
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] \
+    || fail "a start reply must preserve the awaiting-report phase"
+  printf 'working [corr=%s]: starting audit\n' "$corr" > "$sm_home/state/mate.status"
+  fm_pending_reply_detect_wrong_home "$state" "$corr" "$sm_home" \
+    || fail "start reply inspection should succeed"
+  [ "$(fm_pending_reply_get "$(fm_pending_reply_path "$state" "$corr")" wrong_home_hits)" = 0 ] \
+    || fail "a start reply must not count as a stranded answer"
+  if fm_pending_reply_restatement_copy_same_basename "$state" "$corr" "$sm_home"; then
+    fail "a start reply must not be copied as a final answer"
+  fi
   FM_HOME="$sm_home" "$REPORT" "done" "$corr" "audit clean" \
     || fail "mechanical helper should succeed from a seeded mate home"
   grep -Fq "corr=$corr" "$state/mate.status" \
     || fail "mechanical helper must append to the parent channel"
-  if [ -e "$sm_home/state/mate.status" ]; then
-    fail "mechanical helper must not write the mate home's same-basename status file"
-  fi
+  [ "$(cat "$sm_home/state/mate.status")" = "working [corr=$corr]: starting audit" ] \
+    || fail "mechanical helper must not write the mate home's same-basename status file"
   fm_pending_reply_try_resolve "$state" "$corr" \
     || fail "a mechanical helper line on the parent channel must resolve"
   [ "$(phase_of "$state" "$corr")" = resolved ] || fail "phase should be resolved"

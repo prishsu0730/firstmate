@@ -589,6 +589,7 @@ fm_pending_reply_discard_undelivered() {  # <state-dir> <corr_id>
 fm_pending_reply_line_resolves() {  # <line> <corr_id>
   local line=$1 corr=$2
   [ -n "$line" ] && [ -n "$corr" ] || return 1
+  [ "$(status_line_verb "$line")" != working ] || return 1
   case "$line" in
     *pending-reply-missed*) return 1 ;;
   esac
