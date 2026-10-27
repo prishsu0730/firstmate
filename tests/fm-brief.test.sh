@@ -1012,7 +1012,7 @@ ROWS
 assert_live_machine_safety_contract() {
   assert_grep 'Never run CPU-load, stress, or busy-loop experiments on the live machine' "$1" \
     "generated brief missing the live-machine experiment prohibition"
-  assert_grep 'when checks time out, check machine load with `uptime` before blaming the code' "$1" \
+  assert_grep "when checks time out, check machine load with \`uptime\` before blaming the code" "$1" \
     "generated brief missing the timeout load check"
   assert_no_grep 'stop every background process' "$1" \
     "generated brief contains the blanket background-process cleanup requirement"
