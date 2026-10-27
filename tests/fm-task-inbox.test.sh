@@ -678,15 +678,28 @@ test_ring_ladder_policy() {
   pass "inbox: the re-ring ladder paces by grace, escalates once, and resets on ack"
 }
 
-test_worker_status_satisfies_start_ack() {
+test_worker_status_does_not_acknowledge_inbox() {
   local state state_without_status rec action
   state="$TMP_ROOT/start-ack/state"; mkdir -p "$state"
   rec=$(inbox_lib "$state" fm_task_inbox_write "$state" t1 "begin assigned work")
-  printf 'working [at=%s]: begin assigned work\n' "$(date +%s)" > "$state/t1.status"
+  local status
+  for status in 'working: begin assigned work' 'done: unrelated work' 'resolved: supervisor decision'; do
+    printf '%s\n' "$status" > "$state/t1.status"
+    touch -r "$state/t1.status" "$rec"
+    action=$(FM_TASK_INBOX_GRACE_SECS=0 FM_TASK_INBOX_RING_MAX=3 \
+      inbox_lib "$state" fm_task_inbox_due_action "$state" t1)
+    [ "$action" = "ring $rec" ] || fail "status suppressed delivery at equal timestamps: $action"
+    age_path "$rec"
+    printf '001.msg\t3\t1\n' > "$state/t1.inbox/.ring-state"
+    action=$(FM_TASK_INBOX_GRACE_SECS=0 FM_TASK_INBOX_RING_MAX=3 \
+      inbox_lib "$state" fm_task_inbox_due_action "$state" t1)
+    [ "$action" = "escalate $rec 3" ] || fail "status suppressed unread-message escalation: $action"
+    printf '001.msg\t0\t0\n' > "$state/t1.inbox/.ring-state"
+  done
+  bash "$ROOT/bin/fm-inbox-ack.sh" --inbox "$state/t1.inbox" 001 >/dev/null
   action=$(FM_TASK_INBOX_GRACE_SECS=0 FM_TASK_INBOX_RING_MAX=0 \
     inbox_lib "$state" fm_task_inbox_due_action "$state" t1)
-  [ "$action" = quiet ] || fail "a later worker status should satisfy the start acknowledgement: $action"
-  [ -f "$rec" ] || fail "a status acknowledgement should not rewrite the durable steer record"
+  [ "$action" = quiet ] || fail "handled-message acknowledgement did not stop delivery: $action"
 
   state_without_status="$TMP_ROOT/start-ack-without-status/state"; mkdir -p "$state_without_status"
   rec=$(inbox_lib "$state_without_status" fm_task_inbox_write "$state_without_status" t1 "begin assigned work")
@@ -694,7 +707,7 @@ test_worker_status_satisfies_start_ack() {
   action=$(FM_TASK_INBOX_GRACE_SECS=0 FM_TASK_INBOX_RING_MAX=3 FM_TASK_INBOX_START_ACK_SECS=3600 \
     inbox_lib "$state_without_status" fm_task_inbox_due_action "$state_without_status" t1)
   [ "$action" = quiet ] || fail "a spent re-ring budget escalated before the start acknowledgement window: $action"
-  pass "inbox: a later status acknowledges a steer and escalation waits for the bounded start window"
+  pass "inbox: only inbox acknowledgement stops delivery; escalation retains its bounded window"
 }
 
 setup_watch_case() {  # <name> -> echoes case dir; state in <dir>/state
@@ -1243,7 +1256,7 @@ test_fire_and_forget_records_never_enter_the_ladder
 test_fire_and_forget_retry_is_owed_once
 test_fire_and_forget_retry_is_quiet_without_the_flag
 test_ring_ladder_policy
-test_worker_status_satisfies_start_ack
+test_worker_status_does_not_acknowledge_inbox
 test_watcher_rerings_idle_pane_quietly
 test_watcher_waits_on_busy_pane
 test_watcher_busy_budget_resets_on_ring_and_ack

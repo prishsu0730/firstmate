@@ -685,12 +685,12 @@ test_secondmate_marked_request_reporting_contract() {
     "$ROOT/bin/fm-brief.sh" marked-request-reporting --secondmate --no-projects >/dev/null 2>&1
   brief="$home/data/marked-request-reporting/brief.md"
 
-  assert_grep 'A marked request requires one correlated answer after the work' "$brief" \
-    "secondmate charter did not require the correlated answer after the work"
-  assert_grep 'does not require a separate receipt or start acknowledgement' "$brief" \
-    "secondmate charter did not reject a separate receipt/start acknowledgement"
-  assert_grep "Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started." "$brief" \
-    "secondmate charter did not forbid a generic working acknowledgement"
+  assert_grep 'A marked request requires one correlated answer after the work.' "$brief" \
+    "secondmate generated instructions must require a correlated final reply"
+  assert_grep 'When it assigns work, also send a correlated `working` start reply among your first actions.' "$brief" \
+    "secondmate generated instructions must require a correlated start reply"
+  assert_grep 'Use this for the required start reply, material phase changes' "$brief" \
+    "secondmate generated instructions must allow the required start reply"
   assert_no_grep "Give every routed-work phase a stable key: open it with \`working" "$brief" \
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \

@@ -92,8 +92,8 @@
 #   FM_TASK_INBOX_GRACE_SECS   default 90; delivery-attempt grace and spacing
 #   FM_TASK_INBOX_RING_MAX     default 3; delivery attempts before escalation
 #   FM_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before escalation
-#   FM_TASK_INBOX_START_ACK_SECS default 900; bounded window for a worker status
-#                               line or inbox acknowledgement after a steer
+#   FM_TASK_INBOX_START_ACK_SECS default 900; bounded window for an inbox
+#                               acknowledgement after a steer
 
 _FM_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -428,26 +428,12 @@ fm_task_inbox_is_fire_and_forget() {  # <record-path>
   ' "$rec"
 }
 
-# A later status line is a worker's start acknowledgement for every earlier
-# unhandled steer. The inbox record remains durable until its normal ack.
-fm_task_inbox_status_acknowledges() {  # <state-dir> <task-id> <record-path>
-  local status record_mtime status_mtime
-  status="$1/$2.status"
-  [ -s "$status" ] || return 1
-  record_mtime=$(fm_path_mtime "$3") || return 1
-  status_mtime=$(fm_path_mtime "$status") || return 1
-  [ "$status_mtime" -ge "$record_mtime" ]
-}
-
-# Oldest escalation-tracked unhandled record without a later status line, or
-# fail when every record has a worker start acknowledgement.
 fm_task_inbox_oldest_unhandled() {  # <state-dir> <task-id>
   local dir best='' best_n=0 f n
   dir=$(fm_task_inbox_dir "$1" "$2")
   for f in "$dir"/*.msg; do
     [ -e "$f" ] || continue
     fm_task_inbox_is_fire_and_forget "$f" && continue
-    fm_task_inbox_status_acknowledges "$1" "$2" "$f" && continue
     n=$(fm_task_inbox_seq_of "${f##*/}") || continue
     if [ -z "$best" ] || [ "$n" -lt "$best_n" ]; then
       best=$f
