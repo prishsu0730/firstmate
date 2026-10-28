@@ -392,6 +392,7 @@ shim_write() {
     SHIM_WRITE_TMP=
     return 1
   fi
+  ARM_PUBLISHED=1
   SHIM_WRITE_TMP=
   fm_pr_private_file_valid "$CHECK_SHIM" 700 "$device"
 }
@@ -411,6 +412,7 @@ shim_backup() {
 }
 
 ARM_BACKUP=
+ARM_PUBLISHED=0
 
 # An unregistered shim is not inert: the watcher rejects it on every cycle and
 # wakes firstmate about unauthenticated state checks. So a failed or
@@ -419,6 +421,12 @@ ARM_BACKUP=
 arm_rollback() {
   [ -z "$SHIM_WRITE_TMP" ] || rm -f -- "$SHIM_WRITE_TMP"
   SHIM_WRITE_TMP=
+  if [ "$ARM_PUBLISHED" -eq 0 ]; then
+    [ -z "$ARM_BACKUP" ] || rm -f -- "$ARM_BACKUP"
+    ARM_BACKUP=
+    return 0
+  fi
+  ARM_PUBLISHED=0
   if [ -n "$ARM_BACKUP" ]; then
     mv -f -- "$ARM_BACKUP" "$CHECK_SHIM" 2>/dev/null || rm -f -- "$ARM_BACKUP"
     ARM_BACKUP=
@@ -458,6 +466,7 @@ action_arm() {
   esac
   want=$(shim_content "$home")
   ARM_BACKUP=
+  ARM_PUBLISHED=0
   if [ -f "$CHECK_SHIM" ] && [ ! -L "$CHECK_SHIM" ]; then
     ARM_BACKUP=$(shim_backup) || {
       printf 'fm-usage-warner: could not save the existing %s\n' "$CHECK_SHIM" >&2
