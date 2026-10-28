@@ -53,6 +53,7 @@ make_case() {
     'queued=false' \
     'base=main' > "$case_dir/github-outcome"
   : > "$case_dir/github-rules"
+  printf '%s\n' 'docs update' > "$case_dir/github-commits"
   # The base branch the forge reports by default: unprotected, with no ruleset
   # rule, so nothing is required unless a case says otherwise.
   write_github_required "$case_dir"
@@ -180,12 +181,20 @@ case "${1:-} ${2:-}" in
           call_m=$(sed -n "${call_n}p" "$FM_TEST_GH_MERGEABLE_SEQUENCE")
           [ -n "$call_m" ] || call_m=$(tail -n1 "$FM_TEST_GH_MERGEABLE_SEQUENCE")
           # An optional second word overrides the first check's conclusion.
-          read -r call_m call_c <<< "$call_m"
-          jq -c --arg m "$call_m" --arg c "${call_c:-}" \
-            '.mergeable = $m | if $c != "" then .statusCheckRollup[0].conclusion = $c else . end' \
+          read -r call_m call_c call_mix <<< "$call_m"
+          jq -c --arg m "$call_m" --arg c "${call_c:-}" --arg mix "${call_mix:-}" \
+            --rawfile subjects "$FM_TEST_GH_COMMITS" \
+            '.mergeable = $m | if $c != "" then .statusCheckRollup[0].conclusion = $c else . end
+             | .commits = ($subjects | split("\n") | map(select(length > 0) | {messageHeadline: .}))
+             | if $mix == "mixed" then
+                 .headRefOid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                 | .commits += [{messageHeadline: "fix: pushed during verification"}]
+               else . end' \
             "$FM_TEST_GH_VIEW_JSON"
         else
-          cat "$FM_TEST_GH_VIEW_JSON"
+          jq --rawfile subjects "$FM_TEST_GH_COMMITS" \
+            '.commits = ($subjects | split("\n") | map(select(length > 0) | {messageHeadline: .}))' \
+            "$FM_TEST_GH_VIEW_JSON"
         fi
         if [ -f "${FM_TEST_AWAY_RECORD_AFTER_VIEW:-}" ]; then
           if [ -s "${FM_TEST_AWAY_RECORD_AFTER_VIEW}" ]; then
@@ -244,6 +253,26 @@ case "${1:-} ${2:-}" in
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
+      *"/pulls/"*"/commits?per_page=100"*)
+        head=$(cat "$FM_TEST_GH_HEAD")
+        mix=''
+        if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
+          call_n=$(cat "$FM_TEST_GH_MERGEABLE_CALLS")
+          row=$(sed -n "${call_n}p" "$FM_TEST_GH_MERGEABLE_SEQUENCE")
+          [ -n "$row" ] || row=$(tail -n1 "$FM_TEST_GH_MERGEABLE_SEQUENCE")
+          read -r unused unused mix <<< "$row"
+        fi
+        [ "$mix" != mixed ] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        if [ -f "$FM_TEST_GH_COMMITS.head" ]; then
+          head=$(cat "$FM_TEST_GH_COMMITS.head")
+        fi
+        jq -n --rawfile subjects "$FM_TEST_GH_COMMITS" --arg head "$head" --arg mix "$mix" '
+          ($subjects | split("\n") | map(select(length > 0)))
+          | if $mix == "mixed" then . + ["fix: pushed during verification"] else . end
+          | map({sha: "earlier", commit: {message: .}}) | .[-1].sha = $head
+          | . as $commits | [range(0; length; 100) | $commits[.:. + 100]]'
+        exit 0
+        ;;
       *" repos/"*"/commits/"*"/check-runs"*)
         case "$*" in
           *"/commits/$(cat "$FM_TEST_GH_HEAD")/check-runs"*) ;;
@@ -463,6 +492,7 @@ run_pr_merge() {
   FM_TEST_GH_MERGEABLE_SEQUENCE="${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" \
   FM_TEST_GH_MERGEABLE_CALLS="$case_dir/mergeable-calls" \
   FM_TEST_GH_HEAD="$case_dir/github-head" \
+  FM_TEST_GH_COMMITS="$case_dir/github-commits" \
   FM_TEST_GH_RUNS="$case_dir/github-runs.json" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
@@ -2358,6 +2388,134 @@ test_secondmate_without_parent_binding_is_loud() {
   pass "a secondmate home that cannot report upward says so instead of merging in silence"
 }
 
+test_mixed_refactor_and_fix_commits_refuse_before_merging() {
+  local case_dir rc url
+  url=https://github.com/example/repo/pull/401
+  case_dir=$(make_case mixed-refactor-and-fix)
+  add_gh_mocks "$case_dir" 4014014014014014014014014014014014014014
+  printf '%s\n' 'refactor(parser): simplify commit reading' 'fix: preserve merge refusal' \
+    > "$case_dir/github-commits"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "mixed-refactor-and-fix: mixed conventional commits must refuse"
+  assert_grep 'refactor commits cannot be mixed with fix or feat commits' "$case_dir/stderr" \
+    "mixed-refactor-and-fix: refusal did not explain the mixed commit types"
+  assert_grep 'refactor(parser): simplify commit reading' "$case_dir/stderr" \
+    "mixed-refactor-and-fix: refusal did not name the refactor commit"
+  assert_grep 'fix: preserve merge refusal' "$case_dir/stderr" \
+    "mixed-refactor-and-fix: refusal did not name the fix commit"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "mixed-refactor-and-fix: the forge merge ran despite mixed commits"
+  pass "fm-pr-merge refuses mixed refactor and fix commit subjects before merging"
+}
+
+test_refactor_only_commits_merge() {
+  local case_dir
+  case_dir=$(make_case refactor-only-commits)
+  add_gh_mocks "$case_dir" 4024024024024024024024024024024024024024
+  printf '%s\n' 'refactor: simplify commit reading' 'refactor(parser): rename helper' \
+    > "$case_dir/github-commits"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/402 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "refactor-only-commits: refactor-only PR should merge"
+  assert_logged_gh_merge "$case_dir" 402 example/repo --squash
+  pass "fm-pr-merge allows refactor-only commit subjects"
+}
+
+test_fix_only_commits_merge() {
+  local case_dir
+  case_dir=$(make_case fix-only-commits)
+  add_gh_mocks "$case_dir" 4034034034034034034034034034034034034034
+  printf '%s\n' 'fix(parser): preserve merge refusal' 'feat: show clear errors' \
+    > "$case_dir/github-commits"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/403 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "fix-only-commits: fix-only PR should merge"
+  assert_logged_gh_merge "$case_dir" 403 example/repo --squash
+  pass "fm-pr-merge allows fix-only and feat-only commit subjects"
+}
+
+test_no_prefix_commits_are_ignored() {
+  local case_dir
+  case_dir=$(make_case no-prefix-commits)
+  add_gh_mocks "$case_dir" 4044044044044044044044044044044044044044
+  printf '%s\n' 'refactor commit without a conventional prefix' 'fix commit without a conventional prefix' \
+    > "$case_dir/github-commits"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/404 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "no-prefix-commits: non-conventional subjects should be ignored"
+  assert_logged_gh_merge "$case_dir" 404 example/repo --squash
+  pass "fm-pr-merge ignores commit subjects without conventional prefixes"
+}
+
+test_push_during_verification_refuses_mixed_commits() {
+  local case_dir attempt rc
+  for attempt in first retry; do
+    case_dir=$(make_case "mixed-push-$attempt")
+    add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    printf '%s\n' 'refactor: simplify commit reading' > "$case_dir/github-commits"
+    if [ "$attempt" = retry ]; then
+      printf '%s\n' 'UNKNOWN SUCCESS' 'MERGEABLE SUCCESS mixed' > "$case_dir/sequence"
+    else
+      printf '%s\n' 'MERGEABLE SUCCESS mixed' > "$case_dir/sequence"
+    fi
+    rc=0
+    FM_TEST_GH_MERGEABLE_SEQUENCE="$case_dir/sequence" FM_PR_GITHUB_MERGEABLE_RETRY_DELAY=0       run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/405       > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code 1 "$rc" "mixed-push-$attempt: newer mixed head must refuse"
+    assert_grep 'refactor commits cannot be mixed' "$case_dir/stderr"       "mixed-push-$attempt: missing mixed commit refusal"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" "mixed-push-$attempt: merge ran"
+  done
+  pass "mixed pushes are refused on initial verification and UNKNOWN retry"
+}
+
+test_complete_commit_set_is_required() {
+  local case_dir mode rc i
+  for mode in mixed clean changed; do
+    case_dir=$(make_case "complete-commits-$mode")
+    add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    for ((i=0; i<100; i++)); do
+      printf '%s\n' 'refactor: simplify parsing'
+    done > "$case_dir/github-commits"
+    if [ "$mode" = mixed ]; then
+      printf '%s\n' 'feat: add behavior' >> "$case_dir/github-commits"
+    else
+      printf '%s\n' 'refactor: final cleanup' >> "$case_dir/github-commits"
+    fi
+    if [ "$mode" = changed ]; then
+      printf '%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb > "$case_dir/github-commits.head"
+    fi
+    rc=0
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/406 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    if [ "$mode" = clean ]; then
+      expect_code 0 "$rc" "complete-commits: clean paginated PR should merge"
+      assert_logged_gh_merge "$case_dir" 406 example/repo --squash
+    else
+      expect_code 1 "$rc" "complete-commits-$mode: must refuse"
+      assert_no_grep 'pr merge' "$case_dir/gh.log" "complete-commits-$mode: merge ran"
+      if [ "$mode" = mixed ]; then
+        assert_grep 'refactor commits cannot be mixed' "$case_dir/stderr" "missing mixed refusal"
+      else
+        assert_grep 'complete GitHub pull request commit subjects' "$case_dir/stderr" "missing head refusal"
+      fi
+    fi
+  done
+  pass "all commit pages must be clean and end at the verified head"
+}
+
+test_complete_commit_set_is_required
+test_push_during_verification_refuses_mixed_commits
+test_mixed_refactor_and_fix_commits_refuse_before_merging
+test_refactor_only_commits_merge
+test_fix_only_commits_merge
+test_no_prefix_commits_are_ignored
 test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
@@ -3980,7 +4138,7 @@ test_file_boundary_absent_list_changes_nothing() {
   add_pr_files_mock "$case_dir" bin/anything.sh docs/at-all.md
   run_required_case "$case_dir" 43
   expect_code 0 "$RC" "boundary-absent: a task with no list must merge (stderr: $(cat "$case_dir/stderr"))"
-  assert_no_grep '/pulls/' "$case_dir/gh.log" "boundary-absent: the file list was read for a task with no list"
+  assert_no_grep '/pulls/43/files' "$case_dir/gh.log" "boundary-absent: the file list was read for a task with no list"
   assert_no_grep 'boundary' "$case_dir/stderr" "boundary-absent: the merge said something about a boundary"
   assert_logged_gh_merge "$case_dir" 43 example/repo --squash
   pass "fm-pr-merge reads no file list and says nothing for a task with no allowed list"

@@ -170,6 +170,10 @@ case "${1:-} ${2:-}" in
     ;;
 esac
 case " $* " in
+  *" api --paginate --slurp repos/"*"/pulls/"*"/commits?per_page=100 "*)
+    printf '[[{"sha":"%s","commit":{"message":"fix: fixture change"}}]]\n' \
+      "${FM_TEST_GH_HEAD:-0123456789abcdef0123456789abcdef01234567}"
+    ;;
   *" api repos/"*"/issues/"*"/comments?per_page=100 "*|*" api repos/"*"/pulls/"*"/reviews?per_page=100 "*|*" api repos/"*"/pulls/"*"/comments?per_page=100 "*)
     printf '%s\n' '[[]]'
     ;;
