@@ -333,14 +333,21 @@ SH
 # unterminated continuation line states no terminal event, so the inactive
 # fallback still reports the attributed failure upward.
 test_secondmate_unterminated_prose_reports_run_outcome() {
+  local long_note reported_status
   make_world unterminated-prose; bind_secondmate local
-  write_child "$MATE" child 'working: compiling'
+  long_note=$(printf '%*s' 1300 '' | tr ' ' x)
+  write_child "$MATE" child "paused: no-mistakes repair gate $long_note"
   printf 'Still going' >> "$MATE/state/child.status"
   age "$MATE/state/child.status"
   FM_FAKE_CREW_STATE='failed' run_reconcile "$MATE" --startup
   sed -E 's/ \[at=[0-9]+\]//' "$MAIN/state/mate.status" \
     | grep -Fq "failed [key=inactive-outcome-mate-child-failed]: inactive terminal child=child" \
     || fail "an unterminated prose line withheld a proven failure: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  grep -Fq 'last_status=paused: no-mistakes repair gate ' "$MAIN/state/mate.status" \
+    || fail "the fallback report omitted the child's last status: $(cat "$MAIN/state/mate.status" 2>/dev/null)"
+  reported_status=$(sed -n 's/.* last_status=//p' "$MAIN/state/mate.status")
+  [ "$(printf '%s' "$reported_status" | wc -c | tr -d ' ')" = 1200 ] \
+    || fail "the fallback report did not bound the child's last status"
   [ "$(outcome_count "$MATE" reported)" = 1 ] || fail "the fallback report did not retain its receipt"
   age "$MATE/state/child.status"
   FM_FAKE_CREW_STATE='failed' run_reconcile "$MATE" --startup

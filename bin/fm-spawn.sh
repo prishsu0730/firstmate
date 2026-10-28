@@ -19,7 +19,8 @@
 #   yolo is inactive (bin/fm-project-mode.sh's header carries that decision). A
 #   registry entry the parser refuses stops the spawn rather than launching on a
 #   guessed posture. A
-#   ship or scout spawn also refuses leftover `{TASK}` / `{FIRSTMATE_SPEC}`
+#   ship or scout spawn also refuses leftover `{TASK}` / `{FIRSTMATE_SPEC}` /
+#   `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{REVIEW_TIER}`
 #   placeholders, an empty Task, an incomplete pair of Task subsections, or a
 #   `## Captain's intent` line opening with a Captain label or address.
 #   Every ship or scout spawn renders `launch-brief.md`; for a no-mistakes ship
@@ -3246,7 +3247,7 @@ esac
 }
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
-    echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
+    echo "error: $BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}; fill ## Captain's intent, ## Firstmate spec, and ## Risk and review before spawn" >&2
     exit 1
   fi
   if ! fm_brief_task_content_valid "$BRIEF"; then
@@ -3386,7 +3387,7 @@ if [ "$KIND" = ship ]; then
     else
       forge_scaffold="fm-brief.sh $ID $PROJ_NAME --mode $MODE --forge $STANDING_FORGE"
     fi
-    echo "error: forge mismatch for $ID: $PROJ_NAME is registered forge=$STANDING_FORGE but $SOURCE_BRIEF records forge=$BRIEF_FORGE; keep the filled ## Captain's intent and ## Firstmate spec bodies, remove $SOURCE_BRIEF, re-scaffold it with $forge_scaffold, then re-fill those two subsections, so the worker's publication matches the project's forge" >&2
+    echo "error: forge mismatch for $ID: $PROJ_NAME is registered forge=$STANDING_FORGE but $SOURCE_BRIEF records forge=$BRIEF_FORGE; keep the filled ## Captain's intent, ## Firstmate spec, and ## Risk and review bodies, remove $SOURCE_BRIEF, re-scaffold it with $forge_scaffold, then re-fill those sections, so the worker's publication matches the project's forge" >&2
     exit 1
   fi
   # Merge authority on a Gerrit forge is refused rather than quietly dropped, on

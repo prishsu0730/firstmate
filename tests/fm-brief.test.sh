@@ -213,6 +213,14 @@ test_ship_modes_generate_clean_briefs() {
     assert_grep "{FIRSTMATE_SPEC}" "$brief" "$id: brief missing the {FIRSTMATE_SPEC} placeholder"
     assert_grep "## Captain's intent" "$brief" "$id: brief missing Captain's intent subsection"
     assert_grep "## Firstmate spec" "$brief" "$id: brief missing Firstmate spec subsection"
+    assert_grep "## Risk and review" "$brief" "$id: brief missing Risk and review subsection"
+    assert_grep "{BLAST_RADIUS}" "$brief" "$id: brief missing blast-radius placeholder"
+    assert_grep "{RISK_TIERS}" "$brief" "$id: brief missing risk-tiers placeholder"
+    assert_grep "{REVIEW_TIER}" "$brief" "$id: brief missing review-tier placeholder"
+    assert_grep "No Greptile (LOW) no-mistakes only; Base (MEDIUM) one fresh reviewer; Plus (HIGH) two independent passes then synthesis; Apex (CRITICAL) four specialist passes then synthesis; never stack depths." "$brief" "$id: brief missing the review-depth ladder"
+    assert_grep "Higher review tiers spend more review effort; they are not a score or merge authority." "$brief" "$id: brief missing the review-tier authority boundary"
+    assert_grep "original requirement; later approved addition; regression caused by this work; unrelated improvement with a named follow-up; or an existing safety, privacy, or data-loss issue." "$brief" "$id: brief missing the five-class finding triage rule"
+    assert_grep "Only regressions and unmet agreed requirements block delivery." "$brief" "$id: brief missing finding-triage blocking rule"
     assert_grep 'never a bare number such as "PR 108"' "$brief" "$id: brief missing the full-PR-URL rule"
     assert_live_machine_safety_contract "$brief"
     assert_grep "mid-task \`working:\` line (including setup complete) is nonterminal" "$brief" \
@@ -685,12 +693,12 @@ test_secondmate_marked_request_reporting_contract() {
     "$ROOT/bin/fm-brief.sh" marked-request-reporting --secondmate --no-projects >/dev/null 2>&1
   brief="$home/data/marked-request-reporting/brief.md"
 
-  assert_grep 'A marked request requires one correlated answer after the work' "$brief" \
-    "secondmate charter did not require the correlated answer after the work"
-  assert_grep 'does not require a separate receipt or start acknowledgement' "$brief" \
-    "secondmate charter did not reject a separate receipt/start acknowledgement"
-  assert_grep "Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started." "$brief" \
-    "secondmate charter did not forbid a generic working acknowledgement"
+  assert_grep 'A marked request requires one correlated answer after the work.' "$brief" \
+    "secondmate generated instructions must require a correlated final reply"
+  assert_grep "When it assigns work, also send a correlated \`working\` start reply among your first actions." "$brief" \
+    "secondmate generated instructions must require a correlated start reply"
+  assert_grep 'Use this for the required start reply, material phase changes' "$brief" \
+    "secondmate generated instructions must allow the required start reply"
   assert_no_grep "Give every routed-work phase a stable key: open it with \`working" "$brief" \
     "secondmate charter retained the unconditional working opener"
   assert_grep 'When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above' "$brief" \
@@ -712,8 +720,8 @@ test_secondmate_marked_request_reporting_contract() {
     "secondmate charter lost terse result reporting"
   assert_grep 'append a status line that points to that doc' "$brief" \
     "secondmate charter lost detailed document pointers"
-  assert_grep 'Report only true captain-relevant outcomes or a declared external wait' "$brief" \
-    "secondmate charter lost declared external waits"
+  assert_grep 'Report required start replies, true captain-relevant outcomes, or a declared external wait' "$brief" \
+    "secondmate generated instructions must allow start replies, outcomes, and external waits"
   assert_grep 'a captain decision, a real blocker, a failure, work ready for review, or work you landed' "$brief" \
     "secondmate charter lost decisions, blockers, failures, ready outcomes, or landed work"
   # Under standing merge authority nothing is ever "ready for review", so the
@@ -1014,6 +1022,8 @@ assert_live_machine_safety_contract() {
     "generated brief missing the live-machine experiment prohibition"
   assert_grep "when checks time out, check machine load with \`uptime\` before blaming the code" "$1" \
     "generated brief missing the timeout load check"
+  assert_grep 'The no-mistakes test step must complete, never be skipped, and runs only focused tests for the files you touch; GitHub CI runs the full suite.' "$1" \
+    "generated brief missing the focused no-mistakes test-step rule"
   assert_no_grep 'stop every background process' "$1" \
     "generated brief contains the blanket background-process cleanup requirement"
 }
@@ -1028,8 +1038,13 @@ test_scout_and_secondmate_scaffold() {
   assert_grep "report.md" "$brief" "scout brief must point at the report deliverable"
   assert_grep "## Captain's intent" "$brief" "scout brief missing Captain's intent subsection"
   assert_grep "## Firstmate spec" "$brief" "scout brief missing Firstmate spec subsection"
+  assert_grep "## Risk and review" "$brief" "scout brief missing Risk and review subsection"
   assert_grep "{FIRSTMATE_SPEC}" "$brief" "scout brief missing the spec placeholder"
   assert_live_machine_safety_contract "$brief"
+  assert_grep "{BLAST_RADIUS}" "$brief" "scout brief missing the blast-radius placeholder"
+  assert_grep "{RISK_TIERS}" "$brief" "scout brief missing the risk-tiers placeholder"
+  assert_grep "{REVIEW_TIER}" "$brief" "scout brief missing the review-tier placeholder"
+  assert_grep "Higher review tiers spend more review effort; they are not a score or merge authority." "$brief" "scout brief missing the review-tier authority boundary"
 
   FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
     FM_HOME="$BRIEF_HOME" "$ROOT/bin/fm-brief.sh" brief-sm-q6 --secondmate alpha >/dev/null 2>&1 \

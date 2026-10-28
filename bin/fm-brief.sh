@@ -2,14 +2,16 @@
 # Scaffold a crewmate brief or persistent secondmate charter at
 # data/<task-id>/brief.md under the active firstmate home.
 # For ordinary tasks, the standard Setup/Rules/Definition-of-done contract is
-# filled in. Ship and scout `# Task` sections have two subsections Firstmate
+# filled in. Ship and scout `# Task` sections have three subsections Firstmate
 # fills before dispatch: `{TASK}` under `## Captain's intent` (the captain's
 # own ask plus the context needed to read it, including the substance of any
 # report, decision, or PR the ask refers to, without added speaker labels or
 # direct address) and `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
-# intent). bin/fm-dod-lib.sh owns the no-mistakes `--intent` contract those
-# subsections feed; bin/fm-spawn.sh refuses leftover placeholders and a
+# intent), plus `## Risk and review`, whose three placeholders record the
+# task's blast radius, risk tiers, and review tier. bin/fm-dod-lib.sh owns the
+# no-mistakes `--intent` contract the first two subsections feed;
+# bin/fm-spawn.sh refuses leftover placeholders and a
 # `## Captain's intent` line opening with a Captain label or address. Secondmate
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
@@ -34,7 +36,8 @@
 #   Set FM_SECONDMATE_SCOPE='<scope>' to write a routing scope distinct from the charter text.
 #   --herdr-lab is mandatory when the task will issue Herdr lifecycle commands.
 #   It adds the hard isolation contract backed by bin/fm-herdr-lab.sh.
-#   The flag must be explicit because {TASK} and {FIRSTMATE_SPEC} are filled
+#   The flag must be explicit because {TASK}, {FIRSTMATE_SPEC}, and the Risk
+#   and review placeholders are filled
 #   after scaffolding and the caller-supplied repo string cannot reliably
 #   identify this repo. Briefs made without it carry a loud declaration so an
 #   omitted contract cannot be silent.
@@ -454,6 +457,7 @@ IFS= read -r -d '' INBOX_SECTION <<EOF || true
 Firstmate steers you through durable message files in $INBOX_DIR.
 When a terminal message says an instruction is waiting there - and at any natural checkpoint when you are unsure - list $INBOX_DIR/*.msg, read and act on each message in numeric order, then acknowledge each handled message by running \`$ACK_SCRIPT --inbox $INBOX_DIR NNN\` (the id of that message, such as 001) as its own command, never inside a compound command and never as a bare \`mv\`.
 The move that script makes IS the acknowledgement: without it firstmate rings again and eventually treats you as stuck. An empty or absent inbox needs no action.
+After reading a new brief or a steering message that assigns work, append a \`working\` status line naming that work among your first actions.
 EOF
 if [ -e "$CONFIG/wait-no-turns" ]; then
   INBOX_SECTION+="Do not poll or list the inbox while waiting; a waiting instruction rings."$'\n'
@@ -485,6 +489,7 @@ fi
 
 IFS= read -r -d '' LIVE_MACHINE_SAFETY_RULE <<'EOF' || true
 7. Never run CPU-load, stress, or busy-loop experiments on the live machine; when checks time out, check machine load with `uptime` before blaming the code.
+8. The no-mistakes test step must complete, never be skipped, and runs only focused tests for the files you touch; GitHub CI runs the full suite.
 EOF
 LIVE_MACHINE_SAFETY_RULE=${LIVE_MACHINE_SAFETY_RULE%$'\n'}
 
@@ -557,16 +562,16 @@ $INBOX_SECTION
 
 # Escalation to main firstmate
 Handle routine work yourself.
-Report only true captain-relevant outcomes or a declared external wait by appending one line:
+Report required start replies, true captain-relevant outcomes, or a declared external wait by appending one line:
    \`$STATUS_APPEND\`
 States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
 Substitute \`<epoch>\` with the current Unix time in seconds - run \`date +%s\` and write the number it printed; a stamp that is not plain digits records no time at all.
 Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own, naming when it clears with \`until <YYYY-MM-DDTHH:MMZ>\` (UTC) when you know; use \`blocked:\` when you are stuck and need firstmate to act.
-Use this only for material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
+Use this for the required start reply, material phase changes, a captain decision, a real blocker, a failure, work ready for review, or work you landed.
 Work you landed includes a merge you performed yourself under standing merge authority and one the captain merged on the forge: under that authority nothing is ever \"ready for review\", so a landed merge that goes unreported reaches the captain as silence.
 This is also how you return the answer to a marked from-firstmate request above.
-A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
-Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
+A marked request requires one correlated answer after the work.
+When it assigns work, also send a correlated \`working\` start reply among your first actions.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.
 If its first reportable event is \`working [key=<work-slug>]: {material phase}\`, use the same key on its later \`$PAUSED_VERB\`, \`done\`, \`failed\`, \`needs-decision\`, or \`blocked\` event so the earlier working phase is superseded.
 When a keyed phase ends without another reportable state, append \`resolved [key=<work-slug>] [at=<epoch>]: {why it is no longer active}\`.
@@ -634,6 +639,19 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 
 ## Firstmate spec
 {FIRSTMATE_SPEC}
+
+## Risk and review
+Blast radius: {BLAST_RADIUS}
+Risk tiers: {RISK_TIERS}
+Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)
+
+Before dispatch, classify every implementation change as LOCAL, COMPONENT, FLOW, or SYSTEM; name affected shared components, styles, state, assets, or routes; and match verification: LOCAL targeted screen check, COMPONENT every known usage, FLOW the end-to-end flow, SYSTEM full first-use regression.
+Set code review risk and execution risk independently as Low, Medium, High, or Critical, with a one-line reason covering impact, blast radius, reversibility, evidence, and permissions.
+Use one review depth per PR by consequence: No Greptile (LOW) no-mistakes only; Base (MEDIUM) one fresh reviewer; Plus (HIGH) two independent passes then synthesis; Apex (CRITICAL) four specialist passes then synthesis; never stack depths.
+Higher review tiers spend more review effort; they are not a score or merge authority.
+Triage every review finding as exactly one of: original requirement; later approved addition; regression caused by this work; unrelated improvement with a named follow-up; or an existing safety, privacy, or data-loss issue.
+Only regressions and unmet agreed requirements block delivery.
+Every finding carries severity, file:line, reproduction, consequence, fix, and regression test.
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
 
@@ -727,7 +745,7 @@ When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\`
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
 append_brief_include
-echo "scaffolded: $BRIEF (scout; replace {TASK} and {FIRSTMATE_SPEC})"
+echo "scaffolded: $BRIEF (scout; fill {TASK}, {FIRSTMATE_SPEC}, and Risk and review placeholders)"
 exit 0
 fi
 
@@ -850,7 +868,7 @@ $DOD
 EOF
 append_brief_include
 if [ "$FORGE" = none ]; then
-  echo "scaffolded: $BRIEF (ship, mode=$MODE; replace {TASK} and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE; fill {TASK}, {FIRSTMATE_SPEC}, and Risk and review placeholders)"
 else
-  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE shape=$SHAPE; replace {TASK} and {FIRSTMATE_SPEC})"
+  echo "scaffolded: $BRIEF (ship, mode=$MODE forge=$FORGE shape=$SHAPE; fill {TASK}, {FIRSTMATE_SPEC}, and Risk and review placeholders)"
 fi

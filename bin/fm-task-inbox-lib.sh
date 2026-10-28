@@ -53,7 +53,9 @@
 # FM_TASK_INBOX_GRACE_SECS is due one delivery attempt per grace period; an
 # attempt may ring or be skipped to protect another draft in a proven pending
 # composer; an unsubmitted copy of this doorbell is retried. After
-# FM_TASK_INBOX_RING_MAX attempts without an acknowledgement it escalates. The
+# FM_TASK_INBOX_RING_MAX attempts without an acknowledgement it waits until
+# the message is at least FM_TASK_INBOX_START_ACK_SECS old before escalating.
+# A working status reply does not replace the handled/ acknowledgement. The
 # caller owns the busy and recovery-grade endpoint checks: due actions deferred
 # by a busy pane consume a separate durable consecutive-poll budget,
 # FM_TASK_INBOX_BUSY_MAX. At that bound the same escalation path surfaces a
@@ -92,6 +94,8 @@
 #   FM_TASK_INBOX_GRACE_SECS   default 90; delivery-attempt grace and spacing
 #   FM_TASK_INBOX_RING_MAX     default 3; delivery attempts before escalation
 #   FM_TASK_INBOX_BUSY_MAX     default 2; consecutive busy-deferred due polls before escalation
+#   FM_TASK_INBOX_START_ACK_SECS default 900; bounded window for an inbox
+#                               acknowledgement after a steer
 
 _FM_TASK_INBOX_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Both dependencies are canonical lint roots in their own right. Keep them as
@@ -106,6 +110,7 @@ FM_TASK_INBOX_SCHEMA='fm-task-inbox.v1'
 FM_TASK_INBOX_GRACE_DEFAULT=90
 FM_TASK_INBOX_RING_MAX_DEFAULT=3
 FM_TASK_INBOX_BUSY_MAX_DEFAULT=2
+FM_TASK_INBOX_START_ACK_DEFAULT=900
 FM_TASK_INBOX_LOCK_WAIT_DEFAULT=5
 
 fm_task_inbox_grace_secs() {
@@ -128,6 +133,15 @@ fm_task_inbox_busy_max() {
     m=$FM_TASK_INBOX_BUSY_MAX_DEFAULT
   fi
   printf '%s' "$m"
+}
+
+fm_task_inbox_start_ack_secs() {
+  local s=${FM_TASK_INBOX_START_ACK_SECS:-$FM_TASK_INBOX_START_ACK_DEFAULT}
+  case "$s" in ''|*[!0-9]*) s=$FM_TASK_INBOX_START_ACK_DEFAULT ;; esac
+  if [ "${#s}" -gt 9 ] || [ "$s" -eq 0 ]; then
+    s=$FM_TASK_INBOX_START_ACK_DEFAULT
+  fi
+  printf '%s' "$s"
 }
 
 # Persist before returning the new count, so a fresh watcher continues the same
@@ -416,7 +430,6 @@ fm_task_inbox_is_fire_and_forget() {  # <record-path>
   ' "$rec"
 }
 
-# Oldest escalation-tracked unhandled record, or fail when none is due.
 fm_task_inbox_oldest_unhandled() {  # <state-dir> <task-id>
   local dir best='' best_n=0 f n
   dir=$(fm_task_inbox_dir "$1" "$2")
@@ -455,12 +468,12 @@ fm_task_inbox_clear_retry() {  # <state-dir> <task-id> <record-path>
 #   quiet                     nothing due (healthy, within grace or spacing,
 #                             or already escalated for the current oldest)
 #   ring <record-path>        one doorbell re-ring is due
-#   escalate <record-path> <count>   attempt budget spent; surface as stale
+#   escalate <record-path> <count>   attempt budget and acknowledgement window spent
 #   retry <record-path>       a fire-and-forget record's one retry ring is due
 # An empty inbox also resets the ladder bookkeeping so the next message starts
 # a fresh ladder.
 fm_task_inbox_due_action() {  # <state-dir> <task-id>
-  local dir oldest base now grace max ladder rec_base count last
+  local dir oldest base now grace max start_ack ladder rec_base count last
   dir=$(fm_task_inbox_dir "$1" "$2")
   if ! oldest=$(fm_task_inbox_oldest_unhandled "$1" "$2"); then
     rm -f "$dir/.ring-state" "$dir/.escalated" "$dir/.busy-state" 2>/dev/null || true
@@ -501,8 +514,13 @@ EOF
     return 0
   fi
   max=$(fm_task_inbox_ring_max)
+  start_ack=$(fm_task_inbox_start_ack_secs)
   if [ "$count" -ge "$max" ]; then
-    printf 'escalate %s %s' "$oldest" "$count"
+    if [ "$(fm_path_age "$oldest")" -ge "$start_ack" ]; then
+      printf 'escalate %s %s' "$oldest" "$count"
+    else
+      printf 'quiet'
+    fi
     return 0
   fi
   now=$(date +%s)

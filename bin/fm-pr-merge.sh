@@ -21,6 +21,12 @@
 # re-checks every condition after a short bounded wait instead of refusing;
 # once that bound is spent it reports mergeability still pending rather than
 # unmergeable, with the same nonzero exit as any other refusal.
+# A GitHub pull request is also refused before any merge call when its commit
+# subjects mix a refactor: commit with a fix: or feat: commit, including an
+# optional conventional-commit scope after each prefix.
+# Each verification attempt reads all commit pages and requires the last commit
+# to match that attempt's verified head; unreadable or incomplete subjects, or
+# a changed head, refuse the merge.
 # A required check that never reported is absent from the checks
 # list rather than red, so github_read_required_contexts below reads the
 # required set from classic branch protection and active rulesets. Check-run
@@ -459,6 +465,39 @@ if [ "$PROVIDER" = github ]; then
   fi
 fi
 
+github_refuse_mixed_refactor_commits() {
+  local head=$1 json subject type subjects=''
+  local refactors=() fixes_or_features=()
+  local prefix='^(refactor|fix|feat)(\([^)]*\))?:'
+
+  if ! json=$(gh api --paginate --slurp "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER/commits?per_page=100" 2>/dev/null) \
+    || ! subjects=$(printf '%s' "$json" | jq -er --arg head "$head" '
+      if type != "array" then error("invalid pages") else . end
+      | if all(.[]; type == "array") then add else error("invalid page") end
+      | if length > 0 and .[-1].sha == $head then . else error("incomplete or changed head") end
+      | .[] | if (.commit.message | type) == "string" then .commit.message | split("\n")[0]
+        else error("invalid commit subject") end' 2>/dev/null); then
+    echo "error: could not read the complete GitHub pull request commit subjects at the verified head before merging" >&2
+    return 1
+  fi
+  while IFS= read -r subject; do
+    [[ "$subject" =~ $prefix ]] || continue
+    type=${BASH_REMATCH[1]}
+    case "$type" in
+      refactor) refactors+=("$subject") ;;
+      fix|feat) fixes_or_features+=("$subject") ;;
+    esac
+  done <<EOF
+$subjects
+EOF
+  [ "${#refactors[@]}" -eq 0 ] || [ "${#fixes_or_features[@]}" -eq 0 ] && return 0
+
+  printf 'error: refusing to merge %s: refactor commits cannot be mixed with fix or feat commits\n' "$URL" >&2
+  printf 'error: refactor commits: %s\n' "${refactors[*]}" >&2
+  printf 'error: fix or feat commits: %s\n' "${fixes_or_features[*]}" >&2
+  return 1
+}
+
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
 RECORDED_HEAD=
@@ -784,6 +823,7 @@ FIELDS
     echo "error: could not read the GitHub pull request head commit before merging" >&2
     return 1
   fi
+  github_refuse_mixed_refactor_commits "$live_head" || return 1
   if ! red=$(github_checks_not_green "$json"); then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1

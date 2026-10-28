@@ -128,6 +128,9 @@ case "${1:-} ${2:-}" in
     ;;
   "api --paginate")
     case " $* " in
+      *"/pulls/"*"/commits?per_page=100 "*)
+        printf '%s\n' '[[{"sha":"1111111111111111111111111111111111111111","commit":{"message":"fix: fixture change"}}]]'
+        ;;
       *merge_queue*) ;;
       *) printf '%s\n' '[]' ;;
     esac

@@ -63,11 +63,17 @@ make_case() {
 #!/usr/bin/env bash
 set -u
 if [ "${1:-}" = "list-windows" ]; then
-  if [ -n "${FM_FAKE_TMUX_WINDOWS:-}" ]; then
+  if [ -n "${FM_FAKE_TMUX_WINDOWS_FILE:-}" ]; then
+    cat "$FM_FAKE_TMUX_WINDOWS_FILE"
+  elif [ -n "${FM_FAKE_TMUX_WINDOWS:-}" ]; then
     printf '%s\n' "$FM_FAKE_TMUX_WINDOWS"
   elif [ -n "${FM_FAKE_TMUX_WINDOW:-}" ]; then
     printf '%s\n' "${FM_FAKE_TMUX_WINDOW#*:}"
   fi
+  exit 0
+fi
+if [ "${1:-}" = "kill-window" ] || [ "${1:-}" = "kill-session" ]; then
+  [ -z "${FM_FAKE_TMUX_WINDOWS_FILE:-}" ] || : > "$FM_FAKE_TMUX_WINDOWS_FILE"
   exit 0
 fi
 if [ "${1:-}" = "capture-pane" ]; then
