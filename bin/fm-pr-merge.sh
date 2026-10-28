@@ -463,11 +463,14 @@ if [ "$PROVIDER" = github ]; then
 fi
 
 github_refuse_mixed_refactor_commits() {
-  local subject type subjects=''
+  local json=$1 subject type subjects=''
   local refactors=() fixes_or_features=()
   local prefix='^(refactor|fix|feat)(\([^)]*\))?:'
 
-  if ! subjects=$(gh pr view "$URL" --json commits --jq '.commits[] | .messageHeadline // empty' 2>/dev/null); then
+  if ! subjects=$(printf '%s' "$json" | jq -r '
+      if (.commits | type) != "array" then error("invalid commits") else .commits[] end
+      | if (.messageHeadline | type) == "string" then .messageHeadline
+        else error("invalid commit subject") end' 2>/dev/null); then
     echo "error: could not read the GitHub pull request commit subjects before merging" >&2
     return 1
   fi
@@ -488,10 +491,6 @@ EOF
   printf 'error: fix or feat commits: %s\n' "${fixes_or_features[*]}" >&2
   return 1
 }
-
-if [ "$PROVIDER" = github ]; then
-  github_refuse_mixed_refactor_commits || exit 1
-fi
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
@@ -776,7 +775,7 @@ github_verify_mergeable() {
   local total=0 named=0 refusals='' mergeable_refusal=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,commits 2>/dev/null) \
     || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
@@ -813,6 +812,7 @@ FIELDS
     return 1
   fi
 
+  github_refuse_mixed_refactor_commits "$json" || return 1
   draft=$(fm_pr_json_draft_state "$json")
   if ! fm_pr_head_valid "$live_head"; then
     echo "error: could not read the GitHub pull request head commit before merging" >&2

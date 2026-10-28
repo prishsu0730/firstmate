@@ -174,7 +174,7 @@ printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "pr view")
     case " $* " in
-      *commits*)
+      *" --json commits "*)
         cat "$FM_TEST_GH_COMMITS"
         exit 0
         ;;
@@ -185,12 +185,20 @@ case "${1:-} ${2:-}" in
           call_m=$(sed -n "${call_n}p" "$FM_TEST_GH_MERGEABLE_SEQUENCE")
           [ -n "$call_m" ] || call_m=$(tail -n1 "$FM_TEST_GH_MERGEABLE_SEQUENCE")
           # An optional second word overrides the first check's conclusion.
-          read -r call_m call_c <<< "$call_m"
-          jq -c --arg m "$call_m" --arg c "${call_c:-}" \
-            '.mergeable = $m | if $c != "" then .statusCheckRollup[0].conclusion = $c else . end' \
+          read -r call_m call_c call_mix <<< "$call_m"
+          jq -c --arg m "$call_m" --arg c "${call_c:-}" --arg mix "${call_mix:-}" \
+            --rawfile subjects "$FM_TEST_GH_COMMITS" \
+            '.mergeable = $m | if $c != "" then .statusCheckRollup[0].conclusion = $c else . end
+             | .commits = ($subjects | split("\n") | map(select(length > 0) | {messageHeadline: .}))
+             | if $mix == "mixed" then
+                 .headRefOid = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                 | .commits += [{messageHeadline: "fix: pushed during verification"}]
+               else . end' \
             "$FM_TEST_GH_VIEW_JSON"
         else
-          cat "$FM_TEST_GH_VIEW_JSON"
+          jq --rawfile subjects "$FM_TEST_GH_COMMITS" \
+            '.commits = ($subjects | split("\n") | map(select(length > 0) | {messageHeadline: .}))' \
+            "$FM_TEST_GH_VIEW_JSON"
         fi
         if [ -f "${FM_TEST_AWAY_RECORD_AFTER_VIEW:-}" ]; then
           if [ -s "${FM_TEST_AWAY_RECORD_AFTER_VIEW}" ]; then
@@ -2431,6 +2439,27 @@ test_no_prefix_commits_are_ignored() {
   pass "fm-pr-merge ignores commit subjects without conventional prefixes"
 }
 
+test_push_during_verification_refuses_mixed_commits() {
+  local case_dir attempt rc
+  for attempt in first retry; do
+    case_dir=$(make_case "mixed-push-$attempt")
+    add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    printf '%s\n' 'refactor: simplify commit reading' > "$case_dir/github-commits"
+    if [ "$attempt" = retry ]; then
+      printf '%s\n' 'UNKNOWN SUCCESS' 'MERGEABLE SUCCESS mixed' > "$case_dir/sequence"
+    else
+      printf '%s\n' 'MERGEABLE SUCCESS mixed' > "$case_dir/sequence"
+    fi
+    rc=0
+    FM_TEST_GH_MERGEABLE_SEQUENCE="$case_dir/sequence" FM_PR_GITHUB_MERGEABLE_RETRY_DELAY=0       run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/405       > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    expect_code 1 "$rc" "mixed-push-$attempt: newer mixed head must refuse"
+    assert_grep 'refactor commits cannot be mixed' "$case_dir/stderr"       "mixed-push-$attempt: missing mixed commit refusal"
+    assert_no_grep 'pr merge' "$case_dir/gh.log" "mixed-push-$attempt: merge ran"
+  done
+  pass "mixed pushes are refused on initial verification and UNKNOWN retry"
+}
+
+test_push_during_verification_refuses_mixed_commits
 test_mixed_refactor_and_fix_commits_refuse_before_merging
 test_refactor_only_commits_merge
 test_fix_only_commits_merge
