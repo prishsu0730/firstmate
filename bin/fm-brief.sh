@@ -489,6 +489,7 @@ fi
 
 IFS= read -r -d '' LIVE_MACHINE_SAFETY_RULE <<'EOF' || true
 7. Never run CPU-load, stress, or busy-loop experiments on the live machine; when checks time out, check machine load with `uptime` before blaming the code.
+8. The no-mistakes test step must complete, never be skipped, and runs only focused tests for the files you touch; GitHub CI runs the full suite.
 EOF
 LIVE_MACHINE_SAFETY_RULE=${LIVE_MACHINE_SAFETY_RULE%$'\n'}
 
