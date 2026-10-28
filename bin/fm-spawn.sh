@@ -3796,13 +3796,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Only herdr and tmux reach here: the gate above rebinds only on a
-    # PROVEN-gone endpoint, and absence is provable only where every read is
-    # scoped to the server the record names - herdr by session, tmux by the
-    # server identity written at spawn
-    # (fm_control_endpoint_absence_verdict owns that argument). Every
-    # secondmate was already refused. The tmux dispatch is the short branch
-    # just below; the rest of this comment is herdr's.
+    # Only herdr reaches this branch; tmux was handled above and every
+    # secondmate was already refused. fm_control_endpoint_absence_verdict
+    # owns the shared absence proof.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
@@ -5232,9 +5228,8 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
-  # backend= is written only for a non-default (non-tmux) backend, so the
-  # default path's meta stays byte-identical (absent backend= means tmux;
-  # data/fm-backend-design-d7's P1 compatibility contract).
+  # backend= is written only for a non-default (non-tmux) backend;
+  # absent backend= continues to mean tmux.
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
   # The tmux server this endpoint lives on, so a later control verb can prove
   # the endpoint gone after a server restart instead of refusing forever. Written
