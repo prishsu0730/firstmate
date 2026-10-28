@@ -58,10 +58,32 @@ make_case() {
   # rule, so nothing is required unless a case says otherwise.
   write_github_required "$case_dir"
   : > "$case_dir/gh.log"
+  write_review_tier_brief "$case_dir" task-x1 LOW
   # The worktree is a git copy whose HEAD is on a remote-tracking ref, as a
   # pushed ship task's is, so fm-pr-check.sh's named-head gate accepts it when
   # the forge supplies no head (GitLab). No project clone exists on disk.
   printf '%s\n' "$case_dir"
+}
+
+# The task brief's risk section as bin/fm-brief.sh scaffolds it, ending in the
+# tier line the review gate reads. The tier is written ahead of the scaffold's
+# own "(No Greptile / Base / Plus / Apex)" tail, exactly as a filled brief reads.
+# Args: case_dir task_id tier_text
+write_review_tier_brief() {
+  local case_dir=$1 id=$2 tier=$3
+  mkdir -p "$case_dir/home/data/$id"
+  printf '%s\n' '# Task' '## Captain'"'"'s intent' 'ship it' '' '## Risk and review' \
+    'Blast radius: COMPONENT' 'Risk tiers: code review risk Medium; execution risk Low' \
+    "Review tier: $tier (No Greptile / Base / Plus / Apex)" \
+    > "$case_dir/home/data/$id/brief.md"
+}
+
+# Append one review report line to the task's durable review record.
+# Args: case_dir task_id pr_url head reviewer [verdict]
+add_review() {
+  local case_dir=$1 id=$2 url=$3 head=$4 reviewer=$5 verdict=${6:-no merge-blocking finding}
+  mkdir -p "$case_dir/home/data/$id"
+  printf '%s|%s|%s|%s\n' "$url" "$head" "$reviewer" "$verdict" >> "$case_dir/home/data/$id/reviews"
 }
 
 # The base branch's required checks as GitHub reports them: the classic branch
@@ -4299,7 +4321,8 @@ test_file_boundary_lost_list_refuses() {
   assert_grep 'cannot be read' "$case_dir/stderr" "boundary-lost: the refusal did not say why"
   assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-lost: the merge reached the forge"
 
-  printf '%s\n' '# Task' 'no boundary here' > "$case_dir/home/data/task-x1/brief.md"
+  printf '%s\n' '# Task' 'no boundary here' '## Risk and review' \
+    'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$case_dir/home/data/task-x1/brief.md"
   run_required_case "$case_dir" 48
   expect_code 0 "$RC" "boundary-lost: a brief with no boundary line is a task with no boundary (stderr: $(cat "$case_dir/stderr"))"
   pass "fm-pr-merge refuses a lost boundary record, and leaves a never-bounded task alone"
@@ -4416,3 +4439,266 @@ test_file_boundary_unreadable_task_record_refuses() {
 test_file_boundary_deleted_task_directory_refuses
 test_file_boundary_deleted_directory_of_the_owner_refuses_a_wrong_id
 test_file_boundary_unreadable_task_record_refuses
+
+# --- review-tier merge gate --------------------------------------------------
+
+REVIEW_URL=https://github.com/example/repo/pull/610
+REVIEW_HEAD=6106106106106106106106106106106106106106
+REVIEW_OLD_HEAD=1111111111111111111111111111111111111111
+
+# A fresh GitHub case whose brief carries the given tier text. Sets CASE.
+# Args: case_name tier_text
+make_review_case() {
+  CASE=$(make_case "$1")
+  add_gh_mocks "$CASE" "$REVIEW_HEAD"
+  write_review_tier_brief "$CASE" task-x1 "$2"
+}
+
+merge_review_case() {
+  set +e
+  run_pr_merge "$CASE" task-x1 "$REVIEW_URL" > "$CASE/stdout" 2> "$CASE/stderr"
+  RC=$?
+  set -e
+}
+
+assert_review_refusal() {
+  local label=$1
+  expect_code 1 "$RC" "$label: the merge must refuse (stderr: $(cat "$CASE/stderr"))"
+  assert_grep 'review' "$CASE/stderr" "$label: the refusal did not mention the review"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "$label: the merge reached the forge"
+}
+
+test_review_tier_low_needs_no_review() {
+  local tier n=0
+  for tier in 'LOW' 'LOW / No Greptile' 'No Greptile' 'low'; do
+    n=$((n + 1))
+    make_review_case "review-low-$n" "$tier"
+    merge_review_case
+    expect_code 0 "$RC" "review-low '$tier': a LOW tier needs no review (stderr: $(cat "$CASE/stderr"))"
+    assert_logged_gh_merge "$CASE" 610 example/repo --squash
+  done
+  pass "fm-pr-merge merges a LOW / No Greptile tier with no review recorded"
+}
+
+test_review_tier_base_refuses_without_a_review() {
+  local tier n=0
+  for tier in 'MEDIUM (Base)' 'Base' 'MEDIUM' 'Base/MEDIUM'; do
+    n=$((n + 1))
+    make_review_case "review-base-none-$n" "$tier"
+    merge_review_case
+    assert_review_refusal "review-base-none '$tier'"
+    assert_grep 'needs 1 ' "$CASE/stderr" "review-base-none '$tier': the refusal did not name the count needed"
+    assert_grep 'found 0' "$CASE/stderr" "review-base-none '$tier': the refusal did not name the count found"
+    assert_grep "$REVIEW_HEAD" "$CASE/stderr" "review-base-none '$tier': the refusal did not name the head"
+    assert_grep "$REVIEW_URL|$REVIEW_HEAD|<reviewer-task-id>|no merge-blocking finding" "$CASE/stderr" \
+      "review-base-none '$tier': the refusal did not show the line a reviewer records"
+  done
+  pass "fm-pr-merge refuses a Base/MEDIUM tier with no review and names the line to record"
+}
+
+test_review_tier_base_merges_with_one_review() {
+  make_review_case review-base-one 'MEDIUM (Base)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  merge_review_case
+  expect_code 0 "$RC" "review-base-one: one review at the head must allow the merge (stderr: $(cat "$CASE/stderr"))"
+  assert_logged_gh_merge "$CASE" 610 example/repo --squash
+  pass "fm-pr-merge merges a Base/MEDIUM tier with one review at the current head"
+}
+
+test_review_from_an_older_head_is_void() {
+  make_review_case review-stale-head 'MEDIUM (Base)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_OLD_HEAD" scout-r1
+  merge_review_case
+  assert_review_refusal "review-stale-head"
+  assert_grep 'found 0' "$CASE/stderr" "review-stale-head: a review of an older head was counted"
+  pass "fm-pr-merge voids a review recorded for an older head"
+}
+
+test_review_for_another_pr_is_void() {
+  make_review_case review-other-pr 'MEDIUM (Base)'
+  add_review "$CASE" task-x1 https://github.com/example/repo/pull/611 "$REVIEW_HEAD" scout-r1
+  add_review "$CASE" task-x1 https://github.com/other/repo/pull/610 "$REVIEW_HEAD" scout-r2
+  merge_review_case
+  assert_review_refusal "review-other-pr"
+  assert_grep 'found 0' "$CASE/stderr" "review-other-pr: a review of another PR was counted"
+  pass "fm-pr-merge ignores reviews recorded for a different pull request"
+}
+
+test_review_without_a_clean_verdict_is_void() {
+  make_review_case review-blocking-verdict 'MEDIUM (Base)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1 'merge-blocking finding'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r2 'no merge-blocking finding but unfinished'
+  printf '%s\n' 'not a review line' "$REVIEW_URL|$REVIEW_HEAD|scout-r3" >> "$CASE/home/data/task-x1/reviews"
+  merge_review_case
+  assert_review_refusal "review-blocking-verdict"
+  assert_grep 'found 0' "$CASE/stderr" "review-blocking-verdict: a review without the clean verdict was counted"
+  pass "fm-pr-merge counts only reviews whose verdict is no merge-blocking finding"
+}
+
+test_review_by_the_implementer_does_not_count() {
+  make_review_case review-self 'MEDIUM (Base)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" task-x1
+  merge_review_case
+  assert_review_refusal "review-self"
+  assert_grep 'found 0' "$CASE/stderr" "review-self: the task's own review was counted"
+  pass "fm-pr-merge does not count the shipping task reviewing itself"
+}
+
+test_review_tier_plus_needs_two_independent_reviews() {
+  make_review_case review-plus-one 'HIGH (Plus)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  merge_review_case
+  assert_review_refusal "review-plus-one"
+  assert_grep 'needs 2 ' "$CASE/stderr" "review-plus-one: the refusal did not name 2 reviews needed"
+  assert_grep 'found 1' "$CASE/stderr" "review-plus-one: the refusal did not name 1 review found"
+
+  make_review_case review-plus-dup 'Plus/HIGH'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  merge_review_case
+  assert_review_refusal "review-plus-dup"
+  assert_grep 'found 1' "$CASE/stderr" "review-plus-dup: one reviewer counted twice"
+
+  make_review_case review-plus-two 'HIGH (Plus)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r2
+  merge_review_case
+  expect_code 0 "$RC" "review-plus-two: two independent reviews must allow the merge (stderr: $(cat "$CASE/stderr"))"
+  assert_logged_gh_merge "$CASE" 610 example/repo --squash
+  pass "fm-pr-merge needs two distinct reviewers for a Plus/HIGH tier"
+}
+
+test_review_tier_apex_needs_four_reviews() {
+  local n
+  make_review_case review-apex-three 'CRITICAL (Apex)'
+  for n in 1 2 3; do add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" "scout-r$n"; done
+  merge_review_case
+  assert_review_refusal "review-apex-three"
+  assert_grep 'needs 4 ' "$CASE/stderr" "review-apex-three: the refusal did not name 4 reviews needed"
+  assert_grep 'found 3' "$CASE/stderr" "review-apex-three: the refusal did not name 3 reviews found"
+
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r4
+  : > "$CASE/gh.log"
+  merge_review_case
+  expect_code 0 "$RC" "review-apex-four: four reviews must allow the merge (stderr: $(cat "$CASE/stderr"))"
+  assert_logged_gh_merge "$CASE" 610 example/repo --squash
+  pass "fm-pr-merge needs four distinct reviewers for an Apex/CRITICAL tier"
+}
+
+test_review_new_head_voids_older_reviews() {
+  make_review_case review-new-head 'MEDIUM (Base)'
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_OLD_HEAD" scout-r1
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_OLD_HEAD" scout-r2
+  merge_review_case
+  assert_review_refusal "review-new-head"
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r3
+  : > "$CASE/gh.log"
+  merge_review_case
+  expect_code 0 "$RC" "review-new-head: a review at the new head must allow the merge (stderr: $(cat "$CASE/stderr"))"
+  pass "fm-pr-merge needs a fresh review after the head moves"
+}
+
+test_review_tier_unknown_or_missing_refuses_with_the_fix() {
+  local tier n=0
+  for tier in 'SOMETIMES' 'MEDIUM or HIGH' '{REVIEW_TIER}' '' 'Base LOW'; do
+    n=$((n + 1))
+    make_review_case "review-unknown-$n" "$tier"
+    merge_review_case
+    expect_code 1 "$RC" "review-unknown '$tier': an unknown tier must refuse"
+    assert_grep 'review tier' "$CASE/stderr" "review-unknown '$tier': the refusal did not name the review tier"
+    assert_grep 'Review tier:' "$CASE/stderr" "review-unknown '$tier': the refusal did not name the brief line to fix"
+    assert_no_grep 'pr merge' "$CASE/gh.log" "review-unknown '$tier': the merge reached the forge"
+  done
+
+  make_review_case review-no-line LOW
+  printf '%s\n' '# Task' 'Blast radius: COMPONENT' > "$CASE/home/data/task-x1/brief.md"
+  merge_review_case
+  expect_code 1 "$RC" "review-no-line: a brief without a tier line must refuse"
+  assert_grep 'no Review tier line' "$CASE/stderr" "review-no-line: the refusal did not say the line is missing"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "review-no-line: the merge reached the forge"
+
+  make_review_case review-two-lines LOW
+  printf '%s\n' 'Review tier: HIGH (Plus)' >> "$CASE/home/data/task-x1/brief.md"
+  merge_review_case
+  expect_code 1 "$RC" "review-two-lines: two tier lines must refuse, not pick the lower one"
+  assert_grep 'more than one' "$CASE/stderr" "review-two-lines: the refusal did not say the line repeats"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "review-two-lines: the merge reached the forge"
+
+  make_review_case review-no-brief LOW
+  unlink "$CASE/home/data/task-x1/brief.md"
+  merge_review_case
+  expect_code 1 "$RC" "review-no-brief: a task with no brief must refuse"
+  assert_grep 'brief' "$CASE/stderr" "review-no-brief: the refusal did not name the missing brief"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "review-no-brief: the merge reached the forge"
+  pass "fm-pr-merge refuses an unknown or missing review tier and names the brief line to fix"
+}
+
+test_review_record_that_cannot_be_read_refuses() {
+  make_review_case review-record-unreadable 'MEDIUM (Base)'
+  mkdir "$CASE/home/data/task-x1/reviews"
+  merge_review_case
+  assert_review_refusal "review-record-unreadable"
+  pass "fm-pr-merge refuses when the review record exists but cannot be read"
+}
+
+test_review_gate_does_not_bypass_other_guards() {
+  make_review_case review-still-red 'MEDIUM (Base)'
+  write_github_red_json "$CASE" "$REVIEW_HEAD" ci
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  merge_review_case
+  expect_code 1 "$RC" "review-still-red: a review must not excuse a red check"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "review-still-red: the merge reached the forge"
+
+  make_review_case review-attended-override 'HIGH (Plus)'
+  set +e
+  run_pr_merge "$CASE" task-x1 "$REVIEW_URL" --attended-override -- --admin > "$CASE/stdout" 2> "$CASE/stderr"
+  RC=$?
+  set -e
+  assert_review_refusal "review-attended-override"
+  pass "fm-pr-merge keeps its other guards, and no override skips the review gate"
+}
+
+test_review_tier_gitlab_needs_reviews_at_the_head() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case review-gitlab)
+  write_review_tier_brief "$case_dir" task-x1 'MEDIUM (Base)'
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "review-gitlab: a Base tier with no review must refuse (stderr: $(cat "$case_dir/stderr"))"
+  assert_grep 'found 0' "$case_dir/stderr" "review-gitlab: the refusal did not name the count found"
+  assert_no_grep 'mr merge' "$case_dir/glab.log" "review-gitlab: the merge reached the forge"
+
+  add_review "$case_dir" task-x1 "$MR_URL" "$MR_STALE_HEAD" scout-r1
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "review-gitlab: a review of an older head must not count"
+  assert_no_grep 'mr merge' "$case_dir/glab.log" "review-gitlab: the merge reached the forge on a stale review"
+
+  add_review "$case_dir" task-x1 "$MR_URL" "$MR_HEAD" scout-r2
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "review-gitlab: a review at the head must allow the merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_grep 'mr merge 7' "$case_dir/glab.log" "review-gitlab: the merge did not run"
+  pass "fm-pr-merge applies the review gate to a GitLab merge request at its verified head"
+}
+
+test_review_tier_low_needs_no_review
+test_review_tier_base_refuses_without_a_review
+test_review_tier_base_merges_with_one_review
+test_review_from_an_older_head_is_void
+test_review_for_another_pr_is_void
+test_review_without_a_clean_verdict_is_void
+test_review_by_the_implementer_does_not_count
+test_review_tier_plus_needs_two_independent_reviews
+test_review_tier_apex_needs_four_reviews
+test_review_new_head_voids_older_reviews
+test_review_tier_unknown_or_missing_refuses_with_the_fix
+test_review_record_that_cannot_be_read_refuses
+test_review_gate_does_not_bypass_other_guards
+test_review_tier_gitlab_needs_reviews_at_the_head
