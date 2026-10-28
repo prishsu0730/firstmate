@@ -28,7 +28,8 @@
 # bytes cannot act as terminal controls; only the first message line is a subject.
 # Commit messages (subject and body) also refuse a case-insensitive whole-word
 # direct address "captain"; hyphenated, underscored, dotted, and slash-joined
-# tokens such as captain-hold and data/captain.md are exempt.
+# tokens such as captain-hold and data/captain.md are exempt only when the
+# joining punctuation has a letter or digit on both sides.
 # Refusals name the short SHA and JSON-escape the subject and SHA for safety.
 # Each verification attempt reads all commit pages and requires the last commit
 # to match that attempt's verified head; unreadable or incomplete subjects, or
@@ -499,7 +500,7 @@ github_refuse_mixed_refactor_commits() {
   fi
   if ! addresses=$(printf '%s' "$json" | jq -r '
       add | .[]
-      | select(.commit.message | test("(^|[^[:alnum:]_./-])captain($|[^[:alnum:]_./-])"; "i"))
+      | select(.commit.message | test("(?<![[:alnum:]])(?<![[:alnum:]][_./-])captain(?![[:alnum:]]|[_./-][[:alnum:]])"; "i"))
       | if (.sha | type) != "string" then error("invalid commit SHA") else . end
       | "\(.sha[0:8] | tojson) \(.commit.message | split("\n")[0] | tojson)"' 2>/dev/null); then
     echo "error: could not inspect GitHub pull request commit messages before merging" >&2

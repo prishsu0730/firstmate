@@ -4440,13 +4440,22 @@ test_file_boundary_unreadable_task_record_refuses
 test_commit_address_boundaries_and_bodies() {
   local mode case_dir rc message subject head
   head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  for mode in body tokens clean controls later-page; do
+  for mode in body period ellipsis hyphen slash underscore leading-period leading-hyphen leading-slash leading-underscore tokens clean controls later-page; do
     case_dir=$(make_case "commit-address-$mode")
     add_gh_mocks "$case_dir" "$head"
     subject='fix: preserve merge refusal'
     case "$mode" in
       body) message=$'fix: preserve merge refusal\n\nThanks, cApTaIn!' ;;
-      tokens) message=$'fix(captain-hold): preserve merge refusal\n\ndata/captain.md fm-captain-hold.sh captain-hold captain_hold captain.md /captain/ captains precaptain captain2' ;;
+      period) message='Thanks, Captain.' ;;
+      ellipsis) message='Captain... added tests' ;;
+      hyphen) message=$'fix: preserve merge refusal\n\nCaptain- added tests' ;;
+      slash) message='fix: /Captain/' ;;
+      underscore) message='fix: Captain_' ;;
+      leading-period) message='fix: .Captain' ;;
+      leading-hyphen) message='fix: -Captain' ;;
+      leading-slash) message='fix: /Captain' ;;
+      leading-underscore) message='fix: _Captain' ;;
+      tokens) message=$'fix(captain-hold): preserve merge refusal\n\ndata/captain.md fm-captain-hold.sh captain-hold captain_hold captain.md captain/log data/captain data.captain data-captain data_captain captains precaptain captain2' ;;
       clean) message=$'fix: preserve merge refusal\n\nAdded regression tests.' ;;
       controls) subject=$'fix: Captain, added tests\033]52;c;payload\a\r'; message=$subject ;;
       later-page) message='CAPTAIN: added tests' ;;
