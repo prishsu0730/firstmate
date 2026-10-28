@@ -1273,7 +1273,7 @@ require_file_boundary() {
 REVIEW_TIER_NAME=
 REVIEW_TIER_NEEDED=
 read_review_tier() {
-  local brief=$1 section lines value words word needed='' mapped
+  local brief=$1 section lines value needed
   REVIEW_TIER_NAME=
   REVIEW_TIER_NEEDED=
   if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
@@ -1290,25 +1290,15 @@ read_review_tier() {
     echo "error: refusing to merge $URL: the brief of task $ID has more than one Review tier line, so its review tier is ambiguous; keep exactly one in $brief" >&2
     return 1
   fi
-  value=${lines#Review tier:}
-  value=${value% '(No Greptile / Base / Plus / Apex)'}
-  words=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' ' ')
-  words=" $(printf '%s' "$words" | tr -s ' ') "
-  words=${words// no greptile / low }
-  for word in $words; do
-    case "$word" in
-      low) mapped=0 ;;
-      base|medium) mapped=1 ;;
-      plus|high) mapped=2 ;;
-      apex|critical) mapped=4 ;;
-      *) mapped= ;;
-    esac
-    if [ -z "$mapped" ] || { [ -n "$needed" ] && [ "$needed" != "$mapped" ]; }; then
-      needed=
-      break
-    fi
-    needed=$mapped
-  done
+  value=$(printf '%s' "${lines#Review tier:}" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//')
+  value=${value% ' (no greptile / base / plus / apex)'}
+  case "$value" in
+    low|'no greptile') needed=0 ;;
+    base|medium|'medium (base)') needed=1 ;;
+    plus|high|'high (plus)') needed=2 ;;
+    apex|critical|'critical (apex)') needed=4 ;;
+    *) needed= ;;
+  esac
   if [ -z "$needed" ]; then
     echo "error: refusing to merge $URL: the review tier of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set the brief's 'Review tier:' line to one of LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex) in $brief" >&2
     return 1
@@ -1327,6 +1317,17 @@ require_review_tier() {
   local reviews="$DATA/$ID/reviews" head found plural=
   read_review_tier "$DATA/$ID/brief.md" || return 1
   [ "$REVIEW_TIER_NEEDED" -gt 0 ] || return 0
+  if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ]; then
+    echo "error: review tier $REVIEW_TIER_NAME requires a synchronous merge; omit auto-merge flags" >&2
+    return 1
+  fi
+  if [ "$PROVIDER" = github ]; then
+    github_read_queue_method
+    if [ "$FM_PR_GITHUB_QUEUE_STATUS" != none ]; then
+      echo "error: review tier $REVIEW_TIER_NAME requires a synchronous merge; the base branch must be readable and must not require a merge queue" >&2
+      return 1
+    fi
+  fi
   head=$(printf '%s' "$FM_PR_MERGE_HEAD" | tr '[:upper:]' '[:lower:]')
   found=0
   if [ -e "$reviews" ] || [ -L "$reviews" ]; then
@@ -1716,7 +1717,7 @@ case "$PROVIDER" in
     [ "$away_status" -eq 0 ] || exit "$away_status"
     merge_status=0
     gitlab_merge_args=()
-    if [ "$FM_PR_AWAY_POSTURE" = true ]; then
+    if [ "$FM_PR_AWAY_POSTURE" = true ] || [ "$REVIEW_TIER_NEEDED" -gt 0 ]; then
       gitlab_merge_args=(--auto-merge=false)
     fi
     GITLAB_HOST="$FM_PR_HOST" glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
