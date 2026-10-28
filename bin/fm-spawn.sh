@@ -3161,7 +3161,12 @@ if [ "$KIND" = secondmate ]; then
     BRIEF="$DATA/$ID/brief.md"
   fi
 else
-  PROJ_ABS="$(cd "$(resolve_project_dir_arg "$PROJ")" && pwd)"
+  PROJ_DIR_RESOLVED=$(resolve_project_dir_arg "$PROJ")
+  if [ ! -d "$PROJ_DIR_RESOLVED" ]; then
+    echo "error: spawn refused: project directory '$PROJ' is not an existing directory; pass the project's folder path (for example projects/<name> or an absolute path), not a bare repo name" >&2
+    exit 1
+  fi
+  PROJ_ABS="$(cd "$PROJ_DIR_RESOLVED" && pwd)"
   WT=""
   BRIEF="$DATA/$ID/brief.md"
 fi
@@ -3894,10 +3899,10 @@ else
     # it stands up a DIFFERENT home's own workspace by design - so it asks for
     # the per-home container instead of inheriting this launcher's.
     HERDR_LABEL_HOME=$FM_HOME
-    HERDR_LAUNCHER_RELATIONSHIP=launcher-home
+    HERDR_LAUNCHER_RELATIONSHIP='launcher-home'
     if [ "$KIND" = secondmate ]; then
       HERDR_LABEL_HOME=$PROJ_ABS
-      HERDR_LAUNCHER_RELATIONSHIP=other-home
+      HERDR_LAUNCHER_RELATIONSHIP='other-home'
     fi
     HERDR_PRESENTATION_JOURNAL=$(fm_backend_herdr_projection_journal_path "$STATE" "$ID")
     HERDR_PROJECTED=0
