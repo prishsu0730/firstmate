@@ -3526,7 +3526,15 @@ EOF
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
     if ! auto_close_finished_records; then
       reason="check: automatic finished-task teardown refused: id=$FM_AUTO_CLOSE_REFUSED_ID"
-      fm_wake_append check "automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID" "$reason" || {
+      refusal_key="automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID"
+      if [ -n "$FM_AUTO_CLOSE_REFUSAL_RECORD" ]; then
+        refusal_hash=$(fm_custom_check_sha256 "$FM_AUTO_CLOSE_REFUSAL_RECORD") || {
+          rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
+          exit 1
+        }
+        refusal_key="$refusal_key-$refusal_hash"
+      fi
+      fm_wake_append check "$refusal_key" "$reason" || {
         [ -z "$FM_AUTO_CLOSE_REFUSAL_RECORD" ] || rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
         exit 1
       }
