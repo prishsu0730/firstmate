@@ -465,10 +465,21 @@ if [ "$PROVIDER" = github ]; then
   fi
 fi
 
+github_format_commit_subjects() {
+  local subject formatted=''
+  for subject in "$@"; do
+    if printf '%s' "$subject" | LC_ALL=C grep -q -- '[[:cntrl:]]'; then
+      subject=$(printf '%q' "$subject")
+    fi
+    formatted="${formatted:+$formatted }$subject"
+  done
+  printf '%s' "$formatted"
+}
+
 github_refuse_mixed_refactor_commits() {
-  local head=$1 json subject type subjects=''
+  local head=$1 json subject type subjects='' formatted_refactors formatted_fixes_or_features
   local refactors=() fixes_or_features=()
-  local prefix='^(refactor|fix|feat)(\([^)]*\))?:'
+  local prefix='^(refactor|fix|feat)(\([^)]*\))?!?:'
 
   if ! json=$(gh api --paginate --slurp "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER/commits?per_page=100" 2>/dev/null) \
     || ! subjects=$(printf '%s' "$json" | jq -er --arg head "$head" '
@@ -492,9 +503,11 @@ $subjects
 EOF
   [ "${#refactors[@]}" -eq 0 ] || [ "${#fixes_or_features[@]}" -eq 0 ] && return 0
 
+  formatted_refactors=$(github_format_commit_subjects "${refactors[@]}")
+  formatted_fixes_or_features=$(github_format_commit_subjects "${fixes_or_features[@]}")
   printf 'error: refusing to merge %s: refactor commits cannot be mixed with fix or feat commits\n' "$URL" >&2
-  printf 'error: refactor commits: %s\n' "${refactors[*]}" >&2
-  printf 'error: fix or feat commits: %s\n' "${fixes_or_features[*]}" >&2
+  printf 'error: refactor commits: %s\n' "$formatted_refactors" >&2
+  printf 'error: fix or feat commits: %s\n' "$formatted_fixes_or_features" >&2
   return 1
 }
 
