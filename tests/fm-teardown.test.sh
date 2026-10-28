@@ -861,6 +861,60 @@ test_local_only_merged_to_local_main_allows() {
   pass "local-only worktree with work merged into local main is torn down (no regression)"
 }
 
+# A published branch is recoverable, but removing its task record would make
+# the still-open PR impossible to land through fm-pr-merge.sh.
+test_recorded_open_pr_preserves_task() {
+  local case_dir rc=0
+  case_dir=$(make_case recorded-open-pr)
+  write_meta "$case_dir" no-mistakes ship
+  wt_commit_file "$case_dir" feature.txt 'waiting for merge'
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'pull_request:' '  state: open' '  merged: null'
+SH
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "recorded-open-pr: cleanup must refuse even with a published branch"
+  assert_grep 'https://github.com/example/repo/pull/7' "$case_dir/stderr" \
+    "recorded-open-pr: refusal must identify the PR"
+  assert_present "$case_dir/state/task-x1.meta" "recorded-open-pr: task metadata was lost"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "recorded-open-pr: cleanup closed the backlog item"
+  assert_absent "$case_dir/treehouse.log" "recorded-open-pr: cleanup returned the worktree"
+  pass "a recorded open PR preserves task metadata and its open backlog item"
+
+  # Change only the forge outcome: a merged PR must still close normally.
+  add_gh_pr_merged_for_head "$case_dir" "$(git -C "$case_dir/wt" rev-parse HEAD)"
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "recorded-merged-pr: cleanup must succeed after merge"
+  assert_absent "$case_dir/state/task-x1.meta" "recorded-merged-pr: metadata remains"
+  [ "$(backlog_row_state "$case_dir")" = "done" ] \
+    || fail "recorded-merged-pr: cleanup did not close the backlog item"
+  pass "the same published ship closes after its recorded PR merges"
+}
+
+test_recorded_open_pr_without_worktree_and_with_force() {
+  local case_dir rc=0
+  case_dir=$(make_case recorded-open-pr-gone)
+  write_meta "$case_dir" no-mistakes ship "$case_dir/gone"
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  cat > "$case_dir/fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'pull_request:' '  state: open' '  merged: null'
+SH
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "recorded-open-pr-gone: missing worktree must not bypass PR guard"
+  assert_present "$case_dir/state/task-x1.meta" "recorded-open-pr-gone: metadata lost"
+  rc=0
+  run_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "recorded-open-pr-force: explicit discard must retain its override"
+  assert_absent "$case_dir/state/task-x1.meta" "recorded-open-pr-force: metadata remains"
+  pass "missing worktree preserves an open PR record and explicit discard still overrides"
+}
+
 test_no_mistakes_origin_remote_allows() {
   local case_dir rc
   case_dir=$(make_case nm-origin)
@@ -4875,6 +4929,8 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
   pass "present required sources still reach the ordinary teardown refusal"
 }
 
+test_recorded_open_pr_preserves_task
+test_recorded_open_pr_without_worktree_and_with_force
 test_missing_startup_source_refuses_before_cleanup
 test_unreadable_startup_source_refuses_before_cleanup
 test_missing_adapter_sibling_refuses_before_cleanup
