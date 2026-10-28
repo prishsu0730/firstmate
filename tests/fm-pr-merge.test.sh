@@ -2392,6 +2392,25 @@ test_secondmate_without_parent_binding_is_loud() {
   pass "a secondmate home that cannot report upward says so instead of merging in silence"
 }
 
+test_direct_address_in_commit_subject_refuses() {
+  local case_dir rc
+  case_dir=$(make_case direct-address-subject)
+  add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  printf '%s\n' 'Captain, added tests' > "$case_dir/github-commits"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/401 > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "direct-address-subject: address must refuse"
+  assert_grep 'aaaaaaaa' "$case_dir/stderr" "direct-address-subject: missing short SHA"
+  assert_grep 'Captain, added tests' "$case_dir/stderr" "direct-address-subject: missing subject"
+  assert_grep 'reword before merge' "$case_dir/stderr" "direct-address-subject: missing remedy"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" "direct-address-subject: merge ran"
+  pass "fm-pr-merge refuses a direct address in a commit subject"
+}
+
+test_direct_address_in_commit_subject_refuses
+
 test_mixed_refactor_and_fix_commits_refuse_before_merging() {
   local case_dir rc url
   url=https://github.com/example/repo/pull/401
@@ -4416,3 +4435,54 @@ test_file_boundary_unreadable_task_record_refuses() {
 test_file_boundary_deleted_task_directory_refuses
 test_file_boundary_deleted_directory_of_the_owner_refuses_a_wrong_id
 test_file_boundary_unreadable_task_record_refuses
+
+# Full messages come from the paginated forge response, including bodies.
+test_commit_address_boundaries_and_bodies() {
+  local mode case_dir rc message subject head
+  head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  for mode in body tokens clean controls later-page; do
+    case_dir=$(make_case "commit-address-$mode")
+    add_gh_mocks "$case_dir" "$head"
+    subject='fix: preserve merge refusal'
+    case "$mode" in
+      body) message=$'fix: preserve merge refusal\n\nThanks, cApTaIn!' ;;
+      tokens) message=$'fix(captain-hold): preserve merge refusal\n\ndata/captain.md fm-captain-hold.sh captain-hold captain_hold captain.md /captain/ captains precaptain captain2' ;;
+      clean) message=$'fix: preserve merge refusal\n\nAdded regression tests.' ;;
+      controls) subject=$'fix: Captain, added tests\033]52;c;payload\a\r'; message=$subject ;;
+      later-page) message='CAPTAIN: added tests' ;;
+    esac
+    jq -n --arg head "$head" --arg message "$message" --arg mode "$mode" '
+      if $mode == "later-page" then
+        [(range(0; 100) | {sha: "earlier", commit: {message: "fix: clean"}})],
+        [{sha: $head, commit: {message: $message}}]
+        | .
+      else [{sha: $head, commit: {message: $message}}] end
+      ' | jq -s '.' > "$case_dir/github-commits.json"
+    set +e
+    FM_TEST_GH_COMMITS_JSON="$case_dir/github-commits.json" \
+      run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/401 > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    case "$mode" in
+      tokens|clean)
+        expect_code 0 "$rc" "commit-address-$mode: clean message must merge"
+        assert_grep 'pr merge' "$case_dir/gh.log" "commit-address-$mode: merge missing"
+        ;;
+      *)
+        expect_code 1 "$rc" "commit-address-$mode: address must refuse"
+        assert_grep 'aaaaaaaa' "$case_dir/stderr" "commit-address-$mode: missing short SHA"
+        assert_grep 'reword before merge' "$case_dir/stderr" "commit-address-$mode: missing remedy"
+        assert_no_grep 'pr merge' "$case_dir/gh.log" "commit-address-$mode: merge ran"
+        if [ "$mode" = body ]; then
+          assert_grep "$subject" "$case_dir/stderr" "commit-address-body: missing subject"
+        fi
+        if LC_ALL=C grep -q $'[\001-\010\013-\037\177]' "$case_dir/stderr"; then
+          fail "commit-address-$mode: stderr emitted a control byte"
+        fi
+        ;;
+    esac
+  done
+  pass "fm-pr-merge checks bodies and later pages, escapes controls, and permits joined tokens and clean messages"
+}
+
+test_commit_address_boundaries_and_bodies
