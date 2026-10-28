@@ -472,6 +472,8 @@ test_arm_refuses_a_symlink_at_the_shim_path() {
   expect_code 1 "$rc" "arm must refuse a symlink at the shim path"
   assert_contains "$out" "could not write" "arm reports the shim write failure"
   assert_absent "$home/state/usage-warner.check-trust" "no trust binding is left behind by a refused arm"
+  [ -L "$home/state/usage-warner.check.sh" ] || fail "a refused arm must preserve the existing symlink"
+  [ "$(readlink "$home/state/usage-warner.check.sh")" = "$target" ] || fail "a refused arm must preserve the symlink destination"
   [ -f "$target" ] || fail "arm must never write through the symlink to its target"
   pass "fm-usage-warner: arm refuses a symlink at the shim path instead of following it"
 }

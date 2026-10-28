@@ -228,7 +228,8 @@ wait_until "$POLLS" host_log_has 'warm-compact	primary	sent' || fail "the idle p
 evidence "primary: $(host_log | grep 'warm-compact	primary')"
 wait_until "$POLLS" host_log_has 'warm-compact	engine	compacted' || fail "the idle engine conversation was never compacted"$'\n'"$(diagnose)"
 evidence "engine: $(host_log | grep 'warm-compact	engine')"
-wait_until 600 test "$(compact_boundaries)" -ge 1 || fail "the primary transcript has no compaction boundary"$'\n'"$(diagnose)"
+has_compact_boundary() { [ "$(compact_boundaries)" -ge 1 ]; }
+wait_until 600 has_compact_boundary || fail "the primary transcript has no compaction boundary"$'\n'"$(diagnose)"
 evidence "primary transcript compaction boundaries: $(compact_boundaries)"
 sleep 20
 [ "$(host_log | grep -c 'warm-compact	primary')" = 1 ] || fail "the primary was compacted more than once in one idle episode"
