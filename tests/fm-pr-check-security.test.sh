@@ -289,6 +289,14 @@ write_task_meta() {
     "project=$dir/project" \
     "kind=ship" \
     "mode=no-mistakes"
+  write_low_tier_brief "$dir" "$id"
+}
+
+# The merge entrypoint refuses a task whose brief carries no review tier.
+write_low_tier_brief() {  # <dir> <id>
+  mkdir -p "$1/home/data/$2"
+  [ -e "$1/home/data/$2/brief.md" ] || printf '%s\n' '# Task' '## Risk and review' \
+    'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$1/home/data/$2/brief.md"
 }
 
 # Extra "field=value" arguments are written before pr=, because
@@ -858,6 +866,7 @@ SH
       --carry-count 0 --carry-ts 1700000000 --carry-platform x --carry-max 280 \
       > "$dir/x-link.out" 2> "$dir/x-link.err" \
       || fail "path-safe legacy task ID could not link an X request"
+    write_low_tier_brief "$dir" "$id"
     run_merge_entry "$dir" "$id" https://github.com/o/r/pull/4 \
       > "$dir/merge.out" 2> "$dir/merge.err" \
       || fail "path-safe legacy task ID could not use the PR merge flow"
@@ -2880,6 +2889,7 @@ run_merged_poll_cycle() {  # <dir>
 
 queue_merge() {  # <dir> <url>
   local dir=$1 url=$2 rc=0
+  write_low_tier_brief "$dir" task-a
   set +e
   FM_TEST_GH_GRAPHQL_STATE=OPEN FM_TEST_GH_GRAPHQL_MERGED=false \
     FM_TEST_GH_GRAPHQL_QUEUED=true \

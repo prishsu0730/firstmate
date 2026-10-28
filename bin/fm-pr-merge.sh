@@ -147,6 +147,25 @@
 # state/<id>.file-boundary marker bin/fm-brief.sh writes, and refuses. Which pull request the task may merge stays the job of the
 # recorded pull request identity check below.
 #
+# A merge is also refused until the review depth the task's brief promised has
+# been done at the head this run verified. The brief's `Review tier:` line, in
+# its `## Risk and review` section, sets the count: LOW / No Greptile needs none,
+# Base / MEDIUM one, Plus / HIGH two, Apex / CRITICAL four, each by a distinct
+# reviewer other than the task itself. A review is one line,
+# `<pr-url>|<head-sha>|<reviewer-task-id>|no merge-blocking finding`, appended to
+# <data>/<task-id>/reviews by the review scout (or by firstmate from its report).
+# Only a line naming this pull request and this exact head with that exact
+# verdict counts, so a new head voids every older review. A missing brief, a
+# missing, repeated, or unrecognised tier line, and an unreadable review record
+# all refuse, and the refusal names the line to fix. No flag skips this gate.
+# Tier values are case-insensitive exact names or risk labels listed above,
+# including MEDIUM (Base), HIGH (Plus), and CRITICAL (Apex); the scaffold's
+# trailing ` (No Greptile / Base / Plus / Apex)` is also accepted.
+# Any tier needing reviews requires a synchronous merge on both forges, even
+# with --attended-override: auto-merge requests are refused, GitHub must prove
+# the base has no merge queue, and GitLab gets a final --auto-merge=false.
+# bin/fm-brief.sh owns the `Review tier:` line and the depths it names.
+#
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
 # URL, nor --sha or --match-head-commit because the head comes only from the
@@ -176,6 +195,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
@@ -187,6 +207,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-afk-contract.sh
 . "$SCRIPT_DIR/fm-afk-contract.sh"
+# shellcheck source=bin/fm-brief-heading-lib.sh
+. "$SCRIPT_DIR/fm-brief-heading-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -1224,6 +1246,103 @@ require_file_boundary() {
   printf 'verified: %s\n' "$output" >&2
 }
 
+# Read the review count the task's brief promised: sets REVIEW_TIER_NAME and
+# REVIEW_TIER_NEEDED, or reports why the tier cannot be read and returns 1.
+# The `Review tier:` line is read from the brief's own `## Risk and review`
+# section so a copy in prose elsewhere cannot stand in for it, and any value that
+# is not one unambiguous tier refuses instead of falling to the lowest depth.
+REVIEW_TIER_NAME=
+REVIEW_TIER_NEEDED=
+read_review_tier() {
+  local brief=$1 section lines value needed
+  REVIEW_TIER_NAME=
+  REVIEW_TIER_NEEDED=
+  if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
+    echo "error: refusing to merge $URL: the brief of task $ID cannot be read at $brief, so its review tier is unknown; restore the brief with a 'Review tier:' line under '## Risk and review'" >&2
+    return 1
+  fi
+  section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
+  lines=$(printf '%s\n' "$section" | grep '^Review tier:' || true)
+  if [ -z "$lines" ]; then
+    echo "error: refusing to merge $URL: the brief of task $ID has no Review tier line under '## Risk and review', so its review tier is unknown; add 'Review tier: LOW|MEDIUM (Base)|HIGH (Plus)|CRITICAL (Apex)' to $brief" >&2
+    return 1
+  fi
+  if [ "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')" -gt 1 ]; then
+    echo "error: refusing to merge $URL: the brief of task $ID has more than one Review tier line, so its review tier is ambiguous; keep exactly one in $brief" >&2
+    return 1
+  fi
+  value=$(printf '%s' "${lines#Review tier:}" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//')
+  value=${value%' (no greptile / base / plus / apex)'}
+  case "$value" in
+    low|'no greptile') needed=0 ;;
+    base|medium|'medium (base)') needed=1 ;;
+    plus|high|'high (plus)') needed=2 ;;
+    apex|critical|'critical (apex)') needed=4 ;;
+    *) needed= ;;
+  esac
+  if [ -z "$needed" ]; then
+    echo "error: refusing to merge $URL: the review tier of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set the brief's 'Review tier:' line to one of LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex) in $brief" >&2
+    return 1
+  fi
+  REVIEW_TIER_NAME=$(printf '%s' "$value" | tr -d '[:cntrl:]' | sed 's/^ *//; s/ *$//')
+  REVIEW_TIER_NEEDED=$needed
+}
+
+# The review-tier refusal, run after the live verification so the reviews are
+# matched to the head the merge is then bound to (FM_PR_MERGE_HEAD), and before
+# the away record is held so no further read happens under that lock. Counts
+# distinct reviewers other than the task itself whose line in
+# <data>/<task>/reviews names this pull request, this exact head, and the clean
+# verdict; the header owns the line format.
+require_review_tier() {
+  local reviews="$DATA/$ID/reviews" head found plural=
+  read_review_tier "$DATA/$ID/brief.md" || return 1
+  [ "$REVIEW_TIER_NEEDED" -gt 0 ] || return 0
+  if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ]; then
+    echo "error: review tier $REVIEW_TIER_NAME requires a synchronous merge; omit auto-merge flags" >&2
+    return 1
+  fi
+  if [ "$PROVIDER" = github ]; then
+    github_read_queue_method
+    if [ "$FM_PR_GITHUB_QUEUE_STATUS" != none ]; then
+      echo "error: review tier $REVIEW_TIER_NAME requires a synchronous merge; the base branch must be readable and must not require a merge queue" >&2
+      return 1
+    fi
+  fi
+  head=$(printf '%s' "$FM_PR_MERGE_HEAD" | tr '[:upper:]' '[:lower:]')
+  found=0
+  if [ -e "$reviews" ] || [ -L "$reviews" ]; then
+    if [ ! -f "$reviews" ] || [ ! -r "$reviews" ]; then
+      echo "error: refusing to merge $URL: the review record of task $ID cannot be read: $reviews" >&2
+      return 1
+    fi
+    found=$(awk -F'|' -v url="$URL" -v head="$head" -v task="$ID" '
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+      NF == 4 {
+        u = trim($1); h = tolower(trim($2)); r = trim($3); v = trim($4)
+        if (u == url && h == head && r != "" && r != task && r !~ /[[:space:]]/ \
+            && v == "no merge-blocking finding" && !(r in seen)) { seen[r] = 1; n++ }
+      }
+      END { print n + 0 }
+    ' "$reviews") || {
+      echo "error: refusing to merge $URL: the review record of task $ID could not be counted: $reviews" >&2
+      return 1
+    }
+  fi
+  [ "$found" -ge "$REVIEW_TIER_NEEDED" ] && {
+    printf 'verified: review tier %s met by %s of %s review(s) at head %s\n' \
+      "$REVIEW_TIER_NAME" "$found" "$REVIEW_TIER_NEEDED" "$FM_PR_MERGE_HEAD" >&2
+    return 0
+  }
+  [ "$REVIEW_TIER_NEEDED" -eq 1 ] || plural=s
+  printf 'error: refusing to merge %s: review tier %s needs %s independent review%s at head %s, found %s in %s\n' \
+    "$URL" "$REVIEW_TIER_NAME" "$REVIEW_TIER_NEEDED" "$plural" "$FM_PR_MERGE_HEAD" "$found" "$reviews" >&2
+  printf 'each reviewer other than task %s appends one line once it finds no merge-blocking finding: %s|%s|<reviewer-task-id>|no merge-blocking finding\n' \
+    "$ID" "$URL" "$FM_PR_MERGE_HEAD" >&2
+  echo 'a push after a review gives the pull request a new head and voids that review' >&2
+  return 1
+}
+
 FM_PR_MERGE_AUTHORITY=
 # The authority read. bin/fm-merge-authority-lib.sh owns what the away-posture
 # record's presence means; this function owns what a merge run may do about it,
@@ -1513,6 +1632,7 @@ case "$PROVIDER" in
       exit 1
     fi
     require_file_boundary || exit 1
+    require_review_tier || exit 1
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
@@ -1565,6 +1685,7 @@ case "$PROVIDER" in
   gitlab)
     gitlab_verify_mergeable || exit 1
     require_file_boundary || exit 1
+    require_review_tier || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;
@@ -1577,7 +1698,7 @@ case "$PROVIDER" in
     [ "$away_status" -eq 0 ] || exit "$away_status"
     merge_status=0
     gitlab_merge_args=()
-    if [ "$FM_PR_AWAY_POSTURE" = true ]; then
+    if [ "$FM_PR_AWAY_POSTURE" = true ] || [ "$REVIEW_TIER_NEEDED" -gt 0 ]; then
       gitlab_merge_args=(--auto-merge=false)
     fi
     GITLAB_HOST="$FM_PR_HOST" glab mr merge "$PR_NUMBER" -R "$PROJECT_URL" \
