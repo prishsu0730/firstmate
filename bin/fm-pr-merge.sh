@@ -23,7 +23,9 @@
 # unmergeable, with the same nonzero exit as any other refusal.
 # A GitHub pull request is also refused before any merge call when its commit
 # subjects mix a refactor: commit with a fix: or feat: commit, including an
-# optional conventional-commit scope after each prefix.
+# optional conventional-commit scope and breaking-change ! before the colon.
+# Refusal diagnostics shell-escape subjects containing control bytes so those
+# bytes cannot act as terminal controls; only the first message line is a subject.
 # Each verification attempt reads all commit pages and requires the last commit
 # to match that attempt's verified head; unreadable or incomplete subjects, or
 # a changed head, refuse the merge.
@@ -465,10 +467,21 @@ if [ "$PROVIDER" = github ]; then
   fi
 fi
 
+github_format_commit_subjects() {
+  local subject formatted=''
+  for subject in "$@"; do
+    if printf '%s' "$subject" | LC_ALL=C grep -q -- '[[:cntrl:]]'; then
+      subject=$(printf '%q' "$subject")
+    fi
+    formatted="${formatted:+$formatted }$subject"
+  done
+  printf '%s' "$formatted"
+}
+
 github_refuse_mixed_refactor_commits() {
-  local head=$1 json subject type subjects=''
+  local head=$1 json subject type subjects='' formatted_refactors formatted_fixes_or_features
   local refactors=() fixes_or_features=()
-  local prefix='^(refactor|fix|feat)(\([^)]*\))?:'
+  local prefix='^(refactor|fix|feat)(\([^)]*\))?!?:'
 
   if ! json=$(gh api --paginate --slurp "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER/commits?per_page=100" 2>/dev/null) \
     || ! subjects=$(printf '%s' "$json" | jq -er --arg head "$head" '
@@ -492,9 +505,11 @@ $subjects
 EOF
   [ "${#refactors[@]}" -eq 0 ] || [ "${#fixes_or_features[@]}" -eq 0 ] && return 0
 
+  formatted_refactors=$(github_format_commit_subjects "${refactors[@]}")
+  formatted_fixes_or_features=$(github_format_commit_subjects "${fixes_or_features[@]}")
   printf 'error: refusing to merge %s: refactor commits cannot be mixed with fix or feat commits\n' "$URL" >&2
-  printf 'error: refactor commits: %s\n' "${refactors[*]}" >&2
-  printf 'error: fix or feat commits: %s\n' "${fixes_or_features[*]}" >&2
+  printf 'error: refactor commits: %s\n' "$formatted_refactors" >&2
+  printf 'error: fix or feat commits: %s\n' "$formatted_fixes_or_features" >&2
   return 1
 }
 

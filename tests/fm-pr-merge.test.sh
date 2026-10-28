@@ -255,6 +255,10 @@ case "${1:-} ${2:-}" in
     case " $* " in
       *"/pulls/"*"/commits?per_page=100"*)
         head=$(cat "$FM_TEST_GH_HEAD")
+        if [ -n "${FM_TEST_GH_COMMITS_JSON:-}" ]; then
+          cat "$FM_TEST_GH_COMMITS_JSON"
+          exit 0
+        fi
         mix=''
         if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
           call_n=$(cat "$FM_TEST_GH_MERGEABLE_CALLS")
@@ -2412,6 +2416,80 @@ test_mixed_refactor_and_fix_commits_refuse_before_merging() {
     "mixed-refactor-and-fix: the forge merge ran despite mixed commits"
   pass "fm-pr-merge refuses mixed refactor and fix commit subjects before merging"
 }
+
+test_mixed_breaking_refactor_and_fix_commits_refuse_before_merging() {
+  local case_dir rc url
+  url=https://github.com/example/repo/pull/407
+  case_dir=$(make_case mixed-breaking-refactor-and-fix)
+  add_gh_mocks "$case_dir" 4074074074074074074074074074074074074074
+  printf '%s\n' 'refactor!: change parser contract' 'fix: preserve merge refusal' \
+    > "$case_dir/github-commits"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "mixed-breaking-refactor-and-fix: mixed breaking conventional commits must refuse"
+  assert_grep 'refactor commits cannot be mixed with fix or feat commits' "$case_dir/stderr" \
+    "mixed-breaking-refactor-and-fix: refusal did not explain the mixed commit types"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "mixed-breaking-refactor-and-fix: the forge merge ran despite mixed commits"
+  pass "fm-pr-merge refuses a breaking refactor mixed with a fix before merging"
+}
+
+test_mixed_scoped_breaking_refactor_and_feature_commits_refuse_before_merging() {
+  local case_dir rc url
+  url=https://github.com/example/repo/pull/408
+  case_dir=$(make_case mixed-scoped-breaking-refactor-and-feature)
+  add_gh_mocks "$case_dir" 4084084084084084084084084084084084084084
+  printf '%s\n' 'refactor(parser)!: change parser contract' 'feat: show clear errors' \
+    > "$case_dir/github-commits"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "mixed-scoped-breaking-refactor-and-feature: mixed scoped breaking conventional commits must refuse"
+  assert_grep 'refactor commits cannot be mixed with fix or feat commits' "$case_dir/stderr" \
+    "mixed-scoped-breaking-refactor-and-feature: refusal did not explain the mixed commit types"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "mixed-scoped-breaking-refactor-and-feature: the forge merge ran despite mixed commits"
+  pass "fm-pr-merge refuses a scoped breaking refactor mixed with a feature before merging"
+}
+
+test_mixed_commit_subject_diagnostics_escape_control_bytes() {
+  local case_dir rc subject
+  case_dir=$(make_case mixed-commit-subject-controls)
+  add_gh_mocks "$case_dir" 4094094094094094094094094094094094094094
+  subject=$'refactor: harmless\033]52;c;payload\a\r\nforged output'
+  jq -n --arg head 4094094094094094094094094094094094094094 \
+    --arg subject "$subject" --arg fix 'fix: preserve merge refusal' \
+    '[[{sha: "earlier", commit: {message: $subject}}, {sha: $head, commit: {message: $fix}}]]' \
+    > "$case_dir/github-commits.json"
+
+  set +e
+  FM_TEST_GH_COMMITS_JSON="$case_dir/github-commits.json" \
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/409 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "mixed-commit-subject-controls: mixed commits must still refuse"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "mixed-commit-subject-controls: the forge merge ran despite mixed commits"
+  assert_no_grep 'forged output' "$case_dir/stderr" \
+    "mixed-commit-subject-controls: subject forged an extra diagnostic line"
+  if tr -d '\n' < "$case_dir/stderr" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    fail "mixed-commit-subject-controls: stderr emitted a control byte"
+  fi
+  pass "fm-pr-merge escapes control bytes in mixed-commit diagnostics"
+}
+
+test_mixed_breaking_refactor_and_fix_commits_refuse_before_merging
+test_mixed_scoped_breaking_refactor_and_feature_commits_refuse_before_merging
+test_mixed_commit_subject_diagnostics_escape_control_bytes
 
 test_refactor_only_commits_merge() {
   local case_dir
