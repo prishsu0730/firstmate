@@ -29,14 +29,18 @@ document:
 # Invocation wiring is asserted by `tests/fm-lint.test.sh` and
 # `tests/fm-lint-workflows.test.sh`.
 #
-# Keep commands.test absent; the firstmate-coding-guidelines skill owns this policy.
+# The firstmate-coding-guidelines skill owns the commands.test restriction;
+# bin/fm-nm-test.sh's header owns selection and fallback, and
+# tests/fm-nm-test-contract.test.sh asserts the configured command.
 commands:
   lint: 'bin/fm-lint.sh'
+  test: 'bin/fm-nm-test.sh'
 
 # Publish each run's test evidence to the orphan no-mistakes/evidence branch linked from the PR.
 # The evidence is not committed to the feature or default branch.
 test:
   instructions: |
+    The deterministic baseline `bin/fm-nm-test.sh` already ran the colocated tests for the changed files outside this sandbox; spend this step on the live scenarios below and do not re-run those tests here.
     Run live Herdr scenarios only through bin/fm-herdr-lab.sh with a named non-default fm-lab-* session, following that helper's prepare, provision, run, and teardown contract exactly.
     Never touch the live default Herdr session or fleet panes.
     Prefer a throwaway lab for spawn, long-launch, and Claude-path proofs, and tear it down in the same evidence turn.
