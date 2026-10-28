@@ -39,11 +39,24 @@ make_spawn_fakebin() {
   fakebin=$(fm_test_make_spawn_fakebin "$dir")
   cat > "$fakebin/timeout" <<'SH'
 #!/usr/bin/env bash
+# Match GNU timeout's option shape from bin/fm-timeout-lib.sh fm_run_timed:
+# `timeout -k <grace> <secs> cmd...` or plain `timeout <secs> cmd...`.
+if [ "${1:-}" = -k ]; then
+  shift 2
+fi
 shift
 exec "$@"
 SH
   cat > "$fakebin/cursor-agent" <<'SH'
 #!/usr/bin/env bash
+# Launch resolution runs a bounded --help probe (bin/fm-cursor-lib.sh
+# fm_cursor_verify_executable) before accepting any candidate. Empty success
+# is not Cursor identity, so the fixture must mark itself the same way the
+# real CLI does or spawn falls through to a host agent / fails closed on CI.
+if [ "${1:-}" = --help ]; then
+  printf '%s\n' 'Start the Cursor Agent'
+  exit 0
+fi
 if [ "${1:-}" = --list-models ]; then
   [ "${FM_FAKE_CURSOR_LIST_STATUS:-0}" -eq 0 ] || exit "${FM_FAKE_CURSOR_LIST_STATUS}"
   printf '%b\n' "${FM_FAKE_CURSOR_MODELS:-Available models\ncursor-grok-4.5-high - Grok 4.5 High}"
@@ -447,7 +460,7 @@ test_active_dispatch_profile_allows_explicit_harness() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' --dangerously-bypass-approvals-and-sandbox" \
-    "explicit harness launch did not thread model and effort"
+    "explicit harness launch did not thread model, effort, and Codex bypass flag"
   pass "active crew-dispatch profile allows an explicit resolved harness"
 }
 
@@ -540,7 +553,7 @@ test_codex_threads_model_and_effort() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 high
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' --dangerously-bypass-approvals-and-sandbox" \
-    "codex launch did not thread model and reasoning effort config"
+    "codex launch did not thread model, reasoning effort config, and Codex bypass flag"
   pass "codex receives --model and model_reasoning_effort profile flags"
 }
 
@@ -556,7 +569,7 @@ test_codex_threads_model_and_max_effort() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5.6-luna max
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5.6-luna' -c 'model_reasoning_effort=\"max\"' --dangerously-bypass-approvals-and-sandbox" \
-    "codex launch did not thread Luna's max reasoning effort config"
+    "codex launch did not thread Luna's max reasoning effort config and Codex bypass flag"
   pass "codex Luna receives --model and model_reasoning_effort max profile flags"
 }
 
@@ -572,7 +585,7 @@ test_codex_omits_max_effort_for_unsupported_model() {
   assert_meta_profile "$HOME_DIR/state/$id.meta" codex gpt-5 max
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "codex --model 'gpt-5' --dangerously-bypass-approvals-and-sandbox" \
-    "codex launch did not preserve the model flag when max effort was omitted"
+    "codex launch did not preserve the model flag and Codex bypass flag when max effort was omitted"
   assert_not_contains "$launch" "model_reasoning_effort" "codex launch must omit unsupported model max reasoning effort"
   pass "codex omits max for models without the catalog capability"
 }
@@ -586,6 +599,7 @@ test_codex_crewmate_launch_disables_the_hook_layer() {
   id=profile-codex-hooks-z4c
   rec=$(make_spawn_case profile-codex-hooks codex "$id")
   read_case_record "$rec"
+  printf 'approve-for-me\n' > "$HOME_DIR/config/codex-approval-mode"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
@@ -597,11 +611,15 @@ test_codex_crewmate_launch_disables_the_hook_layer() {
   # disabling them, so a launch must never reach for it.
   assert_not_contains "$launch" "--dangerously-bypass-hook-trust" \
     "codex crewmate launch ran the operator's untrusted hooks instead of disabling them"
+  assert_contains "$launch" "--approve-for-me" \
+    "codex crewmate launch did not use automatic approval review"
+  assert_not_contains "$launch" "--dangerously-bypass-approvals-and-sandbox" \
+    "codex crewmate launch retained the managed-settings-fragile complete-bypass posture"
   # Firstmate goes blind without the turn-end signal, which rides this same
   # launch rather than any hook.
   assert_contains "$launch" "notify=" \
     "codex crewmate launch lost the turn-end notify program"
-  pass "a codex crewmate launches with no hook layer and keeps its turn-end signal"
+  pass "a codex crewmate requests no hook layer and keeps its turn-end signal"
 }
 
 test_codex_secondmate_launch_keeps_the_hook_layer() {
@@ -609,6 +627,7 @@ test_codex_secondmate_launch_keeps_the_hook_layer() {
   id=profile-codex-secondmate-hooks-z4d
   rec=$(make_spawn_case profile-codex-secondmate-hooks codex "$id")
   read_case_record "$rec"
+  printf 'approve-for-me\n' > "$HOME_DIR/config/codex-approval-mode"
   sm="$CASE_DIR/secondmate-home"
   make_seeded_secondmate_home "$sm" "$id"
 
@@ -618,7 +637,50 @@ test_codex_secondmate_launch_keeps_the_hook_layer() {
   launch=$(cat "$LAUNCH_LOG")
   assert_not_contains "$launch" "--disable hooks" \
     "codex secondmate launch disabled the project hooks its own primary supervision depends on"
-  pass "a codex secondmate keeps the project hook layer its primary session runs on"
+  assert_contains "$launch" "--approve-for-me" \
+    "codex secondmate launch did not use automatic approval review"
+  assert_not_contains "$launch" "--dangerously-bypass-approvals-and-sandbox" \
+    "codex secondmate launch retained the managed-settings-fragile complete-bypass posture"
+  pass "a codex secondmate keeps its project hooks and uses automatic approval review"
+}
+
+test_codex_approval_mode_contract() {
+  local value kind rec id out launch status
+  for value in absent bypass approve-for-me invalid split; do
+    for kind in ship scout; do
+      id="approval-$value-$kind"
+      rec=$(make_spawn_case "$id" codex "$id")
+      read_case_record "$rec"
+      case "$value" in
+        absent) ;;
+        split) printf 'approve -for-me\n' > "$HOME_DIR/config/codex-approval-mode" ;;
+        *) printf '%s\n' "$value" > "$HOME_DIR/config/codex-approval-mode" ;;
+      esac
+      if [ "$kind" = ship ]; then
+        out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 2>&1)
+      else
+        out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout 2>&1)
+      fi
+      status=$?
+      if [ "$value" = invalid ] || [ "$value" = split ]; then
+        expect_code 1 "$status" "invalid Codex approval setting must refuse"
+        assert_contains "$out" 'config/codex-approval-mode' 'refusal must name setting'
+        assert_absent "$HOME_DIR/state/$id.meta" 'invalid setting published metadata'
+        [ ! -s "$LAUNCH_LOG" ] || fail 'invalid setting launched a worker'
+        continue
+      fi
+      expect_code 0 "$status" "$id spawn failed: $out"
+      launch=$(cat "$LAUNCH_LOG")
+      if [ "$value" = approve-for-me ]; then
+        assert_contains "$launch" '--approve-for-me' 'persistent fallback was not used directly'
+        assert_not_contains "$launch" '--dangerously-bypass-approvals-and-sandbox' 'fallback retried bypass'
+      else
+        assert_contains "$launch" '--dangerously-bypass-approvals-and-sandbox' 'Codex bypass default changed'
+        assert_not_contains "$launch" '--approve-for-me' 'unconfigured launch opted into fallback'
+      fi
+    done
+  done
+  pass 'Codex defaults remain bypass; persistent fallback is direct and invalid values refuse'
 }
 
 test_grok_threads_model_and_reasoning_effort() {
@@ -1952,9 +2014,6 @@ test_worker_launch_delivers_role_scope() {
       content=$(cat "$brief")
       content=${content//'{TASK}'/brief for $id}
       content=${content//'{FIRSTMATE_SPEC}'/Exercise the spawn behavior under test.}
-      content=${content//'{BLAST_RADIUS}'/'LOCAL; fixture launch only; targeted screen check.'}
-      content=${content//'{RISK_TIERS}'/'Code review Low and execution Low; fixture-only launch with direct evidence.'}
-      content=${content//'{REVIEW_TIER}'/'No Greptile; no-mistakes only.'}
       printf '%s\n' "$content" > "$brief"
     fi
     cp "$HOME_DIR/data/$id/brief.md" "$CASE_DIR/brief-before"
@@ -2012,9 +2071,8 @@ SH
   pass "fm-spawn: actual ship/scout launch commands deliver the worker role contract"
 }
 
-# config/claude-permission-mode (bin/fm-spawn.sh header): absent and `bypass`
-# must both produce today's launch byte-for-byte, `auto` swaps only the
-# permission flag, and any other token refuses before endpoint or metadata.
+# config/claude-permission-mode: bypass remains the unconfigured default;
+# explicit auto changes only the permission flag, and malformed values refuse.
 claude_settings_json_arg() {  # <launch>
   local command=$1
   while [[ "$command" == export\ *\;* ]]; do
@@ -2024,7 +2082,12 @@ claude_settings_json_arg() {  # <launch>
   while [ "$#" -gt 0 ]; do
     if [ "$1" = --settings ]; then
       shift
-      printf '%s' "$1"
+      # Claude Code's --settings takes inline JSON or a file path; a
+      # secondmate launch passes the path form.
+      case "$1" in
+      \{*) printf '%s' "$1" ;;
+      *) cat "$1" ;;
+      esac
       return 0
     fi
     shift
@@ -2064,39 +2127,54 @@ claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
   printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(ai_trailer_hooks_prefix "$2" "$3")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
 }
 
-test_claude_permission_mode_bypass_matches_absent_launch() {
+test_claude_permission_mode_absent_defaults_to_bypass() {
   local rec id out status launch expected
-  id=permmode-bypass-z19
-  rec=$(make_spawn_case permmode-bypass claude "$id")
+  id=permmode-absent-z18
+  rec=$(make_spawn_case permmode-absent claude "$id")
   read_case_record "$rec"
-  printf 'bypass\n' > "$HOME_DIR/config/claude-permission-mode"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
-  expect_code 0 "$status" "claude spawn with claude-permission-mode=bypass should succeed"
+  expect_code 0 "$status" "claude spawn with no claude-permission-mode should succeed"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" --dangerously-skip-permissions)
-  [ "$launch" = "$expected" ] || fail "explicit bypass did not reproduce the absent-file launch"$'\n'"expected: $expected"$'\n'"actual:   $launch"
-  pass "config/claude-permission-mode=bypass launches exactly as an absent file does"
+  [ "$launch" = "$expected" ] || fail "absent config/claude-permission-mode did not default to bypass"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "absent config/claude-permission-mode defaults to --dangerously-skip-permissions"
 }
 
-test_claude_permission_mode_auto_swaps_only_the_permission_flag() {
+test_claude_permission_mode_auto_opts_into_model_reviewed_launch() {
   local rec id out status launch expected
-  id=permmode-auto-z20
+  id=permmode-auto-z19
   rec=$(make_spawn_case permmode-auto claude "$id")
   read_case_record "$rec"
-  # Surrounding whitespace is trimmed, so an editor's trailing newline or indent is fine.
-  printf '  auto\n' > "$HOME_DIR/config/claude-permission-mode"
+  printf 'auto\n' > "$HOME_DIR/config/claude-permission-mode"
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "claude spawn with claude-permission-mode=auto should succeed"
-  assert_contains "$out" "spawned $id harness=claude" "auto spawn did not report claude"
   launch=$(cat "$LAUNCH_LOG")
   expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" '--permission-mode auto')
-  [ "$launch" = "$expected" ] || fail "auto changed more than the permission flag"$'\n'"expected: $expected"$'\n'"actual:   $launch"
-  assert_not_contains "$launch" "--dangerously-skip-permissions" "auto launch must not request bypass mode"
-  pass "config/claude-permission-mode=auto replaces --dangerously-skip-permissions with --permission-mode auto"
+  [ "$launch" = "$expected" ] || fail "explicit auto did not produce the model-reviewed launch"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  pass "config/claude-permission-mode=auto opts into the model-reviewed launch"
+}
+
+test_claude_permission_mode_bypass_swaps_only_the_permission_flag() {
+  local rec id out status launch expected
+  id=permmode-bypass-z20
+  rec=$(make_spawn_case permmode-bypass claude "$id")
+  read_case_record "$rec"
+  # Surrounding whitespace is trimmed, so an editor's trailing newline or indent is fine.
+  printf '  bypass\n' > "$HOME_DIR/config/claude-permission-mode"
+
+  out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "claude spawn with claude-permission-mode=bypass should succeed"
+  assert_contains "$out" "spawned $id harness=claude" "bypass spawn did not report claude"
+  launch=$(cat "$LAUNCH_LOG")
+  expected=$(claude_expected_launch "$launch" "$HOME_DIR" "$id" --dangerously-skip-permissions)
+  [ "$launch" = "$expected" ] || fail "bypass changed more than the permission flag"$'\n'"expected: $expected"$'\n'"actual:   $launch"
+  assert_not_contains "$launch" "--permission-mode auto" "bypass launch must not request auto mode"
+  pass "explicit config/claude-permission-mode=bypass uses --dangerously-skip-permissions"
 }
 
 test_claude_permission_mode_auto_reaches_scout_launch() {
@@ -2188,119 +2266,8 @@ test_non_claude_harness_ignores_claude_permission_mode() {
   pass "config/claude-permission-mode changes claude launches only"
 }
 
-test_worker_launch_delivers_role_scope
-test_no_profile_keeps_claude_profile_defaults
-test_claude_launch_brief_publishes_record_doorbell
-test_claude_secondmate_launch_brief_publishes_into_its_own_home
-test_claude_spawn_refuses_when_the_brief_record_cannot_publish
-test_non_cursor_launch_clears_inherited_cursor_markers
-test_relative_home_overrides_launch_with_absolute_cross_process_paths
-test_home_defaults_preserve_absolute_or_resolve_relative_paths
-test_absolute_override_spelling_is_preserved_in_launch_paths
-test_unresolvable_relative_overrides_fail_loudly
-test_active_dispatch_profile_requires_explicit_harness_for_ship
-test_active_dispatch_profile_requires_explicit_harness_for_scout
-test_active_dispatch_profile_allows_explicit_harness
-test_active_dispatch_profile_allows_positional_harness
-test_active_dispatch_profile_allows_raw_launch_command
-test_chained_raw_launch_strips_ai_trailer_in_every_step
-test_claude_threads_model_and_effort
-test_codex_threads_model_and_effort
-test_codex_threads_model_and_max_effort
-test_codex_omits_max_effort_for_unsupported_model
-test_codex_crewmate_launch_disables_the_hook_layer
-test_codex_secondmate_launch_keeps_the_hook_layer
-test_grok_threads_model_and_reasoning_effort
-test_grok_omits_invalid_max_reasoning_effort
-test_grok_omits_invalid_xhigh_reasoning_effort
-test_cursor_threads_model_workspace_and_omits_effort_axis
-test_cursor_refuses_model_absent_from_live_catalog
-test_cursor_failed_catalog_probe_does_not_block_spawn
-test_opencode_threads_model_and_effort_variant
-test_opencode_without_effort_keeps_launch_config_unchanged
-test_opencode_emits_variant_for_openai_family_effort
-test_opencode_omits_variant_when_model_family_lacks_effort
-test_native_effort_validator_keeps_axes_separate
-test_native_pi_ultra_is_explicit_and_model_scoped
-test_batch_preserves_native_ultra
-test_pi_scout_launch_enters_recorded_worktree
-test_pi_threads_model_and_max_effort
-test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
-test_pi_signed_threads_shared_pi_profile_and_preserves_identity
-test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
-test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
-test_pi_seeded_secondmate_preapproves_project_trust
-test_pi_worker_launch_omits_seeded_home_approve
-test_pi_approve_probe_omits_unsupported_flag
-test_pi_exclude_tools_reach_ship_and_scout_launches
-test_pi_exclude_tools_worker_registry_reports
-test_pi_exclude_tools_absent_and_empty_lists
-test_exclude_tools_non_pi_runtime_refuses_non_empty_list
-test_pi_exclude_tools_malformed_entry_refuses_before_endpoint
-test_pi_exclude_tools_read_failure_refuses_before_launch
-test_pi_exclude_tools_do_not_leak_across_homes_or_to_secondmates
-test_batch_forwards_shared_profile_flags
-test_claude_forwards_firstmate_config_dir_when_set
-test_lavish_server_address_is_exported_to_worker_launch
-test_lavish_absent_config_preserves_destination_ambient
-test_claude_omits_config_dir_prefix_when_unset
-test_claude_permission_mode_bypass_matches_absent_launch
-test_claude_permission_mode_auto_swaps_only_the_permission_flag
-test_claude_permission_mode_auto_reaches_scout_launch
-test_claude_worker_launch_covers_task_channel_dirs
-test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
-test_non_claude_harness_ignores_claude_permission_mode
-test_non_claude_harness_ignores_config_dir
-test_claude_task_launch_carries_control_channel_authority
-test_claude_secondmate_launch_omits_task_control_channel_authority
-test_claude_long_launch_is_delivered_intact
-test_claude_crewmate_launch_carries_the_attribution_policy
-test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
-test_keep_ai_trailers_reaches_secondmate_crew_launches
-test_claude_secondmate_launch_carries_the_attribution_policy
-test_active_dispatch_profile_does_not_block_secondmate_launch
-
-
-test_codex_approval_mode_contract() {
-  local value kind rec id out launch status
-  for value in absent bypass approve-for-me invalid split; do
-    for kind in ship scout; do
-      id="approval-$value-$kind"
-      rec=$(make_spawn_case "$id" codex "$id")
-      read_case_record "$rec"
-      case "$value" in
-        absent) ;;
-        split) printf 'approve -for-me\n' > "$HOME_DIR/config/codex-approval-mode" ;;
-        *) printf '%s\n' "$value" > "$HOME_DIR/config/codex-approval-mode" ;;
-      esac
-      if [ "$kind" = ship ]; then
-        out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" 2>&1)
-      else
-        out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout 2>&1)
-      fi
-      status=$?
-      if [ "$value" = invalid ] || [ "$value" = split ]; then
-        expect_code 1 "$status" "invalid Codex approval setting must refuse"
-        assert_contains "$out" 'config/codex-approval-mode' 'refusal must name setting'
-        assert_absent "$HOME_DIR/state/$id.meta" 'invalid setting published metadata'
-        [ ! -s "$LAUNCH_LOG" ] || fail 'invalid setting launched a worker'
-        continue
-      fi
-      expect_code 0 "$status" "$id spawn failed: $out"
-      launch=$(cat "$LAUNCH_LOG")
-      if [ "$value" = approve-for-me ]; then
-        assert_contains "$launch" '--approve-for-me' 'persistent fallback was not used directly'
-        assert_not_contains "$launch" '--dangerously-bypass-approvals-and-sandbox' 'fallback retried bypass'
-      else
-        assert_contains "$launch" '--dangerously-bypass-approvals-and-sandbox' 'Codex bypass default changed'
-        assert_not_contains "$launch" '--approve-for-me' 'unconfigured launch opted into fallback'
-      fi
-    done
-  done
-  pass 'Codex defaults remain bypass; persistent fallback is direct and invalid values refuse'
-}
-test_codex_approval_mode_contract
-
+# Exercise the public spawn interface for all Codex worker roles. The captured
+# command is what the pane receives, not an inspection of the launch template.
 test_codex_permission_modes() {
   local kind mode rec id sm out status launch flags
   for kind in ship scout secondmate; do
@@ -2348,7 +2315,6 @@ test_codex_permission_modes() {
   done
   pass "Codex absent, bypass, and restricted modes preserve flags for ships, scouts, and secondmates"
 }
-test_codex_permission_modes
 
 test_codex_permission_invalid_refuses_before_mutation() {
   local kind value rec id out status file before
@@ -2400,7 +2366,6 @@ test_codex_permission_invalid_refuses_before_mutation() {
   done
   pass "invalid Codex permission files refuse spawns and relaunches before mutation"
 }
-test_codex_permission_invalid_refuses_before_mutation
 
 test_codex_permission_does_not_change_other_harnesses() {
   local rec id out status launch
@@ -2417,6 +2382,82 @@ test_codex_permission_does_not_change_other_harnesses() {
   assert_not_contains "$launch" '--ask-for-approval' "Codex approval flags leaked to Claude"
   pass "Codex restricted mode leaves other harness launch flags unchanged"
 }
+
+test_codex_permission_modes
+test_codex_permission_invalid_refuses_before_mutation
 test_codex_permission_does_not_change_other_harnesses
+test_worker_launch_delivers_role_scope
+test_no_profile_keeps_claude_profile_defaults
+test_claude_launch_brief_publishes_record_doorbell
+test_claude_secondmate_launch_brief_publishes_into_its_own_home
+test_claude_spawn_refuses_when_the_brief_record_cannot_publish
+test_non_cursor_launch_clears_inherited_cursor_markers
+test_relative_home_overrides_launch_with_absolute_cross_process_paths
+test_home_defaults_preserve_absolute_or_resolve_relative_paths
+test_absolute_override_spelling_is_preserved_in_launch_paths
+test_unresolvable_relative_overrides_fail_loudly
+test_active_dispatch_profile_requires_explicit_harness_for_ship
+test_active_dispatch_profile_requires_explicit_harness_for_scout
+test_active_dispatch_profile_allows_explicit_harness
+test_active_dispatch_profile_allows_positional_harness
+test_active_dispatch_profile_allows_raw_launch_command
+test_chained_raw_launch_strips_ai_trailer_in_every_step
+test_claude_threads_model_and_effort
+test_codex_threads_model_and_effort
+test_codex_threads_model_and_max_effort
+test_codex_omits_max_effort_for_unsupported_model
+test_codex_crewmate_launch_disables_the_hook_layer
+test_codex_secondmate_launch_keeps_the_hook_layer
+test_codex_approval_mode_contract
+test_grok_threads_model_and_reasoning_effort
+test_grok_omits_invalid_max_reasoning_effort
+test_grok_omits_invalid_xhigh_reasoning_effort
+test_cursor_threads_model_workspace_and_omits_effort_axis
+test_cursor_refuses_model_absent_from_live_catalog
+test_cursor_failed_catalog_probe_does_not_block_spawn
+test_opencode_threads_model_and_effort_variant
+test_opencode_without_effort_keeps_launch_config_unchanged
+test_opencode_emits_variant_for_openai_family_effort
+test_opencode_omits_variant_when_model_family_lacks_effort
+test_native_effort_validator_keeps_axes_separate
+test_native_pi_ultra_is_explicit_and_model_scoped
+test_batch_preserves_native_ultra
+test_pi_scout_launch_enters_recorded_worktree
+test_pi_threads_model_and_max_effort
+test_pi_tui_mode_probe_is_safe_for_old_and_new_pi
+test_pi_signed_threads_shared_pi_profile_and_preserves_identity
+test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
+test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
+test_pi_seeded_secondmate_preapproves_project_trust
+test_pi_worker_launch_omits_seeded_home_approve
+test_pi_approve_probe_omits_unsupported_flag
+test_pi_exclude_tools_reach_ship_and_scout_launches
+test_pi_exclude_tools_worker_registry_reports
+test_pi_exclude_tools_absent_and_empty_lists
+test_exclude_tools_non_pi_runtime_refuses_non_empty_list
+test_pi_exclude_tools_malformed_entry_refuses_before_endpoint
+test_pi_exclude_tools_read_failure_refuses_before_launch
+test_pi_exclude_tools_do_not_leak_across_homes_or_to_secondmates
+test_batch_forwards_shared_profile_flags
+test_claude_forwards_firstmate_config_dir_when_set
+test_lavish_server_address_is_exported_to_worker_launch
+test_lavish_absent_config_preserves_destination_ambient
+test_claude_omits_config_dir_prefix_when_unset
+test_claude_permission_mode_absent_defaults_to_bypass
+test_claude_permission_mode_auto_opts_into_model_reviewed_launch
+test_claude_permission_mode_bypass_swaps_only_the_permission_flag
+test_claude_permission_mode_auto_reaches_scout_launch
+test_claude_worker_launch_covers_task_channel_dirs
+test_claude_permission_mode_invalid_refuses_before_endpoint_or_metadata
+test_non_claude_harness_ignores_claude_permission_mode
+test_non_claude_harness_ignores_config_dir
+test_claude_task_launch_carries_control_channel_authority
+test_claude_secondmate_launch_omits_task_control_channel_authority
+test_claude_long_launch_is_delivered_intact
+test_claude_crewmate_launch_carries_the_attribution_policy
+test_keep_ai_trailers_omits_attribution_settings_and_strip_hooks
+test_keep_ai_trailers_reaches_secondmate_crew_launches
+test_claude_secondmate_launch_carries_the_attribution_policy
+test_active_dispatch_profile_does_not_block_secondmate_launch
 
 echo "# all fm-spawn-dispatch-profile tests passed"
