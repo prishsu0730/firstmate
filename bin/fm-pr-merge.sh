@@ -24,6 +24,9 @@
 # A GitHub pull request is also refused before any merge call when its commit
 # subjects mix a refactor: commit with a fix: or feat: commit, including an
 # optional conventional-commit scope after each prefix.
+# Each verification attempt reads all commit pages and requires the last commit
+# to match that attempt's verified head; unreadable or incomplete subjects, or
+# a changed head, refuse the merge.
 # A required check that never reported is absent from the checks
 # list rather than red, so github_read_required_contexts below reads the
 # required set from classic branch protection and active rulesets. Check-run
