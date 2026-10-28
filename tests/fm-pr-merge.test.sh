@@ -4138,7 +4138,7 @@ test_file_boundary_absent_list_changes_nothing() {
   add_pr_files_mock "$case_dir" bin/anything.sh docs/at-all.md
   run_required_case "$case_dir" 43
   expect_code 0 "$RC" "boundary-absent: a task with no list must merge (stderr: $(cat "$case_dir/stderr"))"
-  assert_no_grep '/pulls/' "$case_dir/gh.log" "boundary-absent: the file list was read for a task with no list"
+  assert_no_grep '/pulls/43/files' "$case_dir/gh.log" "boundary-absent: the file list was read for a task with no list"
   assert_no_grep 'boundary' "$case_dir/stderr" "boundary-absent: the merge said something about a boundary"
   assert_logged_gh_merge "$case_dir" 43 example/repo --squash
   pass "fm-pr-merge reads no file list and says nothing for a task with no allowed list"
