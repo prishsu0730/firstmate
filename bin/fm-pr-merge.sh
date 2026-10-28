@@ -21,6 +21,9 @@
 # re-checks every condition after a short bounded wait instead of refusing;
 # once that bound is spent it reports mergeability still pending rather than
 # unmergeable, with the same nonzero exit as any other refusal.
+# A GitHub pull request is also refused before any merge call when its commit
+# subjects mix a refactor: commit with a fix: or feat: commit, including an
+# optional conventional-commit scope after each prefix.
 # A required check that never reported is absent from the checks
 # list rather than red, so github_read_required_contexts below reads the
 # required set from classic branch protection and active rulesets. Check-run
@@ -457,6 +460,37 @@ if [ "$PROVIDER" = github ]; then
     echo "error: merging a GitHub pull request requires $GITHUB_MISSING on PATH" >&2
     exit 1
   fi
+fi
+
+github_refuse_mixed_refactor_commits() {
+  local subject type subjects=''
+  local refactors=() fixes_or_features=()
+  local prefix='^(refactor|fix|feat)(\([^)]*\))?:'
+
+  if ! subjects=$(gh pr view "$URL" --json commits --jq '.commits[] | .messageHeadline // empty' 2>/dev/null); then
+    echo "error: could not read the GitHub pull request commit subjects before merging" >&2
+    return 1
+  fi
+  while IFS= read -r subject; do
+    [[ "$subject" =~ $prefix ]] || continue
+    type=${BASH_REMATCH[1]}
+    case "$type" in
+      refactor) refactors+=("$subject") ;;
+      fix|feat) fixes_or_features+=("$subject") ;;
+    esac
+  done <<EOF
+$subjects
+EOF
+  [ "${#refactors[@]}" -eq 0 ] || [ "${#fixes_or_features[@]}" -eq 0 ] && return 0
+
+  printf 'error: refusing to merge %s: refactor commits cannot be mixed with fix or feat commits\n' "$URL" >&2
+  printf 'error: refactor commits: %s\n' "${refactors[*]}" >&2
+  printf 'error: fix or feat commits: %s\n' "${fixes_or_features[*]}" >&2
+  return 1
+}
+
+if [ "$PROVIDER" = github ]; then
+  github_refuse_mixed_refactor_commits || exit 1
 fi
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,

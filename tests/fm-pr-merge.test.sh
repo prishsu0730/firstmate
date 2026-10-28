@@ -53,6 +53,7 @@ make_case() {
     'queued=false' \
     'base=main' > "$case_dir/github-outcome"
   : > "$case_dir/github-rules"
+  printf '%s\n' 'docs update' > "$case_dir/github-commits"
   # The base branch the forge reports by default: unprotected, with no ruleset
   # rule, so nothing is required unless a case says otherwise.
   write_github_required "$case_dir"
@@ -173,6 +174,10 @@ printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "pr view")
     case " $* " in
+      *commits*)
+        cat "$FM_TEST_GH_COMMITS"
+        exit 0
+        ;;
       *statusCheckRollup*)
         if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
           call_n=$(( $(cat "$FM_TEST_GH_MERGEABLE_CALLS" 2>/dev/null || echo 0) + 1 ))
@@ -463,6 +468,7 @@ run_pr_merge() {
   FM_TEST_GH_MERGEABLE_SEQUENCE="${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" \
   FM_TEST_GH_MERGEABLE_CALLS="$case_dir/mergeable-calls" \
   FM_TEST_GH_HEAD="$case_dir/github-head" \
+  FM_TEST_GH_COMMITS="$case_dir/github-commits" \
   FM_TEST_GH_RUNS="$case_dir/github-runs.json" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
@@ -2358,6 +2364,77 @@ test_secondmate_without_parent_binding_is_loud() {
   pass "a secondmate home that cannot report upward says so instead of merging in silence"
 }
 
+test_mixed_refactor_and_fix_commits_refuse_before_merging() {
+  local case_dir rc url
+  url=https://github.com/example/repo/pull/401
+  case_dir=$(make_case mixed-refactor-and-fix)
+  add_gh_mocks "$case_dir" 4014014014014014014014014014014014014014
+  printf '%s\n' 'refactor(parser): simplify commit reading' 'fix: preserve merge refusal' \
+    > "$case_dir/github-commits"
+
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 1 "$rc" "mixed-refactor-and-fix: mixed conventional commits must refuse"
+  assert_grep 'refactor commits cannot be mixed with fix or feat commits' "$case_dir/stderr" \
+    "mixed-refactor-and-fix: refusal did not explain the mixed commit types"
+  assert_grep 'refactor(parser): simplify commit reading' "$case_dir/stderr" \
+    "mixed-refactor-and-fix: refusal did not name the refactor commit"
+  assert_grep 'fix: preserve merge refusal' "$case_dir/stderr" \
+    "mixed-refactor-and-fix: refusal did not name the fix commit"
+  assert_no_grep 'pr merge' "$case_dir/gh.log" \
+    "mixed-refactor-and-fix: the forge merge ran despite mixed commits"
+  pass "fm-pr-merge refuses mixed refactor and fix commit subjects before merging"
+}
+
+test_refactor_only_commits_merge() {
+  local case_dir
+  case_dir=$(make_case refactor-only-commits)
+  add_gh_mocks "$case_dir" 4024024024024024024024024024024024024024
+  printf '%s\n' 'refactor: simplify commit reading' 'refactor(parser): rename helper' \
+    > "$case_dir/github-commits"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/402 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "refactor-only-commits: refactor-only PR should merge"
+  assert_logged_gh_merge "$case_dir" 402 example/repo --squash
+  pass "fm-pr-merge allows refactor-only commit subjects"
+}
+
+test_fix_only_commits_merge() {
+  local case_dir
+  case_dir=$(make_case fix-only-commits)
+  add_gh_mocks "$case_dir" 4034034034034034034034034034034034034034
+  printf '%s\n' 'fix(parser): preserve merge refusal' 'feat: show clear errors' \
+    > "$case_dir/github-commits"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/403 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "fix-only-commits: fix-only PR should merge"
+  assert_logged_gh_merge "$case_dir" 403 example/repo --squash
+  pass "fm-pr-merge allows fix-only and feat-only commit subjects"
+}
+
+test_no_prefix_commits_are_ignored() {
+  local case_dir
+  case_dir=$(make_case no-prefix-commits)
+  add_gh_mocks "$case_dir" 4044044044044044044044044044044044044044
+  printf '%s\n' 'refactor commit without a conventional prefix' 'fix commit without a conventional prefix' \
+    > "$case_dir/github-commits"
+
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/404 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" \
+    || fail "no-prefix-commits: non-conventional subjects should be ignored"
+  assert_logged_gh_merge "$case_dir" 404 example/repo --squash
+  pass "fm-pr-merge ignores commit subjects without conventional prefixes"
+}
+
+test_mixed_refactor_and_fix_commits_refuse_before_merging
+test_refactor_only_commits_merge
+test_fix_only_commits_merge
+test_no_prefix_commits_are_ignored
 test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
