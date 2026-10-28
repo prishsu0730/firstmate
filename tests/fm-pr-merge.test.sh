@@ -174,10 +174,6 @@ printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "pr view")
     case " $* " in
-      *" --json commits "*)
-        cat "$FM_TEST_GH_COMMITS"
-        exit 0
-        ;;
       *statusCheckRollup*)
         if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
           call_n=$(( $(cat "$FM_TEST_GH_MERGEABLE_CALLS" 2>/dev/null || echo 0) + 1 ))
@@ -257,6 +253,26 @@ case "${1:-} ${2:-}" in
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
+      *"/pulls/"*"/commits?per_page=100"*)
+        head=$(cat "$FM_TEST_GH_HEAD")
+        mix=''
+        if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
+          call_n=$(cat "$FM_TEST_GH_MERGEABLE_CALLS")
+          row=$(sed -n "${call_n}p" "$FM_TEST_GH_MERGEABLE_SEQUENCE")
+          [ -n "$row" ] || row=$(tail -n1 "$FM_TEST_GH_MERGEABLE_SEQUENCE")
+          read -r unused unused mix <<< "$row"
+        fi
+        [ "$mix" != mixed ] || head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        if [ -f "$FM_TEST_GH_COMMITS.head" ]; then
+          head=$(cat "$FM_TEST_GH_COMMITS.head")
+        fi
+        jq -n --rawfile subjects "$FM_TEST_GH_COMMITS" --arg head "$head" --arg mix "$mix" '
+          ($subjects | split("\n") | map(select(length > 0)))
+          | if $mix == "mixed" then . + ["fix: pushed during verification"] else . end
+          | map({sha: "earlier", commit: {message: .}}) | .[-1].sha = $head
+          | . as $commits | [range(0; length; 100) | $commits[.:. + 100]]'
+        exit 0
+        ;;
       *" repos/"*"/commits/"*"/check-runs"*)
         case "$*" in
           *"/commits/$(cat "$FM_TEST_GH_HEAD")/check-runs"*) ;;
@@ -2459,6 +2475,42 @@ test_push_during_verification_refuses_mixed_commits() {
   pass "mixed pushes are refused on initial verification and UNKNOWN retry"
 }
 
+test_complete_commit_set_is_required() {
+  local case_dir mode rc i
+  for mode in mixed clean changed; do
+    case_dir=$(make_case "complete-commits-$mode")
+    add_gh_mocks "$case_dir" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    for ((i=0; i<100; i++)); do
+      printf '%s\n' 'refactor: simplify parsing'
+    done > "$case_dir/github-commits"
+    if [ "$mode" = mixed ]; then
+      printf '%s\n' 'feat: add behavior' >> "$case_dir/github-commits"
+    else
+      printf '%s\n' 'refactor: final cleanup' >> "$case_dir/github-commits"
+    fi
+    if [ "$mode" = changed ]; then
+      printf '%s\n' bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb > "$case_dir/github-commits.head"
+    fi
+    rc=0
+    run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/406 \
+      > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    if [ "$mode" = clean ]; then
+      expect_code 0 "$rc" "complete-commits: clean paginated PR should merge"
+      assert_logged_gh_merge "$case_dir" 406 example/repo --squash
+    else
+      expect_code 1 "$rc" "complete-commits-$mode: must refuse"
+      assert_no_grep 'pr merge' "$case_dir/gh.log" "complete-commits-$mode: merge ran"
+      if [ "$mode" = mixed ]; then
+        assert_grep 'refactor commits cannot be mixed' "$case_dir/stderr" "missing mixed refusal"
+      else
+        assert_grep 'complete GitHub pull request commit subjects' "$case_dir/stderr" "missing head refusal"
+      fi
+    fi
+  done
+  pass "all commit pages must be clean and end at the verified head"
+}
+
+test_complete_commit_set_is_required
 test_push_during_verification_refuses_mixed_commits
 test_mixed_refactor_and_fix_commits_refuse_before_merging
 test_refactor_only_commits_merge

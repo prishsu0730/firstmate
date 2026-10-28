@@ -463,15 +463,18 @@ if [ "$PROVIDER" = github ]; then
 fi
 
 github_refuse_mixed_refactor_commits() {
-  local json=$1 subject type subjects=''
+  local head=$1 json subject type subjects=''
   local refactors=() fixes_or_features=()
   local prefix='^(refactor|fix|feat)(\([^)]*\))?:'
 
-  if ! subjects=$(printf '%s' "$json" | jq -r '
-      if (.commits | type) != "array" then error("invalid commits") else .commits[] end
-      | if (.messageHeadline | type) == "string" then .messageHeadline
+  if ! json=$(gh api --paginate --slurp "repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER/commits?per_page=100" 2>/dev/null) \
+    || ! subjects=$(printf '%s' "$json" | jq -er --arg head "$head" '
+      if type != "array" then error("invalid pages") else . end
+      | if all(.[]; type == "array") then add else error("invalid page") end
+      | if length > 0 and .[-1].sha == $head then . else error("incomplete or changed head") end
+      | .[] | if (.commit.message | type) == "string" then .commit.message | split("\n")[0]
         else error("invalid commit subject") end' 2>/dev/null); then
-    echo "error: could not read the GitHub pull request commit subjects before merging" >&2
+    echo "error: could not read the complete GitHub pull request commit subjects at the verified head before merging" >&2
     return 1
   fi
   while IFS= read -r subject; do
@@ -775,7 +778,7 @@ github_verify_mergeable() {
   local total=0 named=0 refusals='' mergeable_refusal=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,commits 2>/dev/null) \
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
     || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
@@ -812,12 +815,12 @@ FIELDS
     return 1
   fi
 
-  github_refuse_mixed_refactor_commits "$json" || return 1
   draft=$(fm_pr_json_draft_state "$json")
   if ! fm_pr_head_valid "$live_head"; then
     echo "error: could not read the GitHub pull request head commit before merging" >&2
     return 1
   fi
+  github_refuse_mixed_refactor_commits "$live_head" || return 1
   if ! red=$(github_checks_not_green "$json"); then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
