@@ -1291,7 +1291,7 @@ read_review_tier() {
     return 1
   fi
   value=$(printf '%s' "${lines#Review tier:}" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//')
-  value=${value% ' (no greptile / base / plus / apex)'}
+  value=${value%' (no greptile / base / plus / apex)'}
   case "$value" in
     low|'no greptile') needed=0 ;;
     base|medium|'medium (base)') needed=1 ;;

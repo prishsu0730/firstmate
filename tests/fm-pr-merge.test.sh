@@ -4826,6 +4826,46 @@ test_review_tier_gitlab_needs_reviews_at_the_head() {
   pass "fm-pr-merge applies the review gate to a GitLab merge request at its verified head"
 }
 
+test_review_tier_scaffold_forms_merge() {
+  local tier needed n case_dir url head provider rc
+  for provider in github gitlab; do
+    for tier in LOW Base Plus Apex; do
+      case "$tier" in
+        LOW) needed=0 ;;
+        Base) needed=1 ;;
+        Plus) needed=2 ;;
+        Apex) needed=4 ;;
+      esac
+      if [ "$provider" = github ]; then
+        make_review_case "review-scaffold-$provider-$tier" "$tier"
+        case_dir=$CASE
+        url=$REVIEW_URL
+        head=$REVIEW_HEAD
+      else
+        case_dir=$(make_gitlab_case "review-scaffold-$provider-$tier")
+        write_review_tier_brief "$case_dir" task-x1 "$tier"
+        url=$MR_URL
+        head=$MR_HEAD
+      fi
+      for ((n = 1; n <= needed; n++)); do
+        add_review "$case_dir" task-x1 "$url" "$head" "scout-r$n"
+      done
+      set +e
+      run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+      rc=$?
+      set -e
+      expect_code 0 "$rc" "review-scaffold-$provider-$tier: filled scaffold must merge (stderr: $(cat "$case_dir/stderr"))"
+      if [ "$provider" = github ]; then
+        assert_logged_gh_merge "$case_dir" 610 example/repo --squash
+      else
+        assert_grep 'mr merge 7' "$case_dir/glab.log" "review-scaffold-$provider-$tier: merge did not run"
+      fi
+    done
+  done
+  pass "fm-pr-merge accepts all four filled scaffold tiers on both forges"
+}
+
+test_review_tier_scaffold_forms_merge
 test_review_tier_low_needs_no_review
 test_review_tier_base_refuses_without_a_review
 test_review_tier_base_merges_with_one_review
