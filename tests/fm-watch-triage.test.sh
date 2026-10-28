@@ -6699,6 +6699,20 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || { reap "$pid"; fail "unchanged automatic teardown refusal queued another wake"; }
   reap "$pid"
 
+  # Stopping the watcher left a downtime marker, so the next start first
+  # re-surfaces that recovery; consume it so the next wake is the refusal.
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.recovery" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "restart after the stopped watcher did not re-surface its recovery"
+  grep -Fx 'check: rearm-resurface' "$out.recovery" >/dev/null \
+    || fail "restart after the stopped watcher did not report the expected recovery wake"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out.recovery" 2> "$drain_err.recovery" \
+    || fail "drain after watcher recovery failed"
+  ack_drain_err "$state" "$drain_err.recovery" || fail "could not acknowledge watcher recovery wake"
+
   marker="$state/.auto-close-refusal-refused"
   [ -f "$marker" ] || fail "automatic teardown refusal did not persist its reason"
   printf 'exit=1\nREFUSED: changed fixture reason\n' > "$marker"
