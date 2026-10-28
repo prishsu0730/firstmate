@@ -2497,6 +2497,31 @@ heartbeat_scan_finds_actionable() {
   return "$found"
 }
 
+auto_close_candidate_is_safe_to_check() {  # <meta> <id>
+  local meta=$1 id=$2 kind last mode project pr pr_head
+  fm_task_record_finished "$STATE" "$id" && return 0
+
+  # Keep the reusable finished-record proof strict for slot ownership. A ship
+  # whose done report names a specific pushed PR is also safe to hand to the
+  # guarded teardown: teardown remains the sole owner of the live merge and
+  # landed-content proof needed for a squash-merged or local-main branch.
+  kind=$(fm_meta_get "$meta" kind)
+  [ "$kind" = ship ] || return 1
+  [ -f "$STATE/$id.status" ] && [ ! -L "$STATE/$id.status" ] || return 1
+  last=$(tail -n 1 "$STATE/$id.status" 2>/dev/null) || return 1
+  case "$last" in
+    "done "*|"done["*|"done:"*) ;;
+    *) return 1 ;;
+  esac
+  project=$(fm_meta_get "$meta" project)
+  [ -d "$project" ] || return 1
+  mode=$(fm_meta_get "$meta" mode)
+  [ "$mode" = local-only ] && return 0
+  pr=$(fm_meta_get "$meta" pr)
+  pr_head=$(fm_meta_get "$meta" pr_head)
+  fm_pr_url_parse "$pr" && fm_pr_head_valid "$pr_head"
+}
+
 auto_close_finished_records() {
   local meta id kind rc
   FM_AUTO_CLOSE_REFUSED_ID=''
@@ -2505,7 +2530,7 @@ auto_close_finished_records() {
     id=$(basename "$meta" .meta)
     kind=$(fm_meta_get "$meta" kind)
     [ "$kind" = secondmate ] && continue
-    fm_task_record_finished "$STATE" "$id" || continue
+    auto_close_candidate_is_safe_to_check "$meta" "$id" || continue
     "$SCRIPT_DIR/fm-teardown.sh" "$id"
     rc=$?
     case "$rc" in
