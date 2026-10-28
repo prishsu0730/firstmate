@@ -72,6 +72,9 @@ make_spawn_fakebin() {
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 set -u
+if [ "${FM_TEST_MUSE_STALE_TMUX:-}" = 1 ] && [ -n "${TMUX:-}" ]; then
+  exit 1
+fi
 case "$*" in
   *"#{pane_current_path}"*) printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; exit 0 ;;
 esac
@@ -310,6 +313,20 @@ EOF
 # An unauthenticated muse pane does not exit: it sits on an OAuth device-code
 # prompt forever, which supervision would read as a wedged worker rather than a
 # missing credential. The spawn must refuse before an endpoint exists.
+test_spawn_recovers_stale_tmux_credential_lookup() {
+  local rec case_dir home proj wt fakebin id out status
+  rec=$(make_spawn_case stale-tmux-cred)
+  IFS='|' read -r case_dir home proj wt fakebin id <<EOF
+$rec
+EOF
+  out=$(FM_TEST_MUSE_STALE_TMUX=1 FM_TEST_MUSE_KEY='' \
+    run_muse_spawn "$home" "$proj" "$wt" "$fakebin" "$id" --mode no-mistakes --yolo off)
+  status=$?
+  expect_code 0 "$status" "stale tmux credential lookup failed: $out"
+  [ -f "$home/state/$id.meta" ] || fail "recovered spawn did not publish metadata"
+  pass "muse spawn finds the default server credential after clearing stale TMUX"
+}
+
 test_spawn_refuses_without_credential() {
   local rec case_dir home proj wt fakebin id out status
   rec=$(make_spawn_case no-cred)
@@ -953,6 +970,7 @@ test_detection_is_anchored
 test_spawn_clears_inherited_foreign_harness_markers
 test_spawn_launch_shape
 test_spawn_maps_effort_and_model
+test_spawn_recovers_stale_tmux_credential_lookup
 test_spawn_refuses_without_credential
 test_spawn_refuses_caller_only_environment_credential
 test_spawn_accepts_stored_credential

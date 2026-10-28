@@ -52,6 +52,14 @@ case "$*" in
     exit 0
     ;;
 esac
+case "$*" in
+  *"#{start_time}"*)
+    # The server identity a spawn records: "<socket>\t<pid>\t<start>", or
+    # nothing when the case does not model one.
+    [ -z "${FM_FAKE_SERVER_IDENT:-}" ] || printf '%s\n' "$FM_FAKE_SERVER_IDENT"
+    exit 0
+    ;;
+esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
@@ -221,9 +229,54 @@ test_primary_checkout_that_never_settles_fails_at_the_deadline() {
   pass "a pane stuck on the primary checkout fails loudly at the deadline"
 }
 
+# A spawn records the tmux server the new window lives on - socket path, pid,
+# and the server's own start time - so a later control verb can prove the
+# window gone after a server restart instead of refusing forever.
+test_spawn_records_the_tmux_server_identity() {
+  local rec id out status
+  id=settle-identity-z5
+  rec=$(make_settle_case settle-identity "$id" 0)
+  read_settle_record "$rec"
+  FM_FAKE_SERVER_IDENT=$(printf '/tmp/fm-test-tmux/default\t4242\t1700000000')
+  export FM_FAKE_SERVER_IDENT
+
+  out=$(run_settle_spawn "$id")
+  status=$?
+  unset FM_FAKE_SERVER_IDENT
+  expect_code 0 "$status" "spawn should succeed"$'\n'"$out"
+  assert_grep "tmux_socket=/tmp/fm-test-tmux/default" "$HOME_DIR/state/$id.meta" \
+    "meta did not record the tmux socket"
+  assert_grep "tmux_server_pid=4242" "$HOME_DIR/state/$id.meta" \
+    "meta did not record the tmux server pid"
+  assert_grep "tmux_server_start=1700000000" "$HOME_DIR/state/$id.meta" \
+    "meta did not record the tmux server start time"
+  pass "a tmux spawn records the server's socket, pid, and start time"
+}
+
+# A server whose identity cannot be read back whole is recorded as no identity
+# at all, never as a half one that could later prove the wrong thing.
+test_spawn_records_no_half_tmux_server_identity() {
+  local rec id out status
+  id=settle-identity-half-z6
+  rec=$(make_settle_case settle-identity-half "$id" 0)
+  read_settle_record "$rec"
+  FM_FAKE_SERVER_IDENT=$(printf '/tmp/fm-test-tmux/default\tnot-a-pid\t1700000000')
+  export FM_FAKE_SERVER_IDENT
+
+  out=$(run_settle_spawn "$id")
+  status=$?
+  unset FM_FAKE_SERVER_IDENT
+  expect_code 0 "$status" "spawn should still succeed"$'\n'"$out"
+  assert_no_grep "tmux_" "$HOME_DIR/state/$id.meta" \
+    "a malformed server identity must not be recorded"
+  pass "a malformed tmux server identity is not recorded"
+}
+
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted
 test_primary_checkout_that_never_settles_fails_at_the_deadline
+test_spawn_records_the_tmux_server_identity
+test_spawn_records_no_half_tmux_server_identity
 
 echo "# all fm-spawn-worktree-settle tests passed"

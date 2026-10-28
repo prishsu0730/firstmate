@@ -169,6 +169,63 @@ fm_backend_tmux_window_inventory() {  # <session-target>
   return 1
 }
 
+# fm_backend_tmux_server_identity: the identity of the tmux server this process
+# addresses, as "<socket>\t<pid>\t<start>" - the socket path, the server's pid,
+# and the server's own start time. Spawn records it in the task's meta so a later
+# control verb can prove the recorded server is gone or was restarted
+# (fm_backend_tmux_endpoint_absence_proof). Returns nonzero and prints nothing
+# unless all three fields read back well-formed, so a task is never recorded with
+# a half identity.
+fm_backend_tmux_server_identity() {
+  local ident socket pid start extra
+  ident=$(tmux display-message -p '#{socket_path}'$'\t''#{pid}'$'\t''#{start_time}' 2>/dev/null) || return 1
+  IFS=$'\t' read -r socket pid start extra <<< "$ident"
+  [ -z "$extra" ] || return 1
+  case "$socket" in /*) ;; *) return 1 ;; esac
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  case "$start" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\t%s\t%s\n' "$socket" "$pid" "$start"
+}
+
+# fm_backend_tmux_endpoint_absence_proof: whether <target> (session:window) is
+# provably gone, judged against the EXACT tmux server a task was spawned on
+# (-S <socket>), never the server this process happens to address. Prints
+# "<verdict>\t<reason>" like fm_control_endpoint_absence_verdict, which owns the
+# vocabulary and calls this. `gone` only when one of these is proven:
+#   - the recorded socket no longer has a server,
+#   - the server there has a different pid or start time (it was restarted).
+# Everything else - a malformed identity, an unreadable socket, any tmux error
+# that does not definitively say "no server" - is `unproven`.
+fm_backend_tmux_endpoint_absence_proof() {  # <target> <socket> <pid> <start>
+  local target=$1 socket=$2 pid=$3 start=$4 session window out now_pid now_start extra
+  case "$socket" in /*) ;; *) printf 'unproven\tthe recorded tmux socket is not an absolute path'; return 0 ;; esac
+  case "$pid$start" in ''|*[!0-9]*) printf 'unproven\tthe recorded tmux server identity is malformed'; return 0 ;; esac
+  [ -n "$pid" ] && [ -n "$start" ] || { printf 'unproven\tthe recorded tmux server identity is incomplete'; return 0; }
+  case "$target" in
+    *:*) session=${target%%:*}; window=${target#*:} ;;
+    *) printf 'unproven\tthe recorded endpoint is not a session:window address'; return 0 ;;
+  esac
+  [ -n "$session" ] && [ -n "$window" ] || { printf 'unproven\tthe recorded endpoint is not a session:window address'; return 0; }
+  if ! out=$(LC_ALL=C tmux -S "$socket" display-message -p '#{pid}'$'\t''#{start_time}' 2>&1); then
+    case "$out" in
+      *"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)")
+        printf 'gone\t'
+        ;;
+      *) printf 'unproven\tthe recorded tmux socket %s could not be read' "$socket" ;;
+    esac
+    return 0
+  fi
+  IFS=$'\t' read -r now_pid now_start extra <<< "$out"
+  case "$now_pid$now_start" in ''|*[!0-9]*) printf 'unproven\tthe recorded tmux socket %s answered with an unreadable server identity' "$socket"; return 0 ;; esac
+  [ -n "$now_pid" ] && [ -n "$now_start" ] && [ -z "$extra" ] \
+    || { printf 'unproven\tthe recorded tmux socket %s answered with an unreadable server identity' "$socket"; return 0; }
+  if [ "$now_pid" != "$pid" ] || [ "$now_start" != "$start" ]; then
+    printf 'gone\t'
+    return 0
+  fi
+  printf 'unproven\tthe recorded tmux server is still running'
+}
+
 # fm_backend_tmux_kill: remove one explicitly named task window.
 # Empty, omitted, and malformed targets return nonzero before invoking tmux so
 # tmux can never interpret an empty target as the caller's current window.

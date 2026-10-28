@@ -90,6 +90,20 @@ make_tmux_stub() {  # <dir> -> echoes fakebin dir
 #!/usr/bin/env bash
 set -u
 D=$FM_FAKE_DIR
+# A leading `-S <socket>` addresses one exact tmux server. The model is one
+# optional file: `server` holds "<socket>\t<pid>\t<start>" for the single live
+# server; any other socket has no server (or, with `socket-unreadable`, cannot
+# be read at all). `windows-sock` is that server's own window inventory.
+sock=
+if [ "${1:-}" = -S ]; then
+  sock=${2:-}; shift 2
+  if [ -f "$D/socket-unreadable" ]; then
+    echo "error connecting to $sock (Permission denied)" >&2; exit 1
+  fi
+  if [ ! -f "$D/server" ] || [ "$(cut -f1 "$D/server")" != "$sock" ]; then
+    echo "error connecting to $sock (No such file or directory)" >&2; exit 1
+  fi
+fi
 # The rows devin 3000.11.1 renders for each modelled screen (live capture).
 devin_screen() {  # <running|armed|cancelled|idle|picker>
   # The idle placeholder is dark truecolor text, as Devin draws it.
@@ -164,6 +178,13 @@ case "${1:-}" in
   display-message)
     for a in "$@"; do
       case "$a" in
+        *start_time*)
+          [ -f "$D/server" ] || continue
+          case "$a" in
+            *socket_path*) cat "$D/server" ;;
+            *) cut -f2,3 "$D/server" ;;
+          esac
+          exit 0 ;;
         *cursor_y*)
           # A modelled Devin screen parks the cursor on its composer row.
           if [ -f "$D/devin" ]; then
@@ -193,6 +214,7 @@ case "${1:-}" in
     if [ -f "$D/devin" ]; then devin_screen "$(cat "$D/devin")"; elif [ -f "$D/pane" ]; then cat "$D/pane"; else printf '╭────╮\n│    │\n╰────╯\n'; fi
     exit 0 ;;
   list-windows)
+    if [ -n "$sock" ] && [ -f "$D/windows-sock" ]; then cat "$D/windows-sock"; exit 0; fi
     if [ -f "$D/windows" ]; then cat "$D/windows"; fi
     exit 0 ;;
 esac
@@ -799,17 +821,117 @@ test_missing_tmux_endpoint_refuses_rather_than_claiming_a_stop() {
   add_task "$dir" t1 claude
   : > "$dir/fake/windows"
   out=$(run_control "$dir" t1 exit); rc=$?
-  # `missing` on tmux is not a finding about the endpoint. A task record carries
-  # no socket identity for it, and any inventory describes only the tmux server
-  # this process addresses, so a window that is merely on a server this seat
-  # cannot reach is indistinguishable from one that was destroyed. exit refuses
-  # rather than claim a stop it cannot see, and sends nothing to an address it
-  # cannot trust. Reclaim of a destroyed endpoint is Herdr-only
-  # (docs/agent-control.md "Reclaiming a task whose endpoint is gone").
+  # `missing` on tmux is not a finding about the endpoint. A record WITHOUT the
+  # server identity (an old record) carries nothing that says which tmux server
+  # holds the window, and any inventory describes only the server this process
+  # addresses, so a window merely on a server this seat cannot reach is
+  # indistinguishable from one that was destroyed. exit refuses rather than
+  # claim a stop it cannot see, and sends nothing to an address it cannot
+  # trust (docs/agent-control.md "Reclaiming a task whose endpoint is gone").
   expect_code 1 "$rc" "a tmux endpoint whose absence cannot be proven must refuse"
   assert_not_contains "$out" "endpoint-gone" "exit must not report a stop it could not prove"
   [ -z "$(literals "$dir")" ] || fail "nothing may be sent into an endpoint exit cannot trust"
   pass "fm-control exit: an unprovable tmux endpoint refuses instead of claiming the agent stopped"
+}
+
+# add_tmux_identity <case-dir> <id> <socket> <pid> <start>: the server identity a
+# tmux spawn records in the task's meta.
+add_tmux_identity() {
+  {
+    echo "tmux_socket=$3"
+    echo "tmux_server_pid=$4"
+    echo "tmux_server_start=$5"
+  } >> "$1/home/state/$2.meta"
+}
+
+# tmux_server_is <case-dir> <socket> <pid> <start>: the one live server the
+# stubbed `tmux -S <socket>` can reach.
+tmux_server_is() {
+  printf '%s\t%s\t%s\n' "$2" "$3" "$4" > "$1/fake/server"
+}
+
+test_tmux_server_restart_proves_the_endpoint_gone() {
+  local dir out rc
+  dir=$(new_case restarted)
+  add_task "$dir" t1 claude
+  add_tmux_identity "$dir" t1 /tmp/fm-test-tmux/default 100 1000
+  # The server at the recorded socket is a NEW one: same path, different pid and
+  # start time. Every window of the old server died with it.
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 200 2000
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "a restarted tmux server proves the recorded endpoint gone"$'\n'"$out"
+  assert_contains "$out" "endpoint-gone t1" "exit should report the endpoint gone"
+  [ -z "$(literals "$dir")" ] || fail "nothing may be typed into an endpoint that is gone"
+  pass "fm-control exit: a tmux server restarted since the spawn proves the endpoint gone"
+}
+
+test_tmux_socket_without_a_server_proves_the_endpoint_gone() {
+  local dir out rc
+  dir=$(new_case no-server)
+  add_task "$dir" t1 claude
+  add_tmux_identity "$dir" t1 /tmp/fm-test-tmux/default 100 1000
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "a recorded socket with no server proves the endpoint gone"$'\n'"$out"
+  assert_contains "$out" "endpoint-gone t1" "exit should report the endpoint gone"
+  pass "fm-control exit: a recorded tmux socket with no server proves the endpoint gone"
+}
+
+test_same_tmux_server_without_the_window_stays_unproven() {
+  local dir out rc
+  dir=$(new_case window-absent)
+  add_task "$dir" t1 claude
+  add_tmux_identity "$dir" t1 /tmp/fm-test-tmux/default 100 1000
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 100 1000
+  : > "$dir/fake/windows"
+  : > "$dir/fake/windows-sock"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a window may have moved on the recorded server"$'\n'"$out"
+  assert_not_contains "$out" "endpoint-gone" "exit must not claim the agent stopped"
+  [ -z "$(literals "$dir")" ] || fail "an unproven endpoint must receive nothing"
+  pass "fm-control exit: a missing window on a surviving server stays unproven"
+}
+
+test_same_tmux_server_with_the_window_is_not_gone() {
+  local dir out rc
+  dir=$(new_case window-alive)
+  add_task "$dir" t1 claude
+  add_tmux_identity "$dir" t1 /tmp/fm-test-tmux/default 100 1000
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 100 1000
+  # This seat's own server does not list the window, but the recorded server does.
+  : > "$dir/fake/windows"
+  printf '%s\n' fm-t1 > "$dir/fake/windows-sock"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a window still on the recorded server must not be proven gone"$'\n'"$out"
+  assert_not_contains "$out" "endpoint-gone" "exit must not report a stop for a live window"
+  [ -z "$(literals "$dir")" ] || fail "nothing may be sent into an endpoint exit cannot trust"
+  pass "fm-control exit: a window still alive on the recorded tmux server is not proven gone"
+}
+
+test_unreadable_tmux_socket_stays_unproven() {
+  local dir out rc
+  dir=$(new_case unreadable)
+  add_task "$dir" t1 claude
+  add_tmux_identity "$dir" t1 /tmp/fm-test-tmux/default 100 1000
+  : > "$dir/fake/socket-unreadable"
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a socket that cannot be read must not prove anything"$'\n'"$out"
+  assert_not_contains "$out" "endpoint-gone" "exit must not report a stop it could not prove"
+  pass "fm-control exit: an unreadable tmux socket stays unproven"
+}
+
+test_incomplete_tmux_identity_stays_unproven() {
+  local dir out rc
+  dir=$(new_case partial-identity)
+  add_task "$dir" t1 claude
+  echo "tmux_socket=/tmp/fm-test-tmux/default" >> "$dir/home/state/t1.meta"
+  : > "$dir/fake/windows"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "a partial identity must not prove anything"$'\n'"$out"
+  assert_not_contains "$out" "endpoint-gone" "exit must not report a stop from a partial identity"
+  pass "fm-control exit: a partial tmux identity stays unproven"
 }
 
 test_interrupt_refuses_when_no_agent_runs() {
@@ -1234,6 +1356,12 @@ test_resume_is_refused_with_its_reason
 test_relaunch_only_flags_are_rejected_on_other_verbs
 test_already_stopped_exit_is_idempotent
 test_missing_tmux_endpoint_refuses_rather_than_claiming_a_stop
+test_tmux_server_restart_proves_the_endpoint_gone
+test_tmux_socket_without_a_server_proves_the_endpoint_gone
+test_same_tmux_server_without_the_window_stays_unproven
+test_same_tmux_server_with_the_window_is_not_gone
+test_unreadable_tmux_socket_stays_unproven
+test_incomplete_tmux_identity_stays_unproven
 test_interrupt_refuses_when_no_agent_runs
 test_ambiguous_endpoint_refuses
 test_busy_agent_is_interrupted_before_the_exit_command
