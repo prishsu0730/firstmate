@@ -71,15 +71,16 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
 # member of a session group, and so does a pane target, so an external client
 # attached through a grouped session (`new-session -t <session>`) would be
 # named instead. The third field of $TMUX is the id of the session the pane was
-# created in, which stays unambiguous across the group; fall back to the
-# untargeted lookup when it is absent, malformed, or stale (tmux answers a
-# killed session's id with empty output and exit 0).
+# created in, which stays unambiguous across the group.
 fm_backend_tmux_own_session() {
   local sid=${TMUX##*,} name=
   case "$sid" in
   ''|*[!0-9]*) ;;
   *) name=$(tmux display-message -p -t "\$$sid" '#S' 2>/dev/null) ;;
   esac
+  if [ -z "$name" ] && [ -n "${TMUX_PANE:-}" ]; then
+    name=$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)
+  fi
   if [ -n "$name" ]; then
     printf '%s\n' "$name"
   else
