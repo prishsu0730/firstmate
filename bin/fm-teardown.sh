@@ -42,7 +42,8 @@
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
-# hard-resets/removes the worktree and kills its processes. Work has landed when it is
+# hard-resets/removes the worktree and kills its processes. Subject to the recorded
+# open-PR gate below, committed work passes this test when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
 # upstream-contribution PRs pushed to a fork satisfy this in any mode), or when
 # HEAD exactly matches a branch tip proven directly on origin (a proxy push need
@@ -146,7 +147,8 @@
 # slot is taken and dropped here once it is genuinely returned; bin/fm-wake-lib.sh
 # owns the claim, its location, and its states. A claim naming another task is
 # proof of reassignment: the slot is no longer this task's, so teardown warns,
-# names the claimant, and then finishes only this task's own cleanup - endpoint,
+# names the claimant, and, subject to the recorded open-PR gate above, finishes
+# only this task's own cleanup - endpoint,
 # status, records, checks, backlog - while every step that would read or touch
 # that slot is skipped: no process kill under it, no dirty or landed-work
 # inspection of it, no branch or hook removal in it, no Treehouse return, and
