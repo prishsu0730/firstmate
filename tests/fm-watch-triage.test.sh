@@ -6661,6 +6661,9 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
   mkdir -p "$dir/data/refused"
   printf 'report\n' > "$dir/data/refused/report.md"
   sig=$(seen_sig "$state/refused.status"); printf '%s' "$sig" > "$state/.seen-refused_status"
+  # The completion report was already presented; exercise refusal delivery
+  # without an independent heartbeat backstop wake for that report.
+  mark_heartbeat_surfaced "$state" "$state/refused.status"
   mkdir "$state/.wake-queue"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
