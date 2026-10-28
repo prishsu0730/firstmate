@@ -119,19 +119,24 @@ The beacon is `state/.last-watcher-beat`, which only the watcher process touches
 
 The Claude turn-end guard owns that notice commit contract, the monotonic failure progression, one-time attended fail-open, post-alarm continuation suppression, and positive recovery reset described in [`turnend-guard.md`](turnend-guard.md#harness-integrations).
 
-## Heartbeat cleanup
-
-On each scheduled heartbeat, the watcher identifies non-secondmate task records with a `done` declaration and the shared completion proof in `fm_task_record_finished`.
-It delegates cleanup of only those proven records to `bin/fm-teardown.sh`, so the teardown's landed-work and safety checks remain the final authority for removing a task record or returning its worktree.
-The watcher never forces that cleanup.
-When teardown refuses, it preserves the task and emits an actionable check wake naming the record, rather than leaving a proven-finished task silently in flight.
-Records whose `kind` is `secondmate` remain outside this automatic cleanup path.
-
 ### Supervision host
 
 On a non-Pi primary, a home that runs the supervision host runs `bin/fm-supervision-host.sh` in place of the arm its re-arm owner would start.
 The host owns successive watcher cycles through the same arm.
 [supervision-host.md](supervision-host.md#failure-direction) owns the hand-back's downtime restoration, including when the successor already exited; the arm's recovery and acknowledgement contracts below still apply.
+
+## Heartbeat cleanup
+
+On each scheduled heartbeat, the watcher hands a non-secondmate task record to `bin/fm-teardown.sh` only when its last status line is a `done` declaration and one of these holds:
+
+- The record passes the shared completion proof in `fm_task_record_finished`.
+- It is a ship whose project still exists and that is either `mode=local-only` or records a valid `pr` URL and `pr_head` commit.
+
+The second case lets a squash-merged or local-main ship reach teardown even though its branch head is in no remote ref; it does not widen `fm_task_record_finished`, which also guards slot ownership.
+The teardown's merge, landed-work, and safety checks remain the final authority for removing a task record or returning its worktree.
+The watcher never forces that cleanup.
+When teardown refuses, it preserves the task and emits an actionable check wake naming the record, rather than leaving a finished-looking task silently in flight.
+Records whose `kind` is `secondmate` remain outside this automatic cleanup path.
 
 ## Actionable wake ordering
 
