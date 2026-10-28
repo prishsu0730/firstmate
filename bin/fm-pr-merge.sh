@@ -23,7 +23,9 @@
 # unmergeable, with the same nonzero exit as any other refusal.
 # A GitHub pull request is also refused before any merge call when its commit
 # subjects mix a refactor: commit with a fix: or feat: commit, including an
-# optional conventional-commit scope after each prefix.
+# optional conventional-commit scope and breaking-change ! before the colon.
+# Refusal diagnostics shell-escape subjects containing control bytes so those
+# bytes cannot act as terminal controls; only the first message line is a subject.
 # Each verification attempt reads all commit pages and requires the last commit
 # to match that attempt's verified head; unreadable or incomplete subjects, or
 # a changed head, refuse the merge.
