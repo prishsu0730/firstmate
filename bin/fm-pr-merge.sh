@@ -500,7 +500,7 @@ github_refuse_mixed_refactor_commits() {
   fi
   if ! addresses=$(printf '%s' "$json" | jq -r '
       add | .[]
-      | select(.commit.message | test("(?<![[:alnum:]])(?<![[:alnum:]][_./-])captain(?![[:alnum:]]|[_./-][[:alnum:]])"; "i"))
+      | select(.commit.message | test("(^|[^[:alnum:]_./-]|(^|[^[:alnum:]])[_./-])captain(?![[:alnum:]]|[_./-][[:alnum:]])"; "i"))
       | if (.sha | type) != "string" then error("invalid commit SHA") else . end
       | "\(.sha[0:8] | tojson) \(.commit.message | split("\n")[0] | tojson)"' 2>/dev/null); then
     echo "error: could not inspect GitHub pull request commit messages before merging" >&2
