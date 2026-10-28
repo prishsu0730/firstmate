@@ -135,7 +135,10 @@ On each scheduled heartbeat, the watcher hands a non-secondmate task record to `
 The second case lets a squash-merged or local-main ship reach teardown even though its branch head is in no remote ref; it does not widen `fm_task_record_finished`, which also guards slot ownership.
 The teardown's merge, landed-work, and safety checks remain the final authority for removing a task record or returning its worktree.
 The watcher never forces that cleanup.
-When teardown refuses, it preserves the task and emits an actionable check wake naming the record, rather than leaving a finished-looking task silently in flight.
+When teardown refuses, it preserves the task and queues an actionable check wake naming the record once per unchanged refusal.
+The watcher compares the teardown exit code and combined output for that task across heartbeats and watcher restarts; a changed refusal queues a fresh wake.
+It records suppression only after the wake is successfully queued, so a failed queue append remains retryable.
+Successful teardown, whether automatic or manual, clears suppression so a reused task ID can notify again.
 Records whose `kind` is `secondmate` remain outside this automatic cleanup path.
 
 ## Actionable wake ordering

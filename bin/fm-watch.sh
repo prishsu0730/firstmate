@@ -2523,19 +2523,43 @@ auto_close_candidate_is_safe_to_check() {  # <meta> <id>
 }
 
 auto_close_finished_records() {
-  local meta id kind rc
+  local meta id kind rc marker output record
   FM_AUTO_CLOSE_REFUSED_ID=''
+  FM_AUTO_CLOSE_REFUSAL_RECORD=''
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
     id=$(basename "$meta" .meta)
     kind=$(fm_meta_get "$meta" kind)
     [ "$kind" = secondmate ] && continue
     auto_close_candidate_is_safe_to_check "$meta" "$id" || continue
-    "$SCRIPT_DIR/fm-teardown.sh" "$id"
+    marker="$STATE/.auto-close-refusal-$id"
+    output="$marker.output.$$"
+    record="$marker.record.$$"
+    "$SCRIPT_DIR/fm-teardown.sh" "$id" > "$output" 2>&1
     rc=$?
+    cat "$output"
     case "$rc" in
-      0|4) continue ;;
+      0|4)
+        rm -f -- "$output" "$record" "$marker"
+        continue
+        ;;
     esac
+    {
+      printf 'exit=%s\n' "$rc"
+      cat "$output"
+    } > "$record" || {
+      rm -f -- "$output" "$record"
+      FM_AUTO_CLOSE_REFUSED_ID=$id
+      triage_log "automatic finished-task teardown refusal record failed for $id"
+      return 1
+    }
+    rm -f -- "$output"
+    if [ -f "$marker" ] && [ ! -L "$marker" ] && cmp -s "$marker" "$record"; then
+      rm -f -- "$record"
+      triage_log "suppressed unchanged automatic finished-task teardown refusal for $id"
+      continue
+    fi
+    FM_AUTO_CLOSE_REFUSAL_RECORD=$record
     FM_AUTO_CLOSE_REFUSED_ID=$id
     triage_log "automatic finished-task teardown refused for $id"
     return 1
@@ -3502,7 +3526,24 @@ EOF
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
     if ! auto_close_finished_records; then
       reason="check: automatic finished-task teardown refused: id=$FM_AUTO_CLOSE_REFUSED_ID"
-      fm_wake_append check "automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID" "$reason" || exit 1
+      refusal_key="automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID"
+      if [ -n "$FM_AUTO_CLOSE_REFUSAL_RECORD" ]; then
+        refusal_hash=$(fm_custom_check_sha256 "$FM_AUTO_CLOSE_REFUSAL_RECORD") || {
+          rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
+          exit 1
+        }
+        refusal_key="$refusal_key-$refusal_hash"
+      fi
+      fm_wake_append check "$refusal_key" "$reason" || {
+        [ -z "$FM_AUTO_CLOSE_REFUSAL_RECORD" ] || rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
+        exit 1
+      }
+      if [ -n "$FM_AUTO_CLOSE_REFUSAL_RECORD" ]; then
+        mv -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD" "$STATE/.auto-close-refusal-$FM_AUTO_CLOSE_REFUSED_ID" || {
+          rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
+          exit 1
+        }
+      fi
       touch "$STATE/.last-heartbeat"
       wake "$reason"
     fi
