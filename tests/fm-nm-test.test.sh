@@ -286,7 +286,7 @@ test_reference_consumers_are_bounded() {
   for helper in bin/fm-orphan.sh tests/lib.sh tests/git-config-helpers.sh docs/notes.md; do
     repo=$(make_fixture)
     for i in 8 7 6 5 4 3 2 1; do
-      printf '. "${ROOT}/%s"\n' "$helper" >"$repo/tests/consumer-$i.test.sh"
+      printf '%s\n' ". \"\${ROOT}/$helper\"" >"$repo/tests/consumer-$i.test.sh"
     done
     git_fx "$repo" add -A
     git_fx "$repo" commit -qm consumers
@@ -296,7 +296,7 @@ test_reference_consumers_are_bounded() {
     expect_code 0 "$FIXTURE_CODE" "consumer selection"
     sel=$(printf 'tests/consumer-%s.test.sh\n' 1 2 3 4 5 6 7 8)
     assert_equals "$sel" "$FIXTURE_OUT" "eight consumers are sorted and selected"
-    printf '. "${ROOT}/%s"\n' "$helper" >"$repo/tests/consumer-9.test.sh"
+    printf '%s\n' ". \"\${ROOT}/$helper\"" >"$repo/tests/consumer-9.test.sh"
     git_fx "$repo" add -A
     git_fx "$repo" commit -qm ninth
     git_fx "$repo" branch -f main HEAD

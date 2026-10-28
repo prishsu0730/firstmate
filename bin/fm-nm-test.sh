@@ -121,7 +121,7 @@ changed_paths() {
 }
 
 focused_tests() {
-  local path=$1 name candidate= matches count
+  local path=$1 name candidate="" matches count
   name=$(basename "$path")
   case "$path" in
     tests/*.test.sh) candidate=$path ;;
