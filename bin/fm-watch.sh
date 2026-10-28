@@ -2525,6 +2525,7 @@ auto_close_candidate_is_safe_to_check() {  # <meta> <id>
 auto_close_finished_records() {
   local meta id kind rc marker output record
   FM_AUTO_CLOSE_REFUSED_ID=''
+  FM_AUTO_CLOSE_REFUSAL_RECORD=''
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
     id=$(basename "$meta" .meta)
@@ -2558,12 +2559,7 @@ auto_close_finished_records() {
       triage_log "suppressed unchanged automatic finished-task teardown refusal for $id"
       continue
     fi
-    mv -f -- "$record" "$marker" || {
-      rm -f -- "$record"
-      FM_AUTO_CLOSE_REFUSED_ID=$id
-      triage_log "automatic finished-task teardown refusal record failed for $id"
-      return 1
-    }
+    FM_AUTO_CLOSE_REFUSAL_RECORD=$record
     FM_AUTO_CLOSE_REFUSED_ID=$id
     triage_log "automatic finished-task teardown refused for $id"
     return 1
@@ -3530,7 +3526,16 @@ EOF
   if [ "$(age_of "$STATE/.last-heartbeat")" -ge "$hb" ]; then
     if ! auto_close_finished_records; then
       reason="check: automatic finished-task teardown refused: id=$FM_AUTO_CLOSE_REFUSED_ID"
-      fm_wake_append check "automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID" "$reason" || exit 1
+      fm_wake_append check "automatic-finished-teardown-$FM_AUTO_CLOSE_REFUSED_ID" "$reason" || {
+        [ -z "$FM_AUTO_CLOSE_REFUSAL_RECORD" ] || rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
+        exit 1
+      }
+      if [ -n "$FM_AUTO_CLOSE_REFUSAL_RECORD" ]; then
+        mv -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD" "$STATE/.auto-close-refusal-$FM_AUTO_CLOSE_REFUSED_ID" || {
+          rm -f -- "$FM_AUTO_CLOSE_REFUSAL_RECORD"
+          exit 1
+        }
+      fi
       touch "$STATE/.last-heartbeat"
       wake "$reason"
     fi

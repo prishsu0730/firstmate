@@ -6661,6 +6661,15 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
   mkdir -p "$dir/data/refused"
   printf 'report\n' > "$dir/data/refused/report.md"
   sig=$(seen_sig "$state/refused.status"); printf '%s' "$sig" > "$state/.seen-refused_status"
+  mkdir "$state/.wake-queue"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.failed" 2>&1 &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "queue failure did not stop the watcher"
+  [ ! -e "$state/.auto-close-refusal-refused" ] \
+    || fail "unqueued refusal armed suppression"
+  rmdir "$state/.wake-queue"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
     FM_HEARTBEAT=1 "$WATCH" > "$out" &
