@@ -686,6 +686,7 @@ test_local_only_fork_remote_allows() {
   write_meta "$case_dir" local-only ship
   wt_commit "$case_dir" "fix the thing"
   add_fork_with_pushed_branch "$case_dir"
+  printf 'exit=1\nREFUSED: previous ownership conflict\n' > "$case_dir/state/.auto-close-refusal-task-x1"
   # The supervision branch's bounded per-task outcome cache is a footprint of
   # the retired task, not a record anything reads after it is gone.
   printf 'fm-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
@@ -696,6 +697,8 @@ test_local_only_fork_remote_allows() {
   set -e
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
+  [ ! -e "$case_dir/state/.auto-close-refusal-task-x1" ] \
+    || fail "fork-allow: teardown left refusal suppression for a successor"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"
   [ ! -e "$case_dir/state/.task-x1.branch-outcome-index" ] \
     || fail "fork-allow: teardown left the task's branch outcome index behind"
