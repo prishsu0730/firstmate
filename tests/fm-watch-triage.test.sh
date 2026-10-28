@@ -6648,7 +6648,7 @@ test_heartbeat_auto_closes_a_local_main_ship() {
 }
 
 test_heartbeat_surfaces_one_auto_close_refusal() {
-  local dir state fakebin out pid sig drain_out
+  local dir state fakebin out pid sig drain_out drain_err marker
   dir=$(make_case heartbeat-auto-close-refusal); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"
   printf 'done: report ready\n' > "$state/refused.status"
@@ -6669,11 +6669,40 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
   [ -e "$state/refused.meta" ] || fail "automatic teardown refusal removed the task record"
   grep -Fx 'check: automatic finished-task teardown refused: id=refused' "$out" >/dev/null \
     || fail "automatic teardown refusal did not surface its normal check wake"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+  drain_err="$dir/drain.err"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
     || fail "drain after automatic teardown refusal failed"
   [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out" || true)" = 1 ] \
     || fail "automatic teardown refusal did not produce exactly one durable wake"
-  pass "a teardown refusal retains the record and surfaces one normal wake"
+  ack_drain_err "$state" "$drain_err" || fail "could not acknowledge automatic teardown refusal wake"
+
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.second" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "unchanged automatic teardown refusal woke the watcher again"; }
+  [ ! -s "$state/.wake-queue" ] \
+    || { reap "$pid"; fail "unchanged automatic teardown refusal queued another wake"; }
+  reap "$pid"
+
+  marker="$state/.auto-close-refusal-refused"
+  [ -f "$marker" ] || fail "automatic teardown refusal did not persist its reason"
+  printf 'exit=1\nREFUSED: changed fixture reason\n' > "$marker"
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.changed" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "changed automatic teardown refusal did not wake the watcher"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out.changed" 2> "$drain_err.changed" \
+    || fail "drain after changed automatic teardown refusal failed"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out.changed" || true)" = 1 ] \
+    || fail "changed automatic teardown refusal did not queue a second wake"
+  ack_drain_err "$state" "$drain_err.changed" \
+    || fail "could not acknowledge changed automatic teardown refusal wake"
+  pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
 # --- beacon stays fresh while absorbing -------------------------------------

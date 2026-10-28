@@ -2523,7 +2523,7 @@ auto_close_candidate_is_safe_to_check() {  # <meta> <id>
 }
 
 auto_close_finished_records() {
-  local meta id kind rc
+  local meta id kind rc marker output record
   FM_AUTO_CLOSE_REFUSED_ID=''
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] && [ ! -L "$meta" ] || continue
@@ -2531,11 +2531,39 @@ auto_close_finished_records() {
     kind=$(fm_meta_get "$meta" kind)
     [ "$kind" = secondmate ] && continue
     auto_close_candidate_is_safe_to_check "$meta" "$id" || continue
-    "$SCRIPT_DIR/fm-teardown.sh" "$id"
+    marker="$STATE/.auto-close-refusal-$id"
+    output="$marker.output.$$"
+    record="$marker.record.$$"
+    "$SCRIPT_DIR/fm-teardown.sh" "$id" > "$output" 2>&1
     rc=$?
+    cat "$output"
     case "$rc" in
-      0|4) continue ;;
+      0|4)
+        rm -f -- "$output" "$record" "$marker"
+        continue
+        ;;
     esac
+    {
+      printf 'exit=%s\n' "$rc"
+      cat "$output"
+    } > "$record" || {
+      rm -f -- "$output" "$record"
+      FM_AUTO_CLOSE_REFUSED_ID=$id
+      triage_log "automatic finished-task teardown refusal record failed for $id"
+      return 1
+    }
+    rm -f -- "$output"
+    if [ -f "$marker" ] && [ ! -L "$marker" ] && cmp -s "$marker" "$record"; then
+      rm -f -- "$record"
+      triage_log "suppressed unchanged automatic finished-task teardown refusal for $id"
+      continue
+    fi
+    mv -f -- "$record" "$marker" || {
+      rm -f -- "$record"
+      FM_AUTO_CLOSE_REFUSED_ID=$id
+      triage_log "automatic finished-task teardown refusal record failed for $id"
+      return 1
+    }
     FM_AUTO_CLOSE_REFUSED_ID=$id
     triage_log "automatic finished-task teardown refused for $id"
     return 1
