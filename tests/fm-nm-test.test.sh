@@ -41,7 +41,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script=${!#}
 printf 'ARGS=%s|FM_HOME=%s|STATE=%s|CONFIG=%s\n' "$*" \
   "${FM_HOME-unset}" "${FM_STATE_OVERRIDE-unset}" "${FM_CONFIG_OVERRIDE-unset}" >>"$ROOT/runner.log"
-if [ -f "$ROOT/fail-on" ] && grep -Fxq "$script" "$ROOT/fail-on"; then
+if [ -f "$ROOT/.git/fm-fail-on" ] && grep -Fxq "$script" "$ROOT/.git/fm-fail-on"; then
   echo "stand-in runner: $script failed"
   exit 1
 fi
@@ -78,9 +78,9 @@ run_wrapper() {  # <repo> <args...>; leaks FM_* paths on purpose
   local repo=$1
   shift
   FIXTURE_OUT=$(cd "$repo" && FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
-    FM_CONFIG_OVERRIDE=/leak/config "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo.stderr")
+    FM_CONFIG_OVERRIDE=/leak/config "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr")
   FIXTURE_CODE=$?
-  FIXTURE_ERR=$(cat "$repo.stderr")
+  FIXTURE_ERR=$(cat "$repo/.git/fm-stderr")
 }
 
 listed() {  # <repo> <args...> -> the --list selection, one path per line
@@ -251,7 +251,7 @@ test_failure_runs_the_rest_and_exits_nonzero() {
   local repo log
   repo=$(make_fixture)
   touch_and_commit "$repo" bin/fm-foo.sh bin/fm-bar.sh
-  printf 'tests/fm-bar.test.sh\n' >"$repo/fail-on"
+  printf 'tests/fm-bar.test.sh\n' >"$repo/.git/fm-fail-on"
   run_wrapper "$repo" --base main
   assert_not_equals 0 "$FIXTURE_CODE" "a failing test must fail the command"
   log=$(cat "$repo/runner.log")

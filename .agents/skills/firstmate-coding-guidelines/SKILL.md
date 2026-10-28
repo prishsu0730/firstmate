@@ -118,10 +118,12 @@ Never configure a deterministic suite-walk `commands.test` in any repository's n
 Firstmate PR #3644 demonstrated the cost: pinning a 75-162-script walk took 32.7 minutes per validation, while removing it restored the 3.6-minute targeted-validation posture.
 CI owns broad deterministic regression coverage.
 
-This repository has one narrow exception: `commands.test` is exactly `bin/fm-nm-test.sh`, which runs only the colocated `tests/<name>.test.sh` for each `bin/` or `tests/` file the branch changes against its base, one script at a time.
+This repository has one narrow exception: `commands.test` is exactly `bin/fm-nm-test.sh`, which runs only the focused tests for the `bin/` or `tests/` files the branch changes against its base, one script at a time.
+It selects a changed test itself, a backend's `tests/fm-backend-<name>.test.sh`, or `tests/<basename>.test.sh`, and otherwise at most eight stable-sorted tests that reference the changed file by name.
+Files that map to nothing are named in the output, and the printed fallback is the two contract tests `tests/fm-nm-test-contract.test.sh` and `tests/fm-test-run.test.sh`.
 The exception exists because the Test agent's Codex sandbox denies `ps`, private tmux sockets, and evidence writes, so the real tests could not run there and Firstmate was running every focused test by hand outside the sandbox.
 The gate runs the command itself on the daemon host, so no sandbox permission is loosened.
-Do not widen the wrapper into a family, a changed-file family expansion, `--all`, or a fixed list, and do not point `commands.test` at anything else.
+Do not widen the wrapper into a family, `--all`, or a fixed list, do not raise its consumer cap into a suite walk, and do not point `commands.test` at anything else.
 `tests/fm-nm-test-contract.test.sh` asserts the exact command, and the wrapper's header owns selection, fallback, and exit behavior.
 
 ## Repo style rules
