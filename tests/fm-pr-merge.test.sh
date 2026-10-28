@@ -4470,7 +4470,7 @@ assert_review_refusal() {
 
 test_review_tier_low_needs_no_review() {
   local tier n=0
-  for tier in 'LOW' 'LOW / No Greptile' 'No Greptile' 'low'; do
+  for tier in 'LOW' 'No Greptile' 'low'; do
     n=$((n + 1))
     make_review_case "review-low-$n" "$tier"
     merge_review_case
@@ -4482,7 +4482,7 @@ test_review_tier_low_needs_no_review() {
 
 test_review_tier_base_refuses_without_a_review() {
   local tier n=0
-  for tier in 'MEDIUM (Base)' 'Base' 'MEDIUM' 'Base/MEDIUM'; do
+  for tier in 'MEDIUM (Base)' 'Base' 'MEDIUM' 'mEdIuM (bAsE)'; do
     n=$((n + 1))
     make_review_case "review-base-none-$n" "$tier"
     merge_review_case
@@ -4552,7 +4552,7 @@ test_review_tier_plus_needs_two_independent_reviews() {
   assert_grep 'needs 2 ' "$CASE/stderr" "review-plus-one: the refusal did not name 2 reviews needed"
   assert_grep 'found 1' "$CASE/stderr" "review-plus-one: the refusal did not name 1 review found"
 
-  make_review_case review-plus-dup 'Plus/HIGH'
+  make_review_case review-plus-dup 'Plus'
   add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
   add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
   merge_review_case
@@ -4600,7 +4600,7 @@ test_review_new_head_voids_older_reviews() {
 
 test_review_tier_unknown_or_missing_refuses_with_the_fix() {
   local tier n=0
-  for tier in 'SOMETIMES' 'MEDIUM or HIGH' '{REVIEW_TIER}' '' 'Base LOW'; do
+  for tier in 'SOMETIMES' 'MEDIUM or HIGH' '{REVIEW_TIER}' '' 'Base LOW' 'Base/MEDIUM' 'Plus/HIGH' 'Base Base' 'LOW / No Greptile'; do
     n=$((n + 1))
     make_review_case "review-unknown-$n" "$tier"
     merge_review_case
@@ -4685,6 +4685,7 @@ test_review_tier_gitlab_needs_reviews_at_the_head() {
   set -e
   expect_code 0 "$rc" "review-gitlab: a review at the head must allow the merge (stderr: $(cat "$case_dir/stderr"))"
   assert_grep 'mr merge 7' "$case_dir/glab.log" "review-gitlab: the merge did not run"
+  assert_grep ' --auto-merge=false' "$case_dir/glab.log" "review-gitlab: default auto-merge was not disabled"
   pass "fm-pr-merge applies the review gate to a GitLab merge request at its verified head"
 }
 
@@ -4702,3 +4703,40 @@ test_review_tier_unknown_or_missing_refuses_with_the_fix
 test_review_record_that_cannot_be_read_refuses
 test_review_gate_does_not_bypass_other_guards
 test_review_tier_gitlab_needs_reviews_at_the_head
+
+test_review_required_async_refuses() {
+  local flag n=0 case_dir rc
+  for flag in --auto --auto=true queue; do
+    n=$((n + 1))
+    make_review_case "review-async-$n" Base
+    add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+    if [ "$flag" = queue ]; then
+      printf '%s\n' 'merge_method=SQUASH' > "$CASE/github-rules"
+      set --
+    else
+      set -- "$flag"
+    fi
+    set +e
+    run_pr_merge "$CASE" task-x1 "$REVIEW_URL" --attended-override -- "$@" > "$CASE/stdout" 2> "$CASE/stderr"
+    RC=$?
+    set -e
+    assert_review_refusal "review-async-$n"
+    assert_grep 'synchronous merge' "$CASE/stderr" "review-async-$n: missing remedy"
+  done
+  for flag in --auto-merge --when-pipeline-succeeds --auto-merge=true; do
+    n=$((n + 1))
+    case_dir=$(make_gitlab_case "review-async-$n")
+    write_review_tier_brief "$case_dir" task-x1 Base
+    add_review "$case_dir" task-x1 "$MR_URL" "$MR_HEAD" scout-r1
+    set +e
+    run_pr_merge "$case_dir" task-x1 "$MR_URL" --attended-override -- "$flag" > "$case_dir/stdout" 2> "$case_dir/stderr"
+    rc=$?
+    set -e
+    expect_code 1 "$rc" "review-async-$n: GitLab async must refuse"
+    assert_no_grep 'mr merge' "$case_dir/glab.log" "review-async-$n: merge reached forge"
+    assert_grep 'synchronous merge' "$case_dir/stderr" "review-async-$n: missing remedy"
+  done
+  pass "fm-pr-merge refuses asynchronous review-required merges on both forges"
+}
+
+test_review_required_async_refuses
