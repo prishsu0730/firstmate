@@ -5737,7 +5737,11 @@ test_reliability_reconciles_status_and_activity() {
   assert_contains "$out" 'status' 'conflict names the status source'
   assert_contains "$out" 'pane' 'conflict names the activity source'
   : > "$d/data/task/report.md"
-  printf 'paused [at=%s]: awaiting direction\n' "$(date +%s)" > "$d/state/task.status"
+  now=$(date +%s)
+  awk -v timestamp="$now" '{ sub(/ts=[0-9]+$/, "ts=" timestamp); print }' \
+    "$d/state/task.busy-state" > "$d/state/task.busy-state.pinned" \
+    && mv "$d/state/task.busy-state.pinned" "$d/state/task.busy-state"
+  printf 'paused [at=%s]: awaiting direction\n' "$now" > "$d/state/task.status"
   out=$(FM_HOME="$d" run_crew_state "$d" task)
   assert_contains "$out" 'state: conflict' 'equal-second status and busy evidence cannot establish ordering'
   printf 'paused: time unavailable\n' > "$d/state/task.status"
