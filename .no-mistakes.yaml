@@ -29,10 +29,9 @@ document:
 # Invocation wiring is asserted by `tests/fm-lint.test.sh` and
 # `tests/fm-lint-workflows.test.sh`.
 #
-# commands.test is the one narrow exception to "no deterministic test command":
-# `bin/fm-nm-test.sh` runs only the colocated tests for the files a branch
-# changes, outside the Test agent's sandbox. The firstmate-coding-guidelines
-# skill owns this policy and `tests/fm-nm-test-contract.test.sh` asserts it.
+# The firstmate-coding-guidelines skill owns the commands.test restriction;
+# bin/fm-nm-test.sh's header owns selection and fallback, and
+# tests/fm-nm-test-contract.test.sh asserts the configured command.
 commands:
   lint: 'bin/fm-lint.sh'
   test: 'bin/fm-nm-test.sh'

@@ -623,7 +623,7 @@ The tracked `.no-mistakes.yaml` sets `test.evidence.store_in_repo: true`, pins `
 Storing evidence in the repo publishes each run's test artifacts to the orphan `no-mistakes/evidence` branch and links them from the PR body, instead of keeping them on local disk under the no-mistakes home.
 
 That branch shares no history with code branches, so evidence never enters a pushed feature branch or the default branch; the worktree's `.no-mistakes/` stays local and CI rejects tracked entries under that path.
-`bin/fm-nm-test.sh` runs only the colocated tests for the files a branch changes, outside the Test agent's sandbox, so the real tests run in the gate instead of by hand.
+`bin/fm-nm-test.sh` runs focused tests for changed files outside the Test agent's sandbox; its [header](../bin/fm-nm-test.sh) owns selection, fallback, and exit behavior.
 The [`firstmate-coding-guidelines` skill](../.agents/skills/firstmate-coding-guidelines/SKILL.md#no-mistakes-test-configuration) owns why `commands.test` is limited to that wrapper and never a suite walk, and the wrapper's header owns selection and fallback.
 
 `commands.test` executes code, so no-mistakes honors it only from the default-branch copy of `.no-mistakes.yaml`; a pushed branch cannot change what the gate runs.
