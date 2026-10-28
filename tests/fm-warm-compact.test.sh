@@ -19,6 +19,7 @@ command -v jq >/dev/null 2>&1 || { printf 'skip: jq absent\n'; exit 0; }
 . "$ROOT/bin/fm-supervision-engine-lib.sh"
 # shellcheck source=bin/fm-warm-compact-lib.sh
 . "$ROOT/bin/fm-warm-compact-lib.sh"
+. "$ROOT/bin/fm-tmux-lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-warm-compact)
 CONFIG="$TMP_ROOT/config"
@@ -31,6 +32,10 @@ CALLS="$TMP_ROOT/calls"
 BUSY=idle
 COMPOSER=empty
 SUBMIT_VERDICT=empty
+PANE_OUTPUT=ready
+CAPTURE_RC=0
+fm_backend_source() { [ "$1" = tmux ]; }
+tmux() { printf '%s' "$PANE_OUTPUT"; return "$CAPTURE_RC"; }
 fm_backend_busy_state() { printf '%s' "$BUSY"; }
 fm_backend_composer_state() { printf '%s' "$COMPOSER"; }
 fm_backend_send_text_submit() { printf 'submit %s %s\n' "$1 $2" "$3" >> "$CALLS"; printf '%s' "$SUBMIT_VERDICT"; }
@@ -49,6 +54,8 @@ reset() {
   BUSY=idle
   COMPOSER=empty
   SUBMIT_VERDICT=empty
+  PANE_OUTPUT=ready
+  CAPTURE_RC=0
   printf '' > "$CONFIG/warm-compact"
   transcript "$TMP_ROOT/t.jsonl" 10 90000 5000
 }
@@ -97,6 +104,29 @@ test_non_empty_composer_is_never_typed_into() {
   done
   assert_equals 0 "$(submits)" 'nothing typed over a composer that is not provably empty'
   pass 'composer guard'
+}
+
+test_tmux_unknown_uses_claude_idle_verification() {
+  reset
+  BUSY=unknown
+  assert_equals sent "$(fm_warm_compact_primary "$CONFIG" tmux sess:pane 2700 "$TMP_ROOT/t.jsonl" 0)" 'tmux verified idle permits compaction'
+  assert_equals 'submit tmux sess:pane /compact' "$(cat "$CALLS")" 'tmux uses the backend submit primitive'
+  : > "$CALLS"
+  for PANE_OUTPUT in 'esc to interrupt' ''; do
+    assert_equals busy "$(fm_warm_compact_primary "$CONFIG" tmux sess:pane 2700 "$TMP_ROOT/t.jsonl" 0)" 'busy or unreadable pane blocks compaction'
+  done
+  PANE_OUTPUT=ready
+  CAPTURE_RC=1
+  assert_equals busy "$(fm_warm_compact_primary "$CONFIG" tmux sess:pane 2700 "$TMP_ROOT/t.jsonl" 0)" 'failed capture blocks compaction'
+  CAPTURE_RC=0
+  BUSY=busy
+  assert_equals busy "$(fm_warm_compact_primary "$CONFIG" tmux sess:pane 2700 "$TMP_ROOT/t.jsonl" 0)" 'native busy cannot be overridden'
+  BUSY=unknown
+  for COMPOSER in pending pending-unproven unknown; do
+    assert_equals composer "$(fm_warm_compact_primary "$CONFIG" tmux sess:pane 2700 "$TMP_ROOT/t.jsonl" 0)" 'tmux fallback preserves composer guard'
+  done
+  assert_equals 0 "$(submits)" 'blocked tmux states never submit'
+  pass 'tmux unknown busy state uses Claude idle verification'
 }
 
 test_small_context_is_not_compacted() {
@@ -177,6 +207,7 @@ test_due_primary_gets_one_compact_through_the_backend_primitive
 test_opt_in_absent_does_nothing
 test_busy_agent_is_never_typed_into
 test_non_empty_composer_is_never_typed_into
+test_tmux_unknown_uses_claude_idle_verification
 test_small_context_is_not_compacted
 test_young_session_is_not_compacted
 test_one_compaction_per_idle_episode
