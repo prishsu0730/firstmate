@@ -48,7 +48,7 @@ fi
 exit 0
 RUNNER
   chmod +x "$repo/bin/fm-test-run.sh" "$repo/bin/fm-nm-test.sh"
-  for f in fm-foo fm-bar fm-be fm-poly fm-gone fm-nm-test-contract fm-test-run; do
+  for f in fm-foo fm-bar fm-backend-fm-be fm-poly fm-gone fm-nm-test-contract fm-test-run; do
     printf '#!/usr/bin/env bash\n' >"$repo/tests/$f.test.sh"
   done
   for f in bin/fm-foo.sh bin/fm-bar.sh bin/fm-orphan.sh bin/backends/fm-be.sh bin/fm-poly.mjs; do
@@ -119,23 +119,23 @@ test_selection_is_deduplicated_and_sorted() {
   pass "selection is deduplicated and sorted"
 }
 
-test_extension_and_backends_directory_map_by_basename() {
+test_extension_and_backend_mapping() {
   local repo sel
   repo=$(make_fixture)
   touch_and_commit "$repo" bin/fm-poly.mjs bin/backends/fm-be.sh
   sel=$(listed "$repo" --base main)
-  assert_equals $'tests/fm-be.test.sh\ntests/fm-poly.test.sh' "$sel" \
-    "any bin extension and bin/backends/ map by basename"
-  pass "bin extensions and bin/backends map by basename"
+  assert_equals $'tests/fm-backend-fm-be.test.sh\ntests/fm-poly.test.sh' "$sel" \
+    "bin extensions and backend names select their focused tests"
+  pass "bin extensions and backend names map correctly"
 }
 
-test_unmapped_files_do_not_add_tests_when_something_maps() {
+test_unmapped_files_add_fallback() {
   local repo sel
   repo=$(make_fixture)
   touch_and_commit "$repo" bin/fm-foo.sh bin/fm-orphan.sh docs/notes.md tests/lib.sh
   sel=$(listed "$repo" --base main)
-  assert_equals "tests/fm-foo.test.sh" "$sel" "unmapped files add nothing and trigger no fallback"
-  pass "unmapped files add no tests and no fallback when something maps"
+  assert_equals $'tests/fm-foo.test.sh\ntests/fm-nm-test-contract.test.sh\ntests/fm-test-run.test.sh' "$sel" "unmapped files add fallback alongside focused tests"
+  pass "unmapped files add fallback alongside focused tests"
 }
 
 test_nothing_mapped_falls_back_to_the_two_contract_tests() {
@@ -281,11 +281,40 @@ test_usage_errors() {
   pass "usage errors and --help"
 }
 
+test_reference_consumers_are_bounded() {
+  local repo sel i helper
+  for helper in bin/fm-orphan.sh tests/lib.sh tests/git-config-helpers.sh docs/notes.md; do
+    repo=$(make_fixture)
+    for i in 8 7 6 5 4 3 2 1; do
+      printf '. "${ROOT}/%s"\n' "$helper" >"$repo/tests/consumer-$i.test.sh"
+    done
+    git_fx "$repo" add -A
+    git_fx "$repo" commit -qm consumers
+    git_fx "$repo" branch -f main HEAD
+    touch_and_commit "$repo" "$helper"
+    run_wrapper "$repo" --list --base main
+    expect_code 0 "$FIXTURE_CODE" "consumer selection"
+    sel=$(printf 'tests/consumer-%s.test.sh\n' 1 2 3 4 5 6 7 8)
+    assert_equals "$sel" "$FIXTURE_OUT" "eight consumers are sorted and selected"
+    printf '. "${ROOT}/%s"\n' "$helper" >"$repo/tests/consumer-9.test.sh"
+    git_fx "$repo" add -A
+    git_fx "$repo" commit -qm ninth
+    git_fx "$repo" branch -f main HEAD
+    touch_and_commit "$repo" "$helper"
+    run_wrapper "$repo" --list --base main
+    assert_equals $'tests/fm-nm-test-contract.test.sh\ntests/fm-test-run.test.sh' "$FIXTURE_OUT" "over cap uses fallback"
+    assert_contains "$FIXTURE_ERR" "$helper" "unmapped file is named"
+  done
+  pass "reference consumers are bounded for scripts, helpers, and other files"
+}
+
+test_reference_consumers_are_bounded
+
 test_bin_change_selects_its_colocated_test
 test_test_change_selects_itself
 test_selection_is_deduplicated_and_sorted
-test_extension_and_backends_directory_map_by_basename
-test_unmapped_files_do_not_add_tests_when_something_maps
+test_extension_and_backend_mapping
+test_unmapped_files_add_fallback
 test_nothing_mapped_falls_back_to_the_two_contract_tests
 test_empty_diff_falls_back
 test_deleted_test_is_not_selected

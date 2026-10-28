@@ -19,13 +19,13 @@
 #   --list        print the selected test scripts, one per line, and exit 0
 #                 without running anything.
 #
-# Selection is the colocated test only, never a family, a suite walk, or a
-# fixed list: a changed tests/<name>.test.sh selects itself, and a changed
-# bin/<name>.<ext> selects tests/<name>.test.sh. Committed changes against the
-# base, uncommitted changes, and untracked files all count. A path with no
-# existing colocated test selects nothing. When nothing at all is selected the
-# fallback is exactly tests/fm-nm-test-contract.test.sh and
-# tests/fm-test-run.test.sh.
+# Selection prefers a changed test itself, then a backend's
+# tests/fm-backend-<name>.test.sh, then tests/<basename>.test.sh.
+# Otherwise, references to the filename in tests/*.test.sh select up to eight
+# consumers, stable-sorted. Committed, uncommitted, and untracked changes count.
+# Unmatched files (including references exceeding the cap) are named and add
+# tests/fm-nm-test-contract.test.sh and tests/fm-test-run.test.sh as fallback.
+# An empty diff uses the same fallback. No test family or suite walk runs.
 #
 # Each selected script runs separately through bin/fm-test-run.sh, which owns
 # bash invocation, fixture Git isolation, and the per-script time bound, with
@@ -120,20 +120,33 @@ changed_paths() {
   git ls-files --others --exclude-standard 2>/dev/null || true
 }
 
-# Print the colocated test for one changed path, or nothing.
-colocated_test() {
-  local path=$1 name candidate
+focused_tests() {
+  local path=$1 name candidate= matches count
+  name=$(basename "$path")
   case "$path" in
-    tests/*/*) return 0 ;;
     tests/*.test.sh) candidate=$path ;;
-    bin/*)
-      name=$(basename "$path")
-      candidate="tests/${name%.*}.test.sh"
-      ;;
-    *) return 0 ;;
+    bin/backends/*.sh) candidate="tests/fm-backend-${name%.sh}.test.sh" ;;
   esac
-  [ -f "$ROOT/$candidate" ] && printf '%s\n' "$candidate"
-  return 0
+  if [ -n "$candidate" ] && [ -f "$ROOT/$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  case "$path" in
+    bin/*) candidate="tests/${name%.*}.test.sh" ;;
+    *) candidate= ;;
+  esac
+  if [ -n "$candidate" ] && [ -f "$ROOT/$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  matches=$(grep -Fl -- "$name" tests/*.test.sh 2>/dev/null | LC_ALL=C sort -u)
+  count=$(printf '%s\n' "$matches" | awk 'NF { n++ } END { print n+0 }')
+  if [ "$count" -gt 0 ] && [ "$count" -le 8 ]; then
+    printf '%s\n' "$matches"
+  else
+    log "no focused test for $path (consumer matches: $count); running fallback contract tests"
+    printf '%s\n' "${FALLBACK_TESTS[@]}"
+  fi
 }
 
 select_tests() {
@@ -142,14 +155,14 @@ select_tests() {
   selected=$(
     while IFS= read -r path; do
       [ -n "$path" ] || continue
-      colocated_test "$path"
+      focused_tests "$path"
     done < <(changed_paths) | LC_ALL=C sort -u
   )
   if [ -n "$selected" ]; then
     printf '%s\n' "$selected"
     return 0
   fi
-  log "no colocated test maps to the changes; running the fallback contract tests"
+  log "no focused test maps to the changes; running the fallback contract tests"
   printf '%s\n' "${FALLBACK_TESTS[@]}"
 }
 
