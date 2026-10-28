@@ -191,6 +191,9 @@ VIEWER_SID=$(tmux display-message -p -t smoke-viewer '#{session_id}')
 VIEWER_SID=${VIEWER_SID#\$}
 OWN_PANE=$(tmux display-message -p -t "$SESSION:0" '#{pane_id}')
 tmux kill-session -t smoke-viewer || fail "real tmux: killing the grouped viewer session failed"
+tmux new-session -d -s unrelated || fail "real tmux: independent session failed"
+unrelated=$(tmux display-message -p '#S')
+[ "$unrelated" = unrelated ] || fail "untargeted lookup must select the unrelated session for this regression"
 got=$(TMUX="/fake,0,$VIEWER_SID" TMUX_PANE="$OWN_PANE" fm_backend_tmux_container_ensure)
 [ "$got" = "$SESSION" ] \
   || fail "container_ensure chose '$got' instead of the pane's surviving session '$SESSION' for a stale \$TMUX session id"
