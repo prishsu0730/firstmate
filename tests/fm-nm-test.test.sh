@@ -163,7 +163,7 @@ test_deleted_test_is_not_selected() {
   git_fx "$repo" rm -q tests/fm-gone.test.sh bin/fm-foo.sh
   git_fx "$repo" commit -qm remove
   sel=$(listed "$repo" --base main)
-  assert_equals "tests/fm-foo.test.sh" "$sel" "a deleted test is not selected, a deleted source still selects its test"
+  assert_equals $'tests/fm-foo.test.sh\ntests/fm-nm-test-contract.test.sh\ntests/fm-test-run.test.sh' "$sel" "a deleted test adds fallback without selecting itself, a deleted source still selects its test"
   pass "deleted test is skipped"
 }
 
