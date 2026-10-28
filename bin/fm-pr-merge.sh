@@ -169,6 +169,12 @@
 # verdict counts, so a new head voids every older review. A missing brief, a
 # missing, repeated, or unrecognised tier line, and an unreadable review record
 # all refuse, and the refusal names the line to fix. No flag skips this gate.
+# Tier values are case-insensitive exact names or risk labels listed above,
+# including MEDIUM (Base), HIGH (Plus), and CRITICAL (Apex); the scaffold's
+# trailing ` (No Greptile / Base / Plus / Apex)` is also accepted.
+# Any tier needing reviews requires a synchronous merge on both forges, even
+# with --attended-override: auto-merge requests are refused, GitHub must prove
+# the base has no merge queue, and GitLab gets a final --auto-merge=false.
 # bin/fm-brief.sh owns the `Review tier:` line and the depths it names.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
