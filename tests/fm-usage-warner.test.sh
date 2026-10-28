@@ -224,28 +224,6 @@ test_check_tiered_thresholds_on_one_window_each_warn() {
   pass "fm-usage-warner: tiered thresholds on one window each warn on their own crossing"
 }
 
-test_check_reads_a_v1_record_without_rewarning() {
-  local home fakebin notify_log out
-  home=$(make_home v1-record)
-  fakebin="$TMP_ROOT/v1-record/fakebin"
-  notify_log="$TMP_ROOT/v1-record/notify.log"
-  : > "$notify_log"
-  fake_osascript_recorder "$fakebin" "$notify_log"
-  printf 'five_hour:80\nfive_hour:95\n' > "$home/config/usage-warner"
-  printf '%s\n' fm-usage-warner-v1 'reported=usage-warner: five_hour at 85% (>=80%)' \
-    notified-begin five_hour notified-end > "$home/state/.usage-warner"
-
-  fake_quota_axi "$fakebin" '{"id":"five_hour","percentUsed":88}'
-  out=$(run_check "$home" "$fakebin")
-  [ -z "$out" ] || fail "a window already reported under a v1 record must not warn again: $out"
-  [ ! -s "$notify_log" ] || fail "a v1 record must not cause a second notification"
-
-  fake_quota_axi "$fakebin" '{"id":"five_hour","percentUsed":96}'
-  out=$(run_check "$home" "$fakebin")
-  assert_contains "$out" "five_hour at 96% (>=95%)" "after migrating a v1 record, a new higher-tier crossing still warns"
-  assert_not_contains "$out" ">=80%" "the migrated lower tier stays quiet"
-  pass "fm-usage-warner: a v1 de-dupe record is read without crashing or re-warning"
-}
 
 test_check_batches_multiple_crossings_into_one_notification() {
   local home fakebin notify_log out
@@ -571,7 +549,6 @@ test_unconfigured_home_stays_silent
 test_config_parses_comments_whitespace_and_model_ids
 test_check_crosses_notifies_stays_quiet_then_rearms
 test_check_tiered_thresholds_on_one_window_each_warn
-test_check_reads_a_v1_record_without_rewarning
 test_check_batches_multiple_crossings_into_one_notification
 test_check_repeated_directive_reports_once
 test_overlapping_checks_warn_once

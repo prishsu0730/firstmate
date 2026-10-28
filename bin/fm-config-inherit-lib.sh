@@ -81,21 +81,8 @@ FM_SHARED_CAPTAIN_MODE="444"
 # The declared inheritable set (space-separated, config-dir-relative item paths).
 # Extend here to inherit more of the primary's local config; override via the
 # environment only in tests. Items must not contain whitespace.
-FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces herdr-project-groups startup-memory-budget trace-context launch-env-allowlist claude-permission-mode codex-approval-mode lavish-axi-host keep-ai-trailers supervision-host-off firstmate-role}"
+FM_INHERITABLE_CONFIG="${FM_INHERITABLE_CONFIG:-crew-dispatch.json dispatch-never-send crew-harness backlog-backend backend herdr-presentation-spaces startup-memory-budget trace-context launch-env-allowlist claude-permission-mode codex-approval-mode lavish-axi-host keep-ai-trailers supervision-host-off}"
 
-# firstmate-role additionally carries a proof-of-state receipt: a scoped role
-# grant (or its recorded absence) authorizes a secondmate home only while
-# config/.fm-inherit-firstmate-role.generation there proves the exact bytes the
-# primary last published, so revocation converges and a grant without a matching
-# receipt is dead on arrival. The receipt proves consistency, not provenance;
-# deliberately forged local records are out of scope. Both routes publish the
-# primary's resolved role (fm_role_inherit_payload) rather than its raw file, so
-# a primary file its own resolver rejects propagates as an absence, never as a
-# grant. The remote route's receiver already writes that same receipt through
-# its generation machinery; the local route commits
-# it in propagate_secondmate_inheritance, and a failed propagation removes it
-# rather than leaving a stale proof. bin/fm-role-lib.sh owns how the grant and
-# receipt are interpreted.
 
 # Items whose value is a home-SESSION enablement decision rather than durable
 # local configuration. They are inherited at the launch convergence point, where

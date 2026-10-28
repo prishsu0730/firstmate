@@ -52,10 +52,7 @@
 # it, and re-arms the moment it next reads back below. A window missing from
 # an otherwise good read is not a below reading, so its entry is kept. The
 # record keys each entry on the "<window-id>:<percent>" directive, so tiered
-# thresholds on one window each warn on their own crossing. A v1 record keyed
-# on the bare window id is still read: its entry stands for every threshold
-# of that window, so an upgrade never re-warns a window that was already
-# reported. The record also
+# thresholds on one window each warn on their own crossing. The record also
 # remembers the last reported check line so a standing read failure is reported
 # once until it changes - the same contract bin/fm-mail-check.sh and
 # bin/fm-tool-update-check.sh already use, and whose arm/disarm/shim-write
@@ -73,7 +70,6 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}/usage-warner"
 RECORD="$STATE/.usage-warner"
 RECORD_SCHEMA=fm-usage-warner-v2
-RECORD_SCHEMA_V1=fm-usage-warner-v1
 CHECK_LOCK="$STATE/.usage-warner.lock"
 CHECK_ID=usage-warner
 CHECK_SHIM="$STATE/$CHECK_ID.check.sh"
@@ -242,18 +238,14 @@ usage_warner_notify() {  # <summary>
 RECORD_REPORTED=
 RECORD_NOTIFIED=
 
-# record_read <thresholds>: <thresholds> is config_thresholds' output, used to
-# expand a v1 record's bare window ids into every configured directive for
-# that window, so RECORD_NOTIFIED always holds "<window-id>:<percent>" keys.
 record_read() {
-  local thresholds=$1 line in_notified=0 notified="" v1=0 id threshold
+  local line in_notified=0 notified=""
   RECORD_REPORTED=
   RECORD_NOTIFIED=
   [ -f "$RECORD" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "$RECORD_SCHEMA") continue ;;
-      "$RECORD_SCHEMA_V1") v1=1 ;;
       reported=*) RECORD_REPORTED=${line#reported=} ;;
       notified-begin) in_notified=1 ;;
       notified-end) in_notified=0 ;;
@@ -266,16 +258,6 @@ record_read() {
     esac
   done < "$RECORD"
   notified=${notified%$'\n'}
-  if [ "$v1" -eq 1 ]; then
-    while IFS=$'\t' read -r id threshold; do
-      [ -n "$id" ] || continue
-      if id_in_list "$notified" "$id"; then
-        RECORD_NOTIFIED="${RECORD_NOTIFIED}${id}:${threshold}
-"
-      fi
-    done <<< "$thresholds"
-    notified=${RECORD_NOTIFIED%$'\n'}
-  fi
   RECORD_NOTIFIED=$notified
   return 0
 }
@@ -316,7 +298,7 @@ action_check() {
 check_locked() {
   local thresholds=$1 windows_out status_line="" read_out read_rc=0
 
-  record_read "$thresholds"
+  record_read
 
   read_out=$(usage_warner_read)
   read_rc=$?
