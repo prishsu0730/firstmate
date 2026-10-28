@@ -1534,13 +1534,15 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
-# fm_lock_acquire_wait keeps its historical never-fail contract for the many
+# fm_lock_acquire_wait waits through contention for the many
 # callers that invoke it bare: an unrecoverable recovery mutex is reported once
 # and waited out. Callers that must refuse promptly use
 # fm_lock_acquire_wait_refusable, which returns 2 instead.
+# Both waits return 1 when the lock's parent directory has been removed.
 fm_lock_acquire_wait() {
   local lockdir=$1 rc FM_LOCK_REFUSAL_QUIET=
   while true; do
+    [ -d "$(dirname "$lockdir")" ] || return 1
     if fm_lock_try_acquire "$lockdir"; then
       rc=0
     else
@@ -1555,6 +1557,7 @@ fm_lock_acquire_wait() {
 fm_lock_acquire_wait_refusable() {
   local lockdir=$1 rc
   while true; do
+    [ -d "$(dirname "$lockdir")" ] || return 1
     if fm_lock_try_acquire "$lockdir"; then
       rc=0
     else
@@ -2524,7 +2527,7 @@ fm_wake_clean_field() {
 
 fm_wake_append() {
   local status=0
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
   fm_wake_append_locked "$@" || status=$?
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
   return "$status"
@@ -2596,7 +2599,7 @@ fm_wake_queued_keys() {
     signal|stale|check|heartbeat) ;;
     *) printf 'fm_wake_queued_keys: invalid wake kind: %s\n' "$kind" >&2; return 2 ;;
   esac
-  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || return 1
   fm_wake_queued_keys_locked "$kind"
   fm_lock_release "$FM_WAKE_QUEUE_LOCK"
 }
