@@ -85,16 +85,10 @@
 #   ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
-#   merely unreachable from here - and it is available on HERDR, which must
-#   still read the recorded pane as gone once that session's server is running
-#   again, and on TMUX when the record carries the endpoint's server identity
-#   (tmux_socket, tmux_server_pid, tmux_server_start, written at spawn): the
-#   recorded socket must have no server or a restarted one.
-#   Independently, spawn_gen strictly before this machine's boot proves absence,
-#   including for legacy records without server identity; otherwise they refuse.
-#   A rebound tmux window is created on the server this
-#   process addresses and the record re-records that server. An endpoint that turns out
-#   to have survived refuses too. The worktree is reused untouched either way; a
+#   merely unreachable from here. fm_control_endpoint_absence_verdict in
+#   fm-control-lib.sh owns the shared proof for Herdr and for tmux records whose
+#   last launch predates this machine's boot; unproven absence refuses.
+#   The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
 #   (`--secondmate`, driven by the session-start liveness sweep).
@@ -366,36 +360,6 @@
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
 #   See docs/configuration.md for provider/Git setup and supported limits.
-#   On backend=orca the destination is an Orca terminal whose environment comes
-#   from the Orca app and shell startup, not this home, so a nonempty allowlist
-#   without the source below prints a stderr warning and launches unchanged.
-# Orca environment source (config/launch-env-tmux-session):
-#   Optional local file containing one exact tmux session name (letters, digits,
-#   underscores or hyphens). Only fresh Orca spawns use it; other backends are
-#   unchanged. It requires config/launch-env-allowlist and refuses without one,
-#   so tmux's automatic update-environment names (SSH_AUTH_SOCK) never ride
-#   along. Before allocation, each allowlisted name is read from that session's
-#   local environment (tmux -u show-environment -t =<session> <name>), never
-#   tmux's server-global or the invoking process's environment; -u keeps values
-#   intact under absent or C locales. A missing name, unreadable session, or
-#   malformed selector refuses before the Orca worktree or terminal exists,
-#   while an explicit -NAME record deliberately leaves that name unset. Launch
-#   keeps env -i and the operational floor, replaces destination expansion of
-#   allowlisted names with the snapshotted values, and sets
-#   GIT_CONFIG_NOSYSTEM=1 so a system credential helper cannot answer for the
-#   worker. Values are shell-quoted only in the owner-only staged launch file,
-#   never terminal input, and the pane deletes that file as sourcing starts,
-#   before the worker executes; a deletion failure refuses the worker launch and
-#   keeps the interactive shell, even with errexit set (a Bash 3.2 or dash
-#   errexit pane still exits if spawn reclaims the file in the instant between
-#   the pane's existence check and its source). Spawn waits up to 30
-#   seconds for that deletion; if the pane never ran the command or could not
-#   delete the file, or HUP, INT or TERM interrupts spawn first, spawn removes
-#   it unless the pane already did, refuses the worker launch, and leaves the
-#   Orca terminal open.
-#   The selector is not inherited into secondmate homes. This is not a
-#   filesystem sandbox; project and harness sandbox
-#   settings still own access to personal credential files.
 # Codex permission mode: docs/configuration.md owns config/codex-permission-mode.
 #
 # Claude permission mode (config/claude-permission-mode):
@@ -1987,11 +1951,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - when the record carries the endpoint's server identity (written
-  #           at spawn), the recorded socket itself is asked (-S): no server, a
-  #           restarted server proves it gone. Independently, spawn_gen strictly
-  #           before this machine's boot proves absence, including for legacy
-  #           records without server identity; otherwise they refuse.
+  #   tmux  - REFUSES, unless the task record predates this machine's boot. A
+  #           task record carries no socket identity for its endpoint, and a
+  #           server-wide inventory describes only the server this process
+  #           addresses, so no read available here can tell "gone" from "on a
+  #           server I cannot see" - but a reboot ended every agent, which the
+  #           record's launch time against the boot time does prove.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -2958,8 +2923,6 @@ effort_flag_for_harness() {
   esac
 }
 
-
-
 case "$LAUNCH" in
 *__KIMIBIN__*)
   KIMI_BIN=$(resolve_kimi_binary) || exit 1
@@ -3879,20 +3842,15 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
-    # The adopted window was just read on the server this process addresses, so
-    # that server's identity replaces the recorded one.
-    [ "$BACKEND" != tmux ] || TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
   elif [ "$BACKEND" = tmux ]; then
-    # The recorded tmux server is gone (or restarted), so its window is too.
-    # Create ONE fresh window for the same task on the server this process
-    # addresses, opened directly in the recorded worktree; the record published
-    # below rebinds window= and re-records that server's identity. The task id,
-    # brief, worktree, armed poll and status log are untouched.
+    # A tmux endpoint is only ever proven gone by a reboot (the record predates
+    # this boot), which also took the tmux server with it. Create ONE fresh
+    # window directly in the recorded worktree, so the published record rebinds
+    # to it just as the herdr reclaim below does.
     SES=$(fm_backend_tmux_container_ensure)
     T="$SES:$W"
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
     WT_TARGET="$WID"
-    TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -3900,9 +3858,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Only herdr reaches this branch; tmux was handled above and every
-    # secondmate was already refused. fm_control_endpoint_absence_verdict
-    # owns the shared absence proof.
+    # Herdr is the only backend that reaches here: the gate above rebinds only
+    # on a PROVEN-gone endpoint, and the only other proof
+    # (fm_control_endpoint_absence_verdict owns that argument) is a tmux record
+    # that predates this boot, handled by the branch above. Every secondmate
+    # was already refused, so there is no further dispatch to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
@@ -3976,7 +3936,6 @@ else
     # stays $T (the name form), which is safe now that rename is disabled.
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
     WT_TARGET="$WID"
-    TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
     ;;
   herdr)
     # fm_backend_herdr_workspace_label resolves the target workspace from
@@ -5303,7 +5262,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx tmux_socket tmux_server_pid tmux_server_start", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5338,18 +5297,10 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
-  # backend= is written only for a non-default (non-tmux) backend;
-  # absent backend= continues to mean tmux.
+  # backend= is written only for a non-default (non-tmux) backend, so the
+  # default path's meta stays byte-identical (absent backend= means tmux;
+  # data/fm-backend-design-d7's P1 compatibility contract).
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
-  # The tmux server this endpoint lives on, so a later control verb can prove
-  # the endpoint gone after a server restart instead of refusing forever. Written
-  # only when all three fields read back (bin/backends/tmux.sh).
-  if [ "$BACKEND" = tmux ] && [ -n "${TMUX_SERVER_IDENTITY:-}" ]; then
-    IFS=$'\t' read -r TMUX_SERVER_SOCKET TMUX_SERVER_PID TMUX_SERVER_START <<< "$TMUX_SERVER_IDENTITY"
-    echo "tmux_socket=$TMUX_SERVER_SOCKET"
-    echo "tmux_server_pid=$TMUX_SERVER_PID"
-    echo "tmux_server_start=$TMUX_SERVER_START"
-  fi
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"
@@ -5493,16 +5444,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
-case "$LAUNCH" in
-*__CLAUDESETTINGS__*)
-  if [ "$KIND" = secondmate ]; then
-    LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$(shell_quote "$STATE_REAL/$ID.claude-settings.json")}
-  else
-    claude_settings="'{\"feedbackDrafts\":\"off\"__CLAUDEATTRIBUTION__}'"
-    LAUNCH=${LAUNCH//__CLAUDESETTINGS__/$claude_settings}
-  fi
-  ;;
-esac
 LAUNCH=${LAUNCH//__CODEXAPPROVALFLAG__/$CODEX_APPROVAL_FLAG}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
   LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}
