@@ -86,8 +86,9 @@
 # The string passed must be self-sufficient - it plus the codebase reconstructs
 # roughly the same specification - so a report, decision, or PR the intent
 # refers to is written into it as substance, never left as a pointer.
-# bin/fm-brief.sh scaffolds those two `# Task` subsections; bin/fm-spawn.sh and
-# bin/fm-promote.sh refuse leftover `{TASK}` / `{FIRSTMATE_SPEC}` placeholders
+# bin/fm-brief.sh scaffolds those two `# Task` subsections plus `## Risk and
+# review`; bin/fm-spawn.sh and bin/fm-promote.sh refuse leftover `{TASK}` /
+# `{FIRSTMATE_SPEC}` / `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{REVIEW_TIER}` placeholders
 # and a `## Captain's intent` line opening with a Captain label or address
 # through the helpers below. Other mentions of `--intent` point here rather than
 # restating the rule.
@@ -225,12 +226,16 @@ fm_ship_rule_one() {  # <no-mistakes|direct-PR|local-only> <task-id> [branch] [<
 # Return 0 when a Task subsection still consists only of its scaffold
 # placeholder. A missing file and legacy briefs carry no such placeholders.
 fm_brief_task_placeholders_present() {  # <file>
-  local file=$1 intent spec
+  local file=$1 intent spec risk
   [ -f "$file" ] || return 1
   intent=$(fm_brief_task_heading_body "$file" "## Captain's intent")
   spec=$(fm_brief_task_heading_body "$file" "## Firstmate spec")
+  risk=$(fm_brief_task_heading_body "$file" "## Risk and review")
   [ "$(printf '%s' "$intent" | tr -d '[:space:]')" = '{TASK}' ] && return 0
   [ "$(printf '%s' "$spec" | tr -d '[:space:]')" = '{FIRSTMATE_SPEC}' ] && return 0
+  printf '%s\n' "$risk" | grep -Fqx 'Blast radius: {BLAST_RADIUS}' && return 0
+  printf '%s\n' "$risk" | grep -Fqx 'Risk tiers: {RISK_TIERS}' && return 0
+  printf '%s\n' "$risk" | grep -Fqx 'Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)' && return 0
   return 1
 }
 
@@ -374,7 +379,7 @@ Do not hand-edit, commit, or fix findings yourself while a run is active - the p
 
 $drive_block
 A killed or timed-out call is never evidence the daemon died: the daemon accepts your response immediately and runs the round in the background, so the call was only ever waiting for a read while the run kept working.
-Reattach and keep going rather than reporting the pipeline blocked; rule 7 owns the checks that decide when a pipeline block is real.
+Reattach and keep going rather than reporting the pipeline blocked; rule 8 owns the checks that decide when a pipeline block is real.
 
 Two firstmate-specific rules layer on top of that guidance:
 - ask-user findings are never yours to answer: escalate to firstmate using rule 6's ask-user format and stop.

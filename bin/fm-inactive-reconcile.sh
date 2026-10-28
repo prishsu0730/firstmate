@@ -72,8 +72,10 @@
 # inactive-path fingerprint binds only the spawn incarnation, task id, terminal
 # state, and PR text, never the child's last status line, so a child that keeps
 # appending routine prose after one terminal outcome yields at most one parent
-# event across scans and restarts; the last line is retained in status_head as
-# evidence. The ledger-path fingerprint instead binds the incarnation, task id,
+# event across scans and restarts. The parent-facing fallback includes nonempty
+# last status as last_status context, with tabs, CR, and LF replaced by spaces
+# and truncated to 1200 bytes, while status_head retains its SHA-256 hash as
+# receipt evidence. The ledger-path fingerprint instead binds the incarnation, task id,
 # terminal state, literal `ledger` origin, and complete terminal ledger line.
 # When a terminal ledger append races just after the inactive path's final read,
 # ledger_claim binds that one ledger fingerprint to the already-delivered
@@ -343,10 +345,11 @@ home_secondmate_id() {
   fm_parent_channel_home_id "$FM_HOME"
 }
 
-report_to_parent() { # <task> <state> <outcome-key> <fingerprint> <pr>
-  local task=$1 state=$2 outcome_key=$3 fingerprint=$4 pr=$5 line
+report_to_parent() { # <task> <state> <outcome-key> <fingerprint> <pr> <last-status>
+  local task=$1 state=$2 outcome_key=$3 fingerprint=$4 pr=$5 last_status=$6 line
   line="$state [key=$outcome_key]: inactive terminal child=$task fingerprint=$fingerprint"
   [ -z "$pr" ] || line="$line pr=$pr"
+  [ -z "$last_status" ] || line="$line last_status=$(clean_field "$last_status")"
   fm_parent_channel_report "$FM_HOME" "$STATE" "$line"
 }
 
@@ -538,7 +541,7 @@ reconcile_direct_child_locked() { # <id> <meta> <secondmate-id-or-empty> <timeou
   ensure_record "$fingerprint" "$id" "$incarnation" "$state" "$outcome_key" direct "upstream" "$pr" "$(sha256_text "$last")" || return 1
   [ -n "$RECORD_PENDING" ] || return 0
   if [ -n "$self" ]; then
-    if report_to_parent "$id" "$state" "$outcome_key" "$fingerprint" "$pr"; then
+    if report_to_parent "$id" "$state" "$outcome_key" "$fingerprint" "$pr" "$last"; then
       mark_reported "$RECORD_PENDING" || return 1
     else
       notice_parent_report_failed "$RECORD_PENDING" "$fingerprint" \

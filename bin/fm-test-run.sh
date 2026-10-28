@@ -119,6 +119,11 @@
 # Every selected script runs isolated from the host's global and system Git
 # configuration, including one that sources no test helper of its own;
 # tests/git-config-helpers.sh owns that contract and its limits.
+# Before each selected script starts, the runner also unsets FM_HOME,
+# FM_STATE_OVERRIDE, FM_DATA_OVERRIDE, FM_ROOT_OVERRIDE, FM_PROJECTS_OVERRIDE,
+# FM_CONFIG_OVERRIDE, and FM_BACKEND so fixtures cannot inherit the operator's
+# home paths or backend selection. Direct invocations bypass this cleanup;
+# tests/lib.sh owns the inherited-path refusal for suites that source it.
 #
 # Family labels, the changed-file map, and production portable-shard composition
 # live in this script only (one owner). The proven-isolated candidate set remains
@@ -2470,18 +2475,27 @@ run_script_bounded() {  # <script> <out> <stream> <id>
     if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
       # Expansion is intentionally deferred to the child bash passed to -c.
       # shellcheck disable=SC2016
-      fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash -c \
+      fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" env \
+        -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+        -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND bash -c \
         'bash "$1" 2>&1 | tee "$2"; exit "${PIPESTATUS[0]}"' _ "$script" "$out"
       rc=$?
     else
-      bash "$script" 2>&1 | tee "$out"
+      env -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+        -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND \
+        bash "$script" 2>&1 | tee "$out"
       rc=${PIPESTATUS[0]}
     fi
   elif [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ]; then
-    fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" bash "$script" >"$out" 2>&1
+    fm_run_timed "$PER_SCRIPT_TIMEOUT_SECS" env \
+      -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+      -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND \
+      bash "$script" >"$out" 2>&1
     rc=$?
   else
-    bash "$script" >"$out" 2>&1
+    env -u FM_HOME -u FM_STATE_OVERRIDE -u FM_DATA_OVERRIDE -u FM_ROOT_OVERRIDE \
+      -u FM_PROJECTS_OVERRIDE -u FM_CONFIG_OVERRIDE -u FM_BACKEND \
+      bash "$script" >"$out" 2>&1
     rc=$?
   fi
   if [ "$PER_SCRIPT_TIMEOUT_SECS" -gt 0 ] && [ "$rc" -eq 124 ]; then
