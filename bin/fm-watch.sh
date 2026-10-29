@@ -168,6 +168,21 @@
 #                          budget and is parked until a probe reads it live
 #                          again (FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS and
 #                          FM_SECONDMATE_LIVENESS_WINDOW_SECS)
+#   check: worker <id> auto-relaunched after <cause>
+#                          the worker liveness tick found an ordinary ship or
+#                          scout whose task is open and In flight with an agent
+#                          proven stopped, and relaunched it in place through
+#                          bin/fm-control.sh relaunch --if-stopped with a
+#                          progress note; state/.worker-relaunch-<id> keeps the
+#                          durable per-worker count (bin/fm-worker-liveness-lib.sh)
+#   check: worker <id> auto-relaunch failed after <cause>: <detail>
+#                          the relaunch itself failed; the attempt is ledgered
+#                          and counts toward the bound below
+#   check: worker <id> auto-relaunch paused after <n> attempts in <s>s; ...
+#                          a worker that kept dying exceeded its bounded
+#                          relaunch budget and is parked until a probe reads it
+#                          live again (FM_WORKER_LIVENESS_MAX_ATTEMPTS and
+#                          FM_WORKER_LIVENESS_WINDOW_SECS)
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
 # no-op through the watcher singleton lock. A live holder whose beacon is stale
@@ -255,6 +270,11 @@ WATCH_HOME_EXISTED=0
 # and wake emission (secondmate_liveness_tick below).
 # shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
+# Ordinary ship and scout recovery: the probe, note, and guarded relaunch live in
+# the library; the watcher contributes the cadence, the bound, and wake rows
+# (worker_liveness_tick below).
+# shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
+. "$SCRIPT_DIR/fm-worker-liveness-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -393,6 +413,27 @@ SECONDMATE_LIVENESS_MAX_ATTEMPTS=${FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS:-}
 case "$SECONDMATE_LIVENESS_MAX_ATTEMPTS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_MAX_ATTEMPTS=3 ;; esac
 SECONDMATE_LIVENESS_WINDOW_SECS=${FM_SECONDMATE_LIVENESS_WINDOW_SECS:-}
 case "$SECONDMATE_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) SECONDMATE_LIVENESS_WINDOW_SECS=3600 ;; esac
+# Ordinary worker liveness: on this cadence the watcher probes each local ship
+# or scout whose task is still open and In flight, and relaunches one whose
+# agent has positively stopped through bin/fm-control.sh relaunch --if-stopped,
+# keeping its isolated copy and unlanded work (bin/fm-worker-liveness-lib.sh).
+# The cadence survives watcher restarts via a state marker's mtime.
+WORKER_LIVENESS_SECS=${FM_WORKER_LIVENESS_SECS:-}
+case "$WORKER_LIVENESS_SECS" in ''|*[!0-9]*|0) WORKER_LIVENESS_SECS=60 ;; esac
+# Per-relaunch wall-clock bound; fm-control's own exit and launch waits fit
+# inside it, so a wedged relaunch cannot stall the poll.
+WORKER_LIVENESS_TIMEOUT=${FM_WORKER_LIVENESS_TIMEOUT:-}
+case "$WORKER_LIVENESS_TIMEOUT" in ''|*[!0-9]*|0) WORKER_LIVENESS_TIMEOUT=180 ;; esac
+# A task record touched more recently than this is left alone, so a spawn or a
+# hand relaunch still bringing its agent up is never mistaken for a dead one.
+WORKER_LIVENESS_GRACE_SECS=${FM_WORKER_LIVENESS_GRACE_SECS:-}
+case "$WORKER_LIVENESS_GRACE_SECS" in ''|*[!0-9]*) WORKER_LIVENESS_GRACE_SECS=120 ;; esac
+# Relaunch bound per worker, counted from the durable attempt ledger: a worker
+# that keeps dying wakes once and is parked until a probe reads it alive again.
+WORKER_LIVENESS_MAX_ATTEMPTS=${FM_WORKER_LIVENESS_MAX_ATTEMPTS:-}
+case "$WORKER_LIVENESS_MAX_ATTEMPTS" in ''|*[!0-9]*|0) WORKER_LIVENESS_MAX_ATTEMPTS=3 ;; esac
+WORKER_LIVENESS_WINDOW_SECS=${FM_WORKER_LIVENESS_WINDOW_SECS:-}
+case "$WORKER_LIVENESS_WINDOW_SECS" in ''|*[!0-9]*|0) WORKER_LIVENESS_WINDOW_SECS=3600 ;; esac
 # A crew that declared a pause is idling on a known wait, so its stale
 # pane is absorbed rather than wedge-escalated.
 # A captain-held or paused crew whose agent has confidently exited uses the same
@@ -1255,6 +1296,94 @@ secondmate_liveness_tick() {
     if [ -n "$err" ]; then
       echo "watcher: secondmate $id liveness: $err" >&2
       triage_log "secondmate $id liveness error: $err" || true
+      failed=1
+    fi
+  done
+  [ -z "$first_reason" ] || wake "$first_reason"
+  [ "$failed" -eq 0 ]
+}
+
+# Ordinary ship and scout recovery, the worker counterpart of
+# secondmate_liveness_tick. bin/fm-worker-liveness-lib.sh owns which workers
+# are eligible, the progress note, and the guarded relaunch through
+# bin/fm-control.sh relaunch --if-stopped. On a bounded cadence every local
+# worker record is probed; at most one relaunch runs per tick, so a fleet-wide
+# outage cannot hold the poll for many relaunch timeouts, and the rest follow on
+# later ticks. A record touched inside WORKER_LIVENESS_GRACE_SECS is left alone
+# while its agent comes up. Each relaunch outcome becomes one durable `check`
+# wake row; skips land only in the triage log. A worker that keeps dying is
+# parked after WORKER_LIVENESS_MAX_ATTEMPTS ledgered attempts inside
+# WORKER_LIVENESS_WINDOW_SECS: the park marker wakes once, further probes stay
+# silent, and a later live probe ledgers a `rearmed` row and clears it.
+worker_liveness_tick() {
+  local tick_marker="$STATE/.worker-liveness-tick"
+  [ "$(age_of "$tick_marker")" -ge "$WORKER_LIVENESS_SECS" ] || return 0
+  touch "$tick_marker" || return 1
+  local now=$(( $(date +%s) )) meta id bound_marker attempts notify_key reason
+  local queued err first_reason='' failed=0 tried=0
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    id=${meta##*/}
+    id=${id%.meta}
+    case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
+    fm_worker_liveness_probe "$meta" "$id"
+    bound_marker="$STATE/.worker-relaunch-bound-$id"
+    reason='' notify_key='' err=''
+    case "$FM_WK_LIVE_STATUS" in
+      relaunchable)
+        if [ "$tried" -eq 1 ] || [ "$(age_of "$meta")" -lt "$WORKER_LIVENESS_GRACE_SECS" ]; then
+          :
+        elif [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
+          :
+        elif ! attempts=$(fm_worker_liveness_recent_attempts "$id" "$WORKER_LIVENESS_WINDOW_SECS"); then
+          err="relaunch ledger is unreadable; agent left $FM_WK_LIVE_STATE"
+        elif [ "$attempts" -ge "$WORKER_LIVENESS_MAX_ATTEMPTS" ]; then
+          if printf '%s\t%s\n' "$now" "$FM_WK_LIVE_STATE" > "$bound_marker"; then
+            reason="check: worker $id auto-relaunch paused after $WORKER_LIVENESS_MAX_ATTEMPTS attempts in ${WORKER_LIVENESS_WINDOW_SECS}s; agent still $FM_WK_LIVE_STATE - inspect it and relaunch it by hand"
+            notify_key="worker-relaunch-bound-$id"
+          else
+            err="relaunch park marker could not be written; agent left $FM_WK_LIVE_STATE"
+          fi
+        else
+          tried=1
+          if fm_worker_liveness_relaunch "$meta" "$id" "$WORKER_LIVENESS_TIMEOUT"; then
+            reason="check: worker $id auto-relaunched after $FM_WK_LIVE_CAUSE"
+            notify_key="worker-relaunch-$id-$now"
+          elif [ "$FM_WK_LIVE_STATUS" = failed ]; then
+            reason="check: worker $id auto-relaunch failed after $FM_WK_LIVE_CAUSE: $FM_WK_LIVE_REASON"
+            notify_key="worker-relaunch-failed-$id-$now"
+          elif [ "$FM_WK_LIVE_STATUS" = skipped ]; then
+            triage_log "worker $id auto-relaunch skipped: $FM_WK_LIVE_REASON"
+          fi
+        fi
+        ;;
+      alive)
+        if [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
+          if ! fm_worker_liveness_ledger_add "$id" rearmed; then
+            err="relaunch ledger is unwritable; auto-relaunch stays paused"
+          elif ! rm -f "$bound_marker"; then
+            err="relaunch park marker could not be cleared; auto-relaunch stays paused"
+          else
+            triage_log "worker $id live again; auto-relaunch pause cleared"
+          fi
+        fi
+        ;;
+      skipped)
+        triage_log "worker $id liveness: $FM_WK_LIVE_REASON"
+        ;;
+    esac
+    if [ -n "$reason" ]; then
+      queued=$(fm_wake_queued_keys check)
+      if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
+        || fm_wake_append check "$notify_key" "$reason"; then
+        [ -n "$first_reason" ] || first_reason=$reason
+      else
+        err="check wake row could not be queued: $reason"
+      fi
+    fi
+    if [ -n "$err" ]; then
+      echo "watcher: worker $id liveness: $err" >&2
+      triage_log "worker $id liveness error: $err" || true
       failed=1
     fi
   done
@@ -2993,6 +3122,13 @@ while :; do
   # any relaunch and the restarted watcher will not re-probe early.
   secondmate_liveness_tick || {
     echo "watcher: secondmate liveness check failed" >&2
+    exit 1
+  }
+
+  # The same recovery for ordinary ship and scout workers: an agent that exited
+  # while its task is still open and In flight is relaunched in place.
+  worker_liveness_tick || {
+    echo "watcher: worker liveness check failed" >&2
     exit 1
   }
 

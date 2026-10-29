@@ -5880,11 +5880,16 @@ fi
 fm_lock_release "$SPAWN_META_LOCK"
 SPAWN_META_LOCK_HELD=0
 
-# A secondmate launched after a deliberate stop is running again, so the stop
+# An agent launched after a deliberate stop is running again, so the stop
 # marker must not keep the liveness probes skipping it.
-if [ "$KIND" = secondmate ]; then
-  rm -f "$STATE/.secondmate-stopped-$ID" \
-    || { echo "error: secondmate $ID launched but its stop marker $STATE/.secondmate-stopped-$ID could not be cleared" >&2; exit 1; }
+SPAWN_STOP_MARKER=
+case "$KIND" in
+  secondmate) SPAWN_STOP_MARKER="$STATE/.secondmate-stopped-$ID" ;;
+  ship|scout) SPAWN_STOP_MARKER="$STATE/.worker-stopped-$ID" ;;
+esac
+if [ -n "$SPAWN_STOP_MARKER" ]; then
+  rm -f "$SPAWN_STOP_MARKER" \
+    || { echo "error: $KIND $ID launched but its stop marker $SPAWN_STOP_MARKER could not be cleared" >&2; exit 1; }
 fi
 
 SPAWN_DELIVERY=
