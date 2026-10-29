@@ -425,6 +425,33 @@ SH
   pass "worker liveness: a stop after probing releases the recovery attempt"
 }
 
+test_leased_worker_preserves_recovery_budget_then_relaunches() {
+  local dir i FM_SUPERVISION_ACTOR=main
+  export FM_SUPERVISION_ACTOR
+  dir=$(new_case leased)
+  add_ship_task "$dir" wk10
+  seed_backlog "$dir" wk10 in_flight
+  printf '%s\n' "$$" > "$dir/home/state/.lock"
+  printf 'branch\t%s\t%s\n' "$$" "$(date +%s)" > "$dir/home/state/.lease-wk10"
+  for i in 1 2 3 4; do
+    run_tick "$dir" || fail "leased tick $i failed: $(cat "$dir/tick.out")"
+    [ "$(launches "$dir")" = 0 ] || fail "the leased worker was relaunched"
+    [ ! -s "$dir/home/wake-delivered" ] || fail "lease contention raised a notice"
+    [ ! -s "$dir/home/state/.wake-queue" ] || fail "lease contention queued a notice"
+    [ ! -e "$dir/home/state/.worker-relaunch-bound-wk10" ] || fail "lease contention parked recovery"
+    [ "$(grep -c $'\treleased$' "$dir/home/state/.worker-relaunch-wk10")" = "$i" ] || fail "the lease refusal was not released"
+    ! grep -q $'\tfailed$' "$dir/home/state/.worker-relaunch-wk10" || fail "lease contention counted as failure"
+    case_env "$dir" bash -c '. "$1/bin/fm-watch.sh"; [ "$(fm_worker_liveness_recent_attempts wk10 3600)" = 0 ]' _ "$ROOT" \
+      || fail "lease contention consumed the retry budget"
+  done
+  [ -f "$dir/home/state/.lease-wk10" ] || fail "recovery removed the other actor's lease"
+  rm -f "$dir/home/state/.lease-wk10"
+  run_tick "$dir" || fail "the released tick failed: $(cat "$dir/tick.out")"
+  [ "$(launches "$dir")" = 1 ] || fail "the worker did not relaunch after the lease cleared"
+  assert_grep 'check: worker wk10 auto-relaunched' "$dir/home/wake-delivered" "recovery should resume after contention"
+  pass "worker liveness: lease contention preserves recovery budget until the lease clears"
+}
+
 test_ineligible_worker_does_not_starve_later_worker() {
   local dir
   dir=$(new_case starvation)
@@ -517,6 +544,7 @@ test_finished_worker_is_not_relaunched
 test_deliberately_stopped_worker_is_not_relaunched
 test_closed_or_unopened_task_is_not_relaunched
 test_stop_after_probe_releases_recovery_attempt
+test_leased_worker_preserves_recovery_budget_then_relaunches
 test_ineligible_worker_does_not_starve_later_worker
 test_blocked_worker_preserves_recovery_budget_and_tick_slot
 test_unproven_endpoint_absence_is_not_relaunched
