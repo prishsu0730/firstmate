@@ -29,9 +29,9 @@
 #
 # Each selected script runs separately through bin/fm-test-run.sh, which owns
 # bash invocation, fixture Git isolation, and the per-script time bound, with
-# FM_HOME, FM_STATE_OVERRIDE, and FM_CONFIG_OVERRIDE removed from its
-# environment. The remaining scripts still run after a failure. The command
-# exits non-zero when any script fails, and the gate parks the Test step.
+# inherited FM_* variables removed from its environment. The remaining scripts
+# still run after a failure. The command exits non-zero when any script fails,
+# and the gate parks the Test step.
 #
 # Exit status: 0 all selected scripts passed (or --list), 1 a script failed,
 # 2 usage error or missing runner.
@@ -185,7 +185,11 @@ log "running $total test script(s) one at a time"
 failed=()
 while IFS= read -r script; do
   [ -n "$script" ] || continue
-  if ! env -u FM_HOME -u FM_STATE_OVERRIDE -u FM_CONFIG_OVERRIDE \
+  # Test scripts can source production libraries before their fixtures replace
+  # environment paths. Keep the daemon's FM_* state out of every selected test
+  # by starting from a small host-safe allowlist instead of tracking each
+  # current and future FM_* variable individually.
+  if ! env -i PATH="${PATH:-/usr/bin:/bin}" HOME="${HOME:-/tmp}" TMPDIR="${TMPDIR:-/tmp}" \
     "$RUNNER" --per-script-timeout-secs "$PER_SCRIPT_TIMEOUT_SECS" "$script"; then
     failed+=("$script")
   fi
