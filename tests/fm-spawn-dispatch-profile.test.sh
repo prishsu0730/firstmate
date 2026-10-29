@@ -2277,11 +2277,13 @@ test_non_claude_harness_ignores_claude_permission_mode() {
 test_codex_permission_modes() {
   local kind mode rec id sm out status launch flags
   for kind in ship scout secondmate; do
-    for mode in absent bypass restricted; do
+    for mode in absent bypass restricted padded; do
       id="codex-perm-$kind-$mode"
       rec=$(make_spawn_case "$id" codex "$id")
       read_case_record "$rec"
-      if [ "$mode" != absent ]; then
+      if [ "$mode" = padded ]; then
+        printf ' \t restricted \r\n' > "$HOME_DIR/config/codex-permission-mode"
+      elif [ "$mode" != absent ]; then
         printf '%s\n' "$mode" > "$HOME_DIR/config/codex-permission-mode"
       fi
       local args=("$id" "$PROJ_DIR")
@@ -2300,7 +2302,7 @@ test_codex_permission_modes() {
       expect_code 0 "$status" "Codex $kind spawn under $mode should succeed: $out"
       launch=$(cat "$LAUNCH_LOG")
       flags="codex --model 'gpt-5' -c 'model_reasoning_effort=\"high\"' "
-      if [ "$mode" = restricted ]; then
+      if [ "$mode" = restricted ] || [ "$mode" = padded ]; then
         flags+='--sandbox workspace-write --ask-for-approval on-request '
         assert_not_contains "$launch" '--dangerously-bypass-approvals-and-sandbox' "restricted must not bypass approvals"
       else
@@ -2333,7 +2335,7 @@ test_codex_permission_invalid_refuses_before_mutation() {
       case "$value" in
       invalid) printf 'auto\n' > "$file" ;;
       empty) : > "$file" ;;
-      whitespace) printf ' restricted\n' > "$file" ;;
+      whitespace) printf ' \t \r\n' > "$file" ;;
       directory) mkdir "$file" ;;
       dangling) ln -s "$CASE_DIR/missing" "$file" ;;
       unreadable)

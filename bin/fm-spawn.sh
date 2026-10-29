@@ -86,8 +86,8 @@
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
 #   merely unreachable from here. fm_control_endpoint_absence_verdict in
-#   fm-control-lib.sh owns the shared proof for Herdr and for tmux records whose
-#   last launch predates this machine's boot; unproven absence refuses.
+#   fm-control-lib.sh owns the shared proof for Herdr and for tmux records that
+#   carry server identity or predate this machine's boot; unproven absence refuses.
 #   The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
@@ -698,7 +698,7 @@ if [ "$CODEX_PERM_PRESENT" = 1 ]; then
     echo "error: config/codex-permission-mode must be a readable regular file holding bypass or restricted" >&2
     exit 1
   fi
-  CODEX_PERMISSION_MODE=$(cat "$CONFIG/codex-permission-mode") || exit 1
+  CODEX_PERMISSION_MODE=$(perl -0777 -pe 's/\A\s+|\s+\z//g' <"$CONFIG/codex-permission-mode") || exit 1
   case "$CODEX_PERMISSION_MODE" in
   bypass | restricted) ;;
   *)
@@ -1965,18 +1965,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # endpoint was DESTROYED" with "the endpoint is UNREACHABLE from here right
   # now", and an unreachable endpoint can still hold the live agent this
   # relaunch would duplicate. So absence is PROVEN before it may rebind, never
-  # inferred from a failed read - and only HERDR can prove it:
+  # inferred from a failed read:
   #   herdr - the recorded session's server is started, and the recorded pane is
   #           RE-READ through that session's own socket. `dead` means the pane
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - REFUSES, unless the task record predates this machine's boot. A
-  #           task record carries no socket identity for its endpoint, and a
-  #           server-wide inventory describes only the server this process
-  #           addresses, so no read available here can tell "gone" from "on a
-  #           server I cannot see" - but a reboot ended every agent, which the
-  #           record's launch time against the boot time does prove.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -3885,10 +3879,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
     WT_TARGET=$T
     SES=${T%%:*}
   elif [ "$BACKEND" = tmux ]; then
-    # A tmux endpoint is only ever proven gone by a reboot (the record predates
-    # this boot), which also took the tmux server with it. Create ONE fresh
-    # window directly in the recorded worktree, so the published record rebinds
-    # to it just as the herdr reclaim below does.
     SES=$(fm_backend_tmux_container_ensure)
     T="$SES:$W"
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
@@ -3899,12 +3889,6 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # recorded worktree. The record published below writes window= (and herdr's
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
-    #
-    # Herdr is the only backend that reaches here: the gate above rebinds only
-    # on a PROVEN-gone endpoint, and the only other proof
-    # (fm_control_endpoint_absence_verdict owns that argument) is a tmux record
-    # that predates this boot, handled by the branch above. Every secondmate
-    # was already refused, so there is no further dispatch to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
@@ -5305,12 +5289,13 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx tmux_socket tmux_server_pid tmux_server_start", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
   ' "$RELAUNCH_META"
 }
+[ "$BACKEND" != tmux ] || TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
 {
   echo "window=$META_WINDOW"
   echo "endpoint_task_id=$ID"
@@ -5344,6 +5329,12 @@ preserve_relaunch_meta() {
   # default path's meta stays byte-identical (absent backend= means tmux;
   # data/fm-backend-design-d7's P1 compatibility contract).
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
+  if [ "$BACKEND" = tmux ] && [ -n "${TMUX_SERVER_IDENTITY:-}" ]; then
+    IFS=$'\t' read -r TMUX_SERVER_SOCKET TMUX_SERVER_PID TMUX_SERVER_START <<< "$TMUX_SERVER_IDENTITY"
+    echo "tmux_socket=$TMUX_SERVER_SOCKET"
+    echo "tmux_server_pid=$TMUX_SERVER_PID"
+    echo "tmux_server_start=$TMUX_SERVER_START"
+  fi
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"
