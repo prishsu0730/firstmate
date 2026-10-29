@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read-only worktree-tangle checks against the real checkout.
+# Worktree-tangle checks against disposable Git refs.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,38 +9,56 @@ pass() { printf 'ok - %s\n' "$1"; }
 # shellcheck source=bin/fm-tangle-lib.sh
 . "$ROOT/bin/fm-tangle-lib.sh"
 
+# shellcheck source=tests/lib.sh
+. "$ROOT/tests/lib.sh" || fail 'test helper setup'
+TMP=$(fm_test_tmproot fm-tangle-test) || fail 'fixture directory'
+REPO="$TMP/repo"
+fm_git_init_commit "$REPO" || fail 'fixture setup'
+
 test_default_branch() {
   local expected got rc
-  expected=$(git -C "$ROOT" rev-parse --abbrev-ref origin/HEAD 2>/dev/null)
-  if [ -n "$expected" ]; then
-    expected=${expected#origin/}
-  elif git -C "$ROOT" branch --list main | command grep -q main; then
-    expected=main
-  elif git -C "$ROOT" branch --list master | command grep -q master; then
-    expected=master
-  else
-    fail 'checkout must have a discoverable default branch'
-  fi
-  got=$(fm_default_branch "$ROOT"); rc=$?
-  [ "$rc" -eq 0 ] && [ "$got" = "$expected" ] || fail 'real default branch'
-  got=$(fm_default_branch "$ROOT"; printf '|')
-  [ "$got" = "$expected"$'\n|' ] || fail 'default branch newline'
-  pass 'default branch agrees with real Git refs and ends with a newline'
+  for expected in main master trunk; do
+    case "$expected" in
+      master) git -C "$REPO" branch -m master || fail 'rename default' ;;
+      trunk)
+        git -C "$REPO" update-ref refs/remotes/origin/trunk HEAD || fail 'remote default ref'
+        git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk || fail 'remote HEAD'
+        ;;
+    esac
+    got=$(fm_default_branch "$REPO"); rc=$?
+    [ "$rc" -eq 0 ] && [ "$got" = "$expected" ] || fail 'fixture default branch'
+    got=$(fm_default_branch "$REPO"; printf '|')
+    [ "$got" = "$expected"$'\n|' ] || fail 'default branch newline'
+  done
+  git -C "$REPO" symbolic-ref --delete refs/remotes/origin/HEAD || fail 'remove remote HEAD'
+  git -C "$REPO" branch -m main || fail 'restore main'
+  pass 'local main, master and remote default refs resolve with a newline'
 }
 
 test_current_checkout() {
-  local current default got rc
-  current=$(git -C "$ROOT" branch --show-current)
-  default=$(fm_default_branch "$ROOT")
-  got=$(fm_primary_tangle_branch "$ROOT" 2>&1); rc=$?
-  if [ -z "$current" ] || [ "$current" = "$default" ]; then
-    [ "$rc" -eq 1 ] && [ -z "$got" ] || fail 'healthy checkout must be silent'
-  else
-    [ "$rc" -eq 0 ] && [ "$got" = "$current" ] || fail 'named feature branch detection'
-    got=$(fm_primary_tangle_branch "$ROOT"; printf '|')
-    [ "$got" = "$current"$'\n|' ] || fail 'tangled branch newline'
-  fi
-  pass 'checkout classification agrees with its current branch without mutating Git'
+  local current got rc
+  for current in main feature detached unknown-default; do
+    case "$current" in
+      main) ;;
+      feature) git -C "$REPO" checkout -qb feature || fail 'feature checkout' ;;
+      detached) git -C "$REPO" checkout -q --detach || fail 'detach checkout' ;;
+      unknown-default)
+        git -C "$REPO" checkout -q feature || fail 'restore feature'
+        git -C "$REPO" branch -D main >/dev/null || fail 'remove default'
+        ;;
+    esac
+    got=$(fm_primary_tangle_branch "$REPO" 2>&1); rc=$?
+    if [ "$current" = feature ]; then
+      [ "$rc" -eq 0 ] && [ "$got" = feature ] || fail 'named feature branch detection'
+      got=$(fm_primary_tangle_branch "$REPO"; printf '|')
+      [ "$got" = feature$'\n|' ] || fail 'tangled branch newline'
+    else
+      [ "$rc" -eq 1 ] && [ -z "$got" ] || fail 'healthy or unresolved checkout must be silent'
+    fi
+  done
+  got=$(fm_default_branch "$REPO" 2>/dev/null); rc=$?
+  [ "$rc" -eq 1 ] && [ -z "$got" ] || fail 'missing default must fail silently'
+  pass 'default, feature, detached and missing-default checkouts classify deterministically'
 }
 
 test_invalid_roots() {

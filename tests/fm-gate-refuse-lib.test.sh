@@ -10,7 +10,7 @@ pass() { printf 'ok - %s\n' "$1"; }
 . "$ROOT/bin/fm-gate-refuse-lib.sh"
 
 # Python owns the temporary fixture lifetime so cleanup is portable.
-python3 - "$ROOT" <<'PY'
+python3 - "$ROOT" <<'PY' || exit 1
 import os
 import pathlib
 import subprocess
@@ -115,5 +115,5 @@ test_gate_refusal_exit() (
   pass 'gate refusal exits before continuation while bypass and ordinary calls remain silent'
 )
 
-test_gate_environment_signals
-test_gate_refusal_exit
+test_gate_environment_signals || exit 1
+test_gate_refusal_exit || exit 1
