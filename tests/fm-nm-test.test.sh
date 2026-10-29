@@ -41,6 +41,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script=${!#}
 fm_keys=$(env | sed -n 's/^\(FM_[^=]*\)=.*/\1/p' | LC_ALL=C paste -sd, -)
 printf 'ARGS=%s|FM_KEYS=%s|LIMIT=%s\n' "$*" "${fm_keys:-unset}" "$(ulimit -n)" >>"$ROOT/runner.log"
+printf 'HOST=%s|PATH=%s|HOME=%s|LC_ALL=%s\n' "${NM_HOST_SETTING-unset}" "$PATH" "$HOME" "${LC_ALL-unset}" >>"$ROOT/host.log"
 if [ -f "$ROOT/.git/fm-fail-on" ] && grep -Fxq "$script" "$ROOT/.git/fm-fail-on"; then
   echo "stand-in runner: $script failed"
   exit 1
@@ -258,6 +259,17 @@ test_raises_a_low_file_descriptor_limit_for_the_runner() {
   pass "wrapper raises the runner file-descriptor limit when the host starts low"
 }
 
+test_preserves_non_fm_environment() {
+  local repo log
+  repo=$(make_fixture)
+  touch_and_commit "$repo" bin/fm-foo.sh bin/fm-bar.sh
+  NM_HOST_SETTING=$'host value\nFM_EMBEDDED=preserved' LC_ALL=C run_wrapper "$repo" --base main
+  expect_code 0 "$FIXTURE_CODE" "run with unrelated host settings"
+  log=$(cat "$repo/host.log")
+  assert_equals "$(printf 'HOST=host value\nFM_EMBEDDED=preserved|PATH=%s|HOME=%s|LC_ALL=C\n' "$PATH" "$HOME" "$PATH" "$HOME")" "$log" "every runner preserves unrelated host settings"
+  pass "unrelated host settings survive FM environment cleanup"
+}
+
 test_fallback_runs_the_two_contract_tests() {
   local repo log
   repo=$(make_fixture)
@@ -347,6 +359,7 @@ test_default_base_is_origin_main_then_main
 test_no_resolvable_default_base_falls_back_with_a_warning
 test_explicit_unknown_base_is_refused
 test_runs_each_script_separately_with_clean_env
+test_preserves_non_fm_environment
 test_raises_a_low_file_descriptor_limit_for_the_runner
 test_fallback_runs_the_two_contract_tests
 test_failure_runs_the_rest_and_exits_nonzero

@@ -185,12 +185,12 @@ log "running $total test script(s) one at a time"
 failed=()
 while IFS= read -r script; do
   [ -n "$script" ] || continue
-  # Test scripts can source production libraries before their fixtures replace
-  # environment paths. Keep the daemon's FM_* state out of every selected test
-  # by starting from a small host-safe allowlist instead of tracking each
-  # current and future FM_* variable individually.
-  if ! env -i PATH="${PATH:-/usr/bin:/bin}" HOME="${HOME:-/tmp}" TMPDIR="${TMPDIR:-/tmp}" \
-    "$RUNNER" --per-script-timeout-secs "$PER_SCRIPT_TIMEOUT_SECS" "$script"; then
+  if ! (
+    while IFS= read -r key; do
+      unset "$key"
+    done < <(compgen -e FM_)
+    exec "$RUNNER" --per-script-timeout-secs "$PER_SCRIPT_TIMEOUT_SECS" "$script"
+  ); then
     failed+=("$script")
   fi
 done <<<"$SELECTION"
