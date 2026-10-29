@@ -150,6 +150,9 @@ case "${1:-}" in
       printf '╭────╮\n│    │\n╰────╯\n'
     fi
     exit 0 ;;
+  list-clients)
+    [ ! -f "$D/clients" ] || cat "$D/clients"
+    exit 0 ;;
   list-windows)
     # The three shapes real tmux answers a per-session inventory with. The
     # first two are DEFINITIVE and classify `missing`; the third is not and
@@ -214,6 +217,7 @@ if [ "${1:-}" = -axo ]; then
   [ ! -f "$FM_FAKE_DIR/ps-unreadable" ] || exit 1
   name='/usr/local/bin/tmux'
   [ ! -f "$FM_FAKE_DIR/process-name" ] || name=$(cat "$FM_FAKE_DIR/process-name")
+  [ ! -f "$FM_FAKE_DIR/clients" ] || awk '{ print $1 " /usr/local/bin/tmux" }' "$FM_FAKE_DIR/clients"
   if [ -f "$FM_FAKE_DIR/servers" ]; then
     awk -F '\t' -v name="$name" '{ print $2 " " name }' "$FM_FAKE_DIR/servers"
   elif [ -f "$FM_FAKE_DIR/server" ]; then
@@ -235,7 +239,10 @@ while [ $# -gt 0 ]; do
 done
 servers="$FM_FAKE_DIR/servers"
 [ -f "$servers" ] || servers="$FM_FAKE_DIR/server"
-awk -F '\t' -v want="$pid" '$2 == want { printf "p%s\nn%s\n", $2, $1 }' "$servers"
+suffix=
+[ ! -f "$FM_FAKE_DIR/socket-metadata" ] || suffix=" type=STREAM"
+[ ! -f "$FM_FAKE_DIR/clients" ] || ! grep -Fxq "$pid" "$FM_FAKE_DIR/clients" || exit 1
+awk -F '\t' -v want="$pid" -v suffix="$suffix" '$2 == want { printf "p%s\nn%s%s\n", $2, $1, suffix }' "$servers"
 SH
   chmod +x "$fb/lsof"
 }
@@ -2120,7 +2127,9 @@ test_legacy_tmux_record_reclaims_when_every_server_is_newer_and_window_is_absent
   add_ship_task "$dir" "$id" claude
   stamp_launch "$dir" "$id" 1000
   strand_endpoint "$dir" "$id"
-  tmux_servers_are "$dir" /tmp/fm-test-tmux/one 200 2000 /tmp/fm-test-tmux/two 300 3000
+  tmux_servers_are "$dir" "/tmp/fm test tmux/one" 200 2000 /tmp/fm-test-tmux/two 300 3000
+  : > "$dir/fake/socket-metadata"
+  printf '150\n' > "$dir/fake/clients"
   : > "$dir/fake/windows-sock"
 
   out=$(FM_BOOT_EPOCH_OVERRIDE=500 run_control "$dir" "$id" relaunch --note "recover the absent legacy window"); rc=$?
