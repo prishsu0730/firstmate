@@ -244,7 +244,7 @@ fm_worker_liveness_relaunch() {  # <meta> <id> <timeout-secs>
   if fm_backlog_row_probe "$data" "$id"; then
     row=$FM_BACKLOG_ROW_STATE
     case "$row" in
-      "in_flight no "*) ;;
+      "in_flight no no") ;;
       done\ *) FM_WK_LIVE_STATUS=closed; return 1 ;;
       *) FM_WK_LIVE_STATUS=skipped FM_WK_LIVE_REASON="backlog item reads '$row', not open and In flight"; return 1 ;;
     esac
