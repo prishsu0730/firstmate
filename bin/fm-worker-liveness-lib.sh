@@ -170,29 +170,26 @@ fm_worker_liveness_probe() {  # <meta> <id>
   return 0
 }
 
-# Active no-mistakes run for the worker's local copy, as "<id> (<status>)", or
-# the run id the status log names last, or nothing. Read-only and bounded.
-fm_wk_live_nm_run() {  # <id> <worktree>
-  local id=$1 wt=$2 out run status
-  if [ -n "$wt" ] && [ -d "$wt" ] && command -v no-mistakes >/dev/null 2>&1; then
-    out=$(fm_nm_run "$wt" "${FM_WORKER_LIVENESS_NM_TIMEOUT:-10}" axi status)
-    run=$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")
-    status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
-    case "$run" in
-      ''|*[!0-9A-Za-z]*) ;;
-      *) printf '%s (%s, read from no-mistakes axi status)' "$run" "${status:-unknown status}"; return 0 ;;
-    esac
-  fi
-  [ -f "$STATE/$id.status" ] || return 0
-  run=$(grep -o '01[0-9A-HJKMNP-TV-Z]\{24\}' "$STATE/$id.status" 2>/dev/null | tail -n 1)
-  [ -z "$run" ] || printf '%s (the last run your status log names; confirm it with no-mistakes axi status)' "$run"
+fm_wk_live_nm_run() {  # <branch> <worktree>
+  local branch=$1 wt=$2 out run status choice timeout_secs=${FM_WORKER_LIVENESS_NM_TIMEOUT:-10}
+  [ -n "$branch" ] && [ -d "$wt" ] && command -v no-mistakes >/dev/null 2>&1 || return 0
+  out=$(fm_nm_run_checked "$wt" "$timeout_secs" axi) || return 0
+  choice=$(fm_nm_select_run "$branch" "$out" "$wt" "$timeout_secs")
+  case "$choice" in selected\|*) ;; *) return 0 ;; esac
+  IFS='|' read -r _ run _ <<< "$choice"
+  out=$(fm_nm_run_checked "$wt" "$timeout_secs" axi status --run "$run") || return 0
+  [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")" = "$run" ] || return 0
+  [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 0
+  status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
+  printf '%s (%s, read from no-mistakes axi status)' "$run" "${status:-unknown status}"
 }
 
 # Write the relaunch note for <id> to <file>.
 fm_worker_liveness_note() {  # <meta> <id> <file>
-  local meta=$1 id=$2 file=$3 wt run msg body any=0
+  local meta=$1 id=$2 file=$3 wt branch run msg body any=0
   wt=$(fm_meta_get "$meta" worktree)
-  run=$(fm_wk_live_nm_run "$id" "$wt")
+  branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+  run=$(fm_wk_live_nm_run "$branch" "$wt")
   {
     echo "The firstmate watcher relaunched you automatically: $FM_WK_LIVE_CAUSE."
     echo "Nobody stopped this task on purpose, so pick up where the last status line leaves off."
@@ -208,7 +205,8 @@ fm_worker_liveness_note() {  # <meta> <id> <file>
       echo "No-mistakes run: $run."
       echo "Continue that run rather than starting a second one while it is still active."
     else
-      echo "No-mistakes run: none found."
+      echo "No-mistakes run: unknown."
+      printf 'Check no-mistakes axi and select only a run for branch %q before reading its status by --run ID.\n' "$branch"
     fi
     echo
     echo "Unread instruction messages:"
