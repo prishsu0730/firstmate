@@ -8,7 +8,11 @@
 set -u
 
 # shellcheck source=tests/fixtures.sh
-. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh" || exit 1
+declare -F fm_test_tmproot >/dev/null || {
+  echo 'spawn tests: fixture initialization failed' >&2
+  exit 1
+}
 
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-dispatch-profile)
@@ -1985,11 +1989,13 @@ SH
   done
 }
 
-test_launch_environment_allowlist
-test_launch_environment_invalid_config_refuses
-test_launch_environment_inaccessible_config_refuses
-test_launch_environment_inherited_by_secondmate
-test_launch_environment_inheritance_preserves_on_source_errors
+if [ "${1:-}" != --git-config ]; then
+  test_launch_environment_allowlist
+  test_launch_environment_invalid_config_refuses
+  test_launch_environment_inaccessible_config_refuses
+  test_launch_environment_inherited_by_secondmate
+  test_launch_environment_inheritance_preserves_on_source_errors
+fi
 
 test_worker_launch_delivers_role_scope() {
   local rec id out launch kind prompt envelope encoded brief_kind brief content first_line role_line task_line inbox
@@ -2383,6 +2389,44 @@ test_codex_permission_does_not_change_other_harnesses() {
   pass "Codex restricted mode leaves other harness launch flags unchanged"
 }
 
+test_inherited_git_configuration() {
+  local rec id out status launch result count key value
+  id=git-config-z15
+  rec=$(make_spawn_case inherited-git-config claude "$id")
+  read_case_record "$rec"
+  key=credential.helper
+  value="literal '\$(touch should-not-exist)'"
+  out=$(GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=$key \
+    GIT_CONFIG_VALUE_0='helper with spaces' GIT_CONFIG_KEY_1=test.marker \
+    GIT_CONFIG_VALUE_1=$value \
+    run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" 'git config --get credential.helper && git config --get test.marker && git config --get core.hooksPath')
+  status=$?
+  expect_code 0 "$status" "inherited Git configuration spawn failed: $out"
+  launch=$(cat "$LAUNCH_LOG")
+  result=$(cd "$WT_DIR" && env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 bash -c "$launch") \
+    || fail "generated launch lost inherited Git configuration"
+  [ "$result" = "helper with spaces
+$value
+$HOME_DIR/state/$id.git-hooks" ] || fail "inherited Git entries or appended hooks changed: $result"
+  [ ! -e "$WT_DIR/should-not-exist" ] || fail "Git configuration value executed as shell code"
+  for count in -1 invalid 2147483647 999999999999999999999999; do
+    out=$(GIT_CONFIG_COUNT=$count run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" 'git status' 2>&1)
+    status=$?
+    [ "$status" -ne 0 ] || fail "invalid Git count accepted: $count"
+    assert_contains "$out" 'invalid GIT_CONFIG_COUNT' "invalid count lacked diagnostic"
+  done
+  pass "worker preserves inherited Git configuration and rejects invalid counts"
+}
+
+if [ "${1:-}" = --git-config ]; then
+  test_inherited_git_configuration
+  test_chained_raw_launch_strips_ai_trailer_in_every_step
+  exit 0
+fi
+
+test_inherited_git_configuration
 test_codex_permission_modes
 test_codex_permission_invalid_refuses_before_mutation
 test_codex_permission_does_not_change_other_harnesses
