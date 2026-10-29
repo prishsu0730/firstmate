@@ -16,8 +16,10 @@
 # teardown removes the marked home after its private socket checks pass. Drive
 # it with plain FM_HOME=<dir>; any FM_*_OVERRIDE relocation defeats the allowance.
 # tmux-dir is the single owner of the short private socket directory. Callers
-# may set TMUX_TMPDIR=<printed-dir> for lab processes, but every control or
-# cleanup call names the private default socket with -S before teardown.
+# set TMUX_TMPDIR=<printed-dir> for lab processes and use the same socket for
+# launch, control, and shutdown, selecting it consistently with -L or -S.
+# Stop the private server before teardown; teardown probes every recorded socket
+# and refuses removal unless each server is confirmed stopped.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
