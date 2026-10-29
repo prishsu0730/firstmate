@@ -440,6 +440,29 @@ test_ineligible_worker_does_not_starve_later_worker() {
   pass "worker liveness: an earlier queued worker leaves recovery available"
 }
 
+test_blocked_worker_preserves_recovery_budget_and_tick_slot() {
+  local dir
+  dir=$(new_case blocked)
+  add_ship_task "$dir" wk8
+  seed_backlog "$dir" wk8 in_flight
+  seed_backlog "$dir" blocker queued
+  tasks-axi block wk8 --by blocker --file "$dir/home/data/backlog.md" >/dev/null
+  run_tick "$dir" || fail "the tick failed: $(cat "$dir/tick.out")"
+  assert_untouched "$dir" wk8 "a blocked In-flight worker"
+
+  cat "$dir/home/state/wk8.meta" > "$dir/home/state/aa.meta"
+  printf '%s\n' fm-aa >> "$dir/fake/windows"
+  seed_backlog "$dir" aa in_flight
+  tasks-axi block aa --by blocker --file "$dir/home/data/backlog.md" >/dev/null
+  tasks-axi unblock wk8 --by blocker --file "$dir/home/data/backlog.md" >/dev/null
+  run_tick "$dir" || fail "the tick failed: $(cat "$dir/tick.out")"
+  [ "$(launches "$dir")" = 1 ] || fail "the later unblocked worker was starved"
+  [ ! -e "$dir/home/state/.worker-relaunch-aa" ] || fail "the blocked worker recorded an attempt"
+  [ "$(attempts "$dir" wk8)" = 1 ] || fail "the unblocked worker was not attempted"
+  [ "$(wc -l < "$dir/home/wake-delivered" | tr -d ' ')" = 1 ] || fail "expected only the unblocked worker's notice"
+  pass "worker liveness: blocked workers preserve recovery budget and the tick slot"
+}
+
 test_unproven_endpoint_absence_is_not_relaunched() {
   local dir
   dir=$(new_case unproven)
@@ -495,5 +518,6 @@ test_deliberately_stopped_worker_is_not_relaunched
 test_closed_or_unopened_task_is_not_relaunched
 test_stop_after_probe_releases_recovery_attempt
 test_ineligible_worker_does_not_starve_later_worker
+test_blocked_worker_preserves_recovery_budget_and_tick_slot
 test_unproven_endpoint_absence_is_not_relaunched
 test_repeated_death_parks_after_the_bound_then_rearms
