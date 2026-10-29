@@ -59,6 +59,61 @@ run_spawn() {
     "$id" "$PROJECT_DIR" "$@"
 }
 
+install_recording_gh() {
+  cat > "$FAKEBIN_DIR/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
+case "$*" in
+  'repo set-default --view')
+    if [ "${FM_TEST_GH_HAS_DEFAULT:-0}" = 1 ]; then
+      printf '%s\n' 'upstream/firstmate'
+      exit 0
+    fi
+    printf '%s\n' 'X No default remote repository has been set. To learn more about the default repository, run: gh repo set-default --help' >&2
+    exit 0
+    ;;
+  'repo set-default origin') git config remote.origin.gh-resolved base ;;
+  *) exit 2 ;;
+esac
+SH
+  chmod +x "$FAKEBIN_DIR/gh"
+}
+
+test_github_origin_sets_missing_gh_default_without_replacing_one() {
+  local rec id out status log
+  id='pool-gh-default-missing-r1'
+  rec=$(make_case gh-default-missing "$id")
+  read_case_record "$rec"
+  git -C "$POOL_DIR" remote set-url origin 'https://github.com/prishsu0730/firstmate.git'
+  git -C "$POOL_DIR" config url."file://$CASE_DIR/origin.git".insteadOf 'https://github.com/prishsu0730/firstmate.git'
+  log="$CASE_DIR/gh.log"
+  export FM_TEST_GH_LOG=$log FM_TEST_GH_HAS_DEFAULT=0
+  install_recording_gh
+
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "a GitHub-origin worker should receive a missing gh default"$'\n'"$out"
+  assert_grep 'repo set-default --view' "$log" "spawn did not check for a worktree-local gh default"
+  assert_grep 'repo set-default origin' "$log" "spawn did not set gh's default to origin's repository"
+  assert_eq base "$(git -C "$POOL_DIR" config remote.origin.gh-resolved)" "spawn did not persist origin as the default"
+
+  id='pool-gh-default-existing-r1'
+  fm_test_spawn_brief "$HOME_DIR" "$id"
+  : > "$log"
+  export FM_TEST_GH_HAS_DEFAULT=1
+  git -C "$POOL_DIR" config --unset remote.origin.gh-resolved
+  git -C "$POOL_DIR" config remote.upstream.gh-resolved base
+  out=$(run_spawn "$id" --scout)
+  status=$?
+  expect_code 0 "$status" "a worker with a gh default should still launch"$'\n'"$out"
+  assert_grep 'repo set-default --view' "$log" "spawn did not check the existing gh default"
+  assert_not_contains "$(cat "$log")" 'repo view origin' "spawn resolved origin despite an existing gh default"
+  assert_not_contains "$(cat "$log")" 'repo set-default origin' "spawn replaced an existing gh default"
+  assert_eq base "$(git -C "$POOL_DIR" config remote.upstream.gh-resolved)" "spawn changed the existing default"
+  unset FM_TEST_GH_LOG FM_TEST_GH_HAS_DEFAULT
+  pass "a GitHub-origin worker sets only a missing gh default to its origin repository"
+}
+
 test_remote_seeded_home_spawns_from_treehouse_pool() {
   local rec id out status lock
   id='pool-remote-seeded-r13'
@@ -952,6 +1007,7 @@ test_scout_base_branch_refused_on_gerrit_forge() {
 }
 
 test_remote_seeded_home_spawns_from_treehouse_pool
+test_github_origin_sets_missing_gh_default_without_replacing_one
 test_pool_slot_claim_follows_the_spawn_outcome
 test_pool_slot_named_by_another_record_refuses_unless_finished
 test_pool_slot_same_id_in_another_home_refuses

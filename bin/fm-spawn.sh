@@ -308,6 +308,12 @@
 #   fetching or resetting its base. An unreachable detected origin, unresolved
 #   default branch, or non-clean worktree refuses a fresh spawn rather than
 #   risking a PR based on stale history or discarding local work.
+#   After base freshness, a fresh ship or scout whose origin uses github.com
+#   over HTTPS or Git SSH checks `gh repo set-default --view` and, when empty,
+#   runs `gh repo set-default origin` so GitHub lookups select the worker's
+#   origin rather than another remote. An existing default is preserved.
+#   Failure to read or set the default refuses launch. Other origin forms,
+#   secondmates, and relaunches skip this setup.
 #   A slot whose only deviation is a stale submodule gitlink is refused by that
 #   same clean check, but is reported as a stale checkout naming each submodule
 #   and both pins; nothing is converged or removed, and no remedy is suggested.
@@ -3638,6 +3644,28 @@ freshen_spawn_worktree_base() { # <worktree> [<base-branch>]
   fi
 }
 
+ensure_spawn_worktree_gh_default() { # <worktree>
+  # gh otherwise chooses another configured remote in a multi-remote worker
+  # checkout. Limit this to github.com origins so non-GitHub forges retain
+  # their existing launch behavior.
+  local worktree=$1 origin current
+  origin=$(git -C "$worktree" config --get remote.origin.url 2>/dev/null || true)
+  case "$origin" in
+    https://github.com/*|git@github.com:*|ssh://git@github.com/*) ;;
+    *) return 0 ;;
+  esac
+
+  current=$(cd "$worktree" && gh repo set-default --view) || {
+    echo "error: could not determine gh's default repository for worker worktree '$worktree'" >&2
+    return 1
+  }
+  [ -z "$current" ] || return 0
+  (cd "$worktree" && gh repo set-default origin) || {
+    echo "error: could not set gh's default repository to origin for worker worktree '$worktree'" >&2
+    return 1
+  }
+}
+
 herdr_projection_meta_field_exact() { # <meta> <key>
   local meta=$1 key=$2 count
   [ -f "$meta" ] && [ ! -L "$meta" ] || return 1
@@ -4616,6 +4644,7 @@ elif [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
 fi
 if [ "$RELAUNCH" -eq 0 ] && [ "$KIND" != secondmate ]; then
   freshen_spawn_worktree_base "$WT" "$BASE_BRANCH" || exit 1
+  ensure_spawn_worktree_gh_default "$WT" || exit 1
 fi
 
 # Re-assert the durable task copy after either treehouse acquisition or endpoint
