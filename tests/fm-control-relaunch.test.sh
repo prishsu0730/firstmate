@@ -69,7 +69,9 @@ if [ "${1:-}" = -S ]; then
   if [ -f "$D/socket-unreadable" ]; then
     echo "error connecting to $sock (Permission denied)" >&2; exit 1
   fi
-  if [ ! -f "$D/server" ] || [ "$(cut -f1 "$D/server")" != "$sock" ]; then
+  servers="$D/servers"
+  [ -f "$servers" ] || servers="$D/server"
+  if [ ! -f "$servers" ] || ! awk -F '\t' -v want="$sock" '$1 == want { found=1 } END { exit !found }' "$servers"; then
     echo "error connecting to $sock (No such file or directory)" >&2; exit 1
   fi
 fi
@@ -119,10 +121,14 @@ case "${1:-}" in
     for a in "$@"; do
       case "$a" in
         *start_time*)
-          [ -f "$D/server" ] || continue
+          servers="$D/servers"
+          [ -f "$servers" ] || servers="$D/server"
+          [ -f "$servers" ] || continue
           case "$a" in
-            *socket_path*) cat "$D/server" ;;
-            *) cut -f2,3 "$D/server" ;;
+            *socket_path*)
+              if [ -n "$sock" ]; then awk -F '\t' -v want="$sock" '$1 == want { print; exit }' "$servers"; else head -n 1 "$servers"; fi ;;
+            *)
+              if [ -n "$sock" ]; then awk -F '\t' -v want="$sock" '$1 == want { print $2 "\t" $3; exit }' "$servers"; else head -n 1 "$servers" | cut -f2,3; fi ;;
           esac
           exit 0 ;;
         *cursor_y*) printf '1\n'; exit 0 ;;
@@ -202,6 +208,33 @@ SH
 exit 0
 SH
   chmod +x "$fb/sleep"
+  cat > "$fb/ps" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = -axo ]; then
+  if [ -f "$FM_FAKE_DIR/servers" ]; then
+    awk -F '\t' '{ print $2 " tmux: server" }' "$FM_FAKE_DIR/servers"
+  elif [ -f "$FM_FAKE_DIR/server" ]; then
+    awk -F '\t' '{ print $2 " tmux: server" }' "$FM_FAKE_DIR/server"
+  fi
+  exit 0
+fi
+exec /bin/ps "$@"
+SH
+  chmod +x "$fb/ps"
+  cat > "$fb/lsof" <<'SH'
+#!/usr/bin/env bash
+pid=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -p) pid=${2:-}; shift 2 ;;
+    *) shift ;;
+  esac
+done
+servers="$FM_FAKE_DIR/servers"
+[ -f "$servers" ] || servers="$FM_FAKE_DIR/server"
+awk -F '\t' -v want="$pid" '$2 == want { printf "p%s\nn%s\n", $2, $1 }' "$servers"
+SH
+  chmod +x "$fb/lsof"
 }
 
 # new_case <name> [id] -> echoes a case dir with a live claude ship task.
@@ -2029,6 +2062,7 @@ test_tmux_refuses_a_window_recorded_after_the_boot() {
   add_ship_task "$dir" rl65 claude
   stamp_launch "$dir" rl65 3000
   strand_endpoint "$dir" rl65
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 100 1000
   FM_BOOT_EPOCH_OVERRIDE=2000 assert_tmux_missing_refuses "$dir" rl65 "record written after the boot"
   pass "tmux: a record written after the boot still refuses both verbs"
 }
@@ -2039,6 +2073,7 @@ test_tmux_refuses_when_the_boot_time_cannot_be_read() {
   add_ship_task "$dir" rl66 claude
   stamp_launch "$dir" rl66 1000
   strand_endpoint "$dir" rl66
+  tmux_server_is "$dir" /tmp/fm-test-tmux/default 100 500
   FM_BOOT_EPOCH_OVERRIDE='' assert_tmux_missing_refuses "$dir" rl66 "empty boot time"
   FM_BOOT_EPOCH_OVERRIDE='not-a-time' assert_tmux_missing_refuses "$dir" rl66 "garbled boot time"
   pass "tmux: an unreadable boot time keeps the refusal on both verbs"
@@ -2064,6 +2099,58 @@ add_tmux_identity() {  # <case-dir> <id> <socket> <pid> <start>
 
 tmux_server_is() {  # <case-dir> <socket> <pid> <start>
   printf '%s\t%s\t%s\n' "$2" "$3" "$4" > "$1/fake/server"
+}
+
+tmux_servers_are() {  # <case-dir> <socket> <pid> <start> [...]
+  local dir=$1
+  : > "$dir/fake/servers"
+  shift
+  while [ $# -gt 0 ]; do
+    printf '%s\t%s\t%s\n' "$1" "$2" "$3" >> "$dir/fake/servers"
+    shift 3
+  done
+}
+
+test_legacy_tmux_record_reclaims_when_every_server_is_newer_and_window_is_absent() {
+  local dir id=rl68 out rc
+  dir=$(new_case legacy-tmux-newer "$id")
+  add_ship_task "$dir" "$id" claude
+  stamp_launch "$dir" "$id" 1000
+  strand_endpoint "$dir" "$id"
+  tmux_servers_are "$dir" /tmp/fm-test-tmux/one 200 2000 /tmp/fm-test-tmux/two 300 3000
+  : > "$dir/fake/windows-sock"
+
+  out=$(FM_BOOT_EPOCH_OVERRIDE=500 run_control "$dir" "$id" relaunch --note "recover the absent legacy window"); rc=$?
+  expect_code 0 "$rc" "a legacy record must reclaim when every tmux server is newer and none holds its window"$'\n'"$out"
+  [ "$(cat "$dir/fake/created-windows")" = "fm-$id" ] \
+    || fail "the reclaimed legacy task should create one fresh window"
+  pass "tmux: every newer server without the legacy window proves the endpoint gone"
+}
+
+test_legacy_tmux_record_refuses_when_any_server_predates_its_spawn() {
+  local dir id=rl69
+  dir=$(new_case legacy-tmux-older "$id")
+  add_ship_task "$dir" "$id" claude
+  stamp_launch "$dir" "$id" 2000
+  strand_endpoint "$dir" "$id"
+  tmux_servers_are "$dir" /tmp/fm-test-tmux/old 100 1000 /tmp/fm-test-tmux/new 300 3000
+  : > "$dir/fake/windows-sock"
+
+  FM_BOOT_EPOCH_OVERRIDE=500 assert_tmux_missing_refuses "$dir" "$id" "a live tmux server older than the legacy record"
+  pass "tmux: one older server keeps legacy endpoint recovery refused"
+}
+
+test_legacy_tmux_record_refuses_when_any_server_holds_its_window() {
+  local dir id=rl70
+  dir=$(new_case legacy-tmux-window "$id")
+  add_ship_task "$dir" "$id" claude
+  stamp_launch "$dir" "$id" 1000
+  strand_endpoint "$dir" "$id"
+  tmux_servers_are "$dir" /tmp/fm-test-tmux/one 200 2000 /tmp/fm-test-tmux/two 300 3000
+  printf 'fm-%s\n' "$id" > "$dir/fake/windows-sock"
+
+  FM_BOOT_EPOCH_OVERRIDE=500 assert_tmux_missing_refuses "$dir" "$id" "a newer tmux server that still holds the legacy window"
+  pass "tmux: a live legacy window keeps recovery refused"
 }
 
 test_relaunch_rebinds_after_a_tmux_server_restart() {
@@ -2727,6 +2814,9 @@ test_boot_time_is_read_from_sysctl_output
 test_tmux_refuses_a_window_recorded_after_the_boot
 test_tmux_refuses_when_the_boot_time_cannot_be_read
 test_tmux_refuses_when_the_record_has_no_launch_time
+test_legacy_tmux_record_reclaims_when_every_server_is_newer_and_window_is_absent
+test_legacy_tmux_record_refuses_when_any_server_predates_its_spawn
+test_legacy_tmux_record_refuses_when_any_server_holds_its_window
 test_relaunch_rebinds_after_a_tmux_server_restart
 test_tmux_identity_refuses_when_the_window_is_alive_or_unreadable
 test_spawn_publishes_the_tmux_server_identity_on_relaunch_adopt

@@ -226,6 +226,60 @@ fm_backend_tmux_endpoint_absence_proof() {  # <target> <socket> <pid> <start>
   printf 'unproven\tthe recorded tmux server is still running'
 }
 
+# fm_backend_tmux_legacy_endpoint_absence_proof: proves a legacy record without
+# a recorded server identity lost its endpoint only when every live tmux server
+# started after <launched>, and none holds <target>. It inventories server
+# processes first, discovers each server's local UNIX socket through lsof, then
+# verifies that socket's pid and start time through tmux itself. An unreadable
+# process, socket, or inventory is unproven - this must never turn an
+# unreachable live pane into a replacement agent.
+fm_backend_tmux_legacy_endpoint_absence_proof() {  # <target> <launched>
+  local target=$1 launched=$2 session window processes line pid command sockets socket identity now_pid now_start extra windows found
+  case "$launched" in ''|*[!0-9]*) printf 'unproven\tthe legacy tmux record has no valid spawn time'; return 0 ;; esac
+  case "$target" in
+    *:*) session=${target%%:*}; window=${target#*:} ;;
+    *) printf 'unproven\tthe recorded endpoint is not a session:window address'; return 0 ;;
+  esac
+  [ -n "$session" ] && [ -n "$window" ] \
+    || { printf 'unproven\tthe recorded endpoint is not a session:window address'; return 0; }
+  processes=$(LC_ALL=C ps -axo pid=,command= 2>/dev/null) \
+    || { printf 'unproven\tthe live tmux server inventory could not be read'; return 0; }
+  while IFS= read -r line; do
+    pid=$(printf '%s\n' "$line" | awk '{print $1}')
+    command=$(printf '%s\n' "$line" | sed 's/^[[:space:]]*[0-9][0-9]*[[:space:]]*//; s/[[:space:]]*$//')
+    [ -n "$pid" ] && [ "$command" = 'tmux: server' ] || continue
+    sockets=$(LC_ALL=C lsof -nP -a -U -p "$pid" -Fn 2>/dev/null) \
+      || { printf 'unproven\tthe local sockets of a live tmux server could not be read'; return 0; }
+    found=0
+    while IFS= read -r line; do
+      case "$line" in n/*) socket=${line#n} ;; *) continue ;; esac
+      identity=$(LC_ALL=C tmux -S "$socket" display-message -p '#{pid}'$'\t''#{start_time}' 2>/dev/null) || continue
+      IFS=$'\t' read -r now_pid now_start extra <<< "$identity"
+      case "$now_pid$now_start" in ''|*[!0-9]*) continue ;; esac
+      [ -n "$now_pid" ] && [ -n "$now_start" ] && [ -z "$extra" ] && [ "$now_pid" = "$pid" ] || continue
+      found=1
+      if [ "$((10#$now_start))" -le "$((10#$launched))" ]; then
+        printf 'unproven\ta live tmux server predates this legacy task record'
+        return 0
+      fi
+      if ! windows=$(LC_ALL=C tmux -S "$socket" list-windows -t "=$session" -F '#W' 2>&1); then
+        case "$windows" in
+          *"can't find session:"*|*"no server running on "*|*"error connecting to "*" (No such file or directory)"|*"error connecting to "*" (Connection refused)") continue ;;
+          *) printf 'unproven\tthe windows of a live tmux server could not be read'; return 0 ;;
+        esac
+      fi
+      if printf '%s\n' "$windows" | grep -Fqx -- "$window"; then
+        printf 'unproven\ta live tmux server still holds the recorded window'
+        return 0
+      fi
+      break
+    done <<< "$sockets"
+    [ "$found" = 1 ] \
+      || { printf 'unproven\ta live tmux server could not be verified through a local socket'; return 0; }
+  done <<< "$processes"
+  printf 'gone\t'
+}
+
 # fm_backend_tmux_kill: remove one explicitly named task window.
 # Empty, omitted, and malformed targets return nonzero before invoking tmux so
 # tmux can never interpret an empty target as the caller's current window.
