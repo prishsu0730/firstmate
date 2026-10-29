@@ -301,6 +301,12 @@
 #   fetching or resetting its base. An unreachable detected origin, unresolved
 #   default branch, or non-clean worktree refuses a fresh spawn rather than
 #   risking a PR based on stale history or discarding local work.
+#   After base freshness, a fresh ship or scout whose origin uses github.com
+#   over HTTPS or Git SSH checks `gh repo set-default --view` and, when empty,
+#   runs `gh repo set-default origin` so GitHub lookups select the worker's
+#   origin rather than another remote. An existing default is preserved.
+#   Failure to read or set the default refuses launch. Other origin forms,
+#   secondmates, and relaunches skip this setup.
 #   A slot whose only deviation is a stale submodule gitlink is refused by that
 #   same clean check, but is reported as a stale checkout naming each submodule
 #   and both pins; nothing is converged or removed, and no remedy is suggested.
