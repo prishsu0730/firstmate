@@ -26,6 +26,11 @@
 # optional conventional-commit scope and breaking-change ! before the colon.
 # Refusal diagnostics shell-escape subjects containing control bytes so those
 # bytes cannot act as terminal controls; only the first message line is a subject.
+# Commit messages (subject and body) also refuse a case-insensitive whole-word
+# direct address "captain"; hyphenated, underscored, dotted, and slash-joined
+# tokens such as captain-hold and data/captain.md are exempt only when the
+# joining punctuation has a letter or digit on both sides.
+# Refusals name the short SHA and JSON-escape the subject and SHA for safety.
 # Each verification attempt reads all commit pages and requires the last commit
 # to match that attempt's verified head; unreadable or incomplete subjects, or
 # a changed head, refuse the merge.
@@ -479,7 +484,7 @@ github_format_commit_subjects() {
 }
 
 github_refuse_mixed_refactor_commits() {
-  local head=$1 json subject type subjects='' formatted_refactors formatted_fixes_or_features
+  local head=$1 json subject type subjects='' addresses formatted_refactors formatted_fixes_or_features
   local refactors=() fixes_or_features=()
   local prefix='^(refactor|fix|feat)(\([^)]*\))?!?:'
 
@@ -491,6 +496,19 @@ github_refuse_mixed_refactor_commits() {
       | .[] | if (.commit.message | type) == "string" then .commit.message | split("\n")[0]
         else error("invalid commit subject") end' 2>/dev/null); then
     echo "error: could not read the complete GitHub pull request commit subjects at the verified head before merging" >&2
+    return 1
+  fi
+  if ! addresses=$(printf '%s' "$json" | jq -r '
+      add | .[]
+      | select(.commit.message | test("(^|[^[:alnum:]_./-]|(^|[^[:alnum:]])[_./-])captain(?![[:alnum:]]|[_./-][[:alnum:]])"; "i"))
+      | if (.sha | type) != "string" then error("invalid commit SHA") else . end
+      | "\(.sha[0:8] | tojson) \(.commit.message | split("\n")[0] | tojson)"' 2>/dev/null); then
+    echo "error: could not inspect GitHub pull request commit messages before merging" >&2
+    return 1
+  fi
+  if [ -n "$addresses" ]; then
+    printf 'error: refusing to merge %s: commit messages contain a direct address; reword before merge\n' "$URL" >&2
+    printf '%s\n' "$addresses" >&2
     return 1
   fi
   while IFS= read -r subject; do
