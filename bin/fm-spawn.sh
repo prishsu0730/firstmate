@@ -540,6 +540,20 @@
 #   Local spawns never pass it and resolve their own carrier exactly as before.
 set -eu
 
+# Git's environment config count is a nonnegative signed integer. Validate
+# before any Git operation or spawn mutation, and normalize leading zeroes.
+SPAWN_GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT-0}
+case "$SPAWN_GIT_CONFIG_COUNT" in
+  ''|*[!0-9]*) echo 'fm-spawn: invalid GIT_CONFIG_COUNT' >&2; exit 1 ;;
+esac
+while [ "${SPAWN_GIT_CONFIG_COUNT#0}" != "$SPAWN_GIT_CONFIG_COUNT" ] && [ "${#SPAWN_GIT_CONFIG_COUNT}" -gt 1 ]; do
+  SPAWN_GIT_CONFIG_COUNT=${SPAWN_GIT_CONFIG_COUNT#0}
+done
+if [ "${#SPAWN_GIT_CONFIG_COUNT}" -gt 10 ] || [ "$SPAWN_GIT_CONFIG_COUNT" -ge 2147483647 ]; then
+  echo 'fm-spawn: invalid GIT_CONFIG_COUNT' >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -5578,7 +5592,18 @@ fi
 # directly. An export statement inside the pane command carries the override
 # across every step of a compound raw launch while firstmate's own git is unchanged.
 if [ "$KEEP_AI_TRAILERS" = 0 ]; then
-  LAUNCH="export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=$(shell_quote "$GIT_HOOKS_DIR"); $LAUNCH"
+  git_config_exports="export GIT_CONFIG_COUNT=$((SPAWN_GIT_CONFIG_COUNT + 1))"
+  for ((git_config_index=0; git_config_index<SPAWN_GIT_CONFIG_COUNT; git_config_index++)); do
+    for git_config_kind in KEY VALUE; do
+      git_config_name="GIT_CONFIG_${git_config_kind}_$git_config_index"
+      if [ "${!git_config_name+x}" != x ]; then
+        echo "fm-spawn: missing $git_config_name" >&2
+        exit 1
+      fi
+      git_config_exports="$git_config_exports $git_config_name=$(shell_quote "${!git_config_name}")"
+    done
+  done
+  LAUNCH="$git_config_exports GIT_CONFIG_KEY_$SPAWN_GIT_CONFIG_COUNT=core.hooksPath GIT_CONFIG_VALUE_$SPAWN_GIT_CONFIG_COUNT=$(shell_quote "$GIT_HOOKS_DIR"); $LAUNCH"
 fi
 # Every agent this fleet launches - crewmate, scout, and secondmate, on a fresh
 # spawn and on a relaunch alike - runs with the compact-adviser kill switch on.
