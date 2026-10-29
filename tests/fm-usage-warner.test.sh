@@ -493,6 +493,30 @@ test_armed_shim_runs_a_real_check() {
   pass "fm-usage-warner: the armed shim is exactly what the watcher would dispatch"
 }
 
+test_armed_shim_preserves_directory_overrides() {
+  local home fakebin out
+  home=$(make_home arm-overrides)
+  fakebin="$home/fakebin"
+  mkdir -p "$home/alternate config" "$home/alternate state"
+  printf 'five_hour:80\n' > "$home/alternate config/usage-warner"
+  fake_osascript_recorder "$fakebin" "$home/notify.log"
+  fake_quota_axi "$fakebin" '{"id":"five_hour","percentUsed":92}'
+  out=$(cd "$home" && FM_HOME=. FM_CONFIG_OVERRIDE='alternate config' \
+    FM_STATE_OVERRIDE='alternate state' "$WARNER" arm 2>&1) || fail "arm must succeed: $out"
+  assert_present "$home/alternate state/usage-warner.check-trust" "arm registers in the selected state directory"
+  out=$(cd "$ROOT" && env -u FM_HOME -u FM_CONFIG_OVERRIDE -u FM_STATE_OVERRIDE \
+    PATH="$fakebin:$PATH" QUOTA_AXI_ARGV_LOG="$home/quota.log" \
+    "$home/alternate state/usage-warner.check.sh" </dev/null)
+  assert_contains "$out" "five_hour at 92%" "the shim preserves the selected configuration from another directory"
+  assert_present "$home/alternate state/.usage-warner" "the shim saves de-duplication in the selected state directory"
+  assert_absent "$home/state/.usage-warner" "the shim does not use the default state directory"
+  out=$(env -u FM_HOME -u FM_CONFIG_OVERRIDE -u FM_STATE_OVERRIDE \
+    PATH="$fakebin:$PATH" QUOTA_AXI_ARGV_LOG="$home/quota.log" \
+    "$home/alternate state/usage-warner.check.sh" </dev/null)
+  [ -z "$out" ] || fail "the persisted crossing must stay quiet: $out"
+  pass "fm-usage-warner: armed checks preserve resolved configuration and state overrides"
+}
+
 test_check_repeated_directive_reports_once() {
   local home fakebin notify_log out
   home=$(make_home repeated-directive)
@@ -571,6 +595,7 @@ if [ "$(uname)" = Darwin ]; then
   test_arm_writes_and_binds_the_check_and_disarm_removes_it
   test_arm_refuses_a_symlink_at_the_shim_path
   test_armed_shim_runs_a_real_check
+  test_armed_shim_preserves_directory_overrides
 else
   printf 'ok - fm-usage-warner: shim-writing arm cases are macOS-only; skipping on %s\n' "$(uname)"
 fi
