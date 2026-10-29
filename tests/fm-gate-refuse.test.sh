@@ -239,10 +239,11 @@ test_lab_home_private_tmux_socket_survives_deep_paths() {
     fail "lab teardown removed the directory when its tmux probe failed"
   fi
   [ -d "$socket_dir" ] || fail "failed-probe teardown removed the socket directory"
-  "$LABHOME" teardown "$lab" || fail "lab tmux directory teardown failed"
+  "$LABHOME" teardown "$lab" || fail "lab home teardown failed"
   [ ! -e "$socket_dir" ] || fail "lab teardown left the private tmux directory behind"
+  assert_absent "$lab" "lab teardown left the marked lab home behind"
   trap fm_test_cleanup EXIT
-  pass "fm-lab-home: a primary starts on a private short tmux socket from a long lab path and teardown removes it"
+  pass "fm-lab-home: a primary starts on a private short tmux socket and teardown removes its marked lab home"
 }
 
 test_lab_home_helper() {
@@ -272,7 +273,9 @@ test_lab_home_helper() {
   out=$("$LABHOME" create "$newline" 2>&1); rc=$?
   [ "$rc" -ne 0 ] || fail "lab-home: create on a dir holding a newline-named entry must refuse"
   assert_absent "$newline/.fm-lab-home" "lab-home: newline-entry create must not write the marker"
-  pass "fm-lab-home: create mints marked stock homes only on fresh empty dirs; anything else is refused"
+  "$LABHOME" teardown "$lab" || fail "lab-home: teardown must remove a marked home without a tmux directory"
+  assert_absent "$lab" "lab-home: teardown left a marked home without a tmux directory behind"
+  pass "fm-lab-home: create mints marked stock homes only on fresh empty dirs; teardown removes marked homes"
 }
 
 # --- fm-spawn ---------------------------------------------------------------
