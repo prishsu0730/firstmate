@@ -36,19 +36,6 @@ fm_lab_home_owner() {
   case "$(uname -s)" in Darwin) stat -f '%u' "$1" ;; *) stat -c '%u' "$1" ;; esac
 }
 
-fm_lab_home_remove() {
-  local dir=$1 canonical_dir canonical_tmpdir canonical_tmp
-  [ -d "$dir" ] && [ ! -L "$dir" ] \
-    || { fm_lab_home_error "refusing '$dir': lab home is missing or a symlink"; return 1; }
-  canonical_dir=$(cd -P "$dir" && pwd) || return 1
-  canonical_tmpdir=$(cd -P "${TMPDIR:-/tmp}" && pwd) || return 1
-  canonical_tmp=$(cd -P /tmp && pwd) || return 1
-  case "$canonical_dir" in
-    "$canonical_tmpdir"/*|"$canonical_tmp"/*) ;;
-    *) fm_lab_home_error "refusing '$dir': lab home is outside TMPDIR or /tmp"; return 1 ;;
-  esac
-  rm -rf "$dir"
-}
 
 case "${1:-}" in
   create)
@@ -94,6 +81,8 @@ case "${1:-}" in
     [ -n "$dir" ] || { fm_lab_home_error "teardown requires a marked lab home"; exit 2; }
     [ -f "$dir/.fm-lab-home" ] && [ -d "$dir/state" ] \
       || { fm_lab_home_error "refusing '$dir': not a marked lab home"; exit 1; }
+    [ -d "$dir" ] && [ ! -L "$dir" ] \
+      || { fm_lab_home_error "refusing '$dir': lab home is missing or a symlink"; exit 1; }
     record=$(fm_lab_home_tmux_record "$dir")
     if [ -f "$record" ]; then
       socket_dir=$(cat "$record")
@@ -114,7 +103,7 @@ case "${1:-}" in
       done
       rm -rf "$socket_dir" && rm -f "$record" || exit 1
     fi
-    fm_lab_home_remove "$dir"
+    rm -rf "$dir"
     ;;
   *)
     fm_lab_home_error "usage: fm-lab-home.sh create <dir> | tmux-dir <dir> | teardown <dir>"
