@@ -42,7 +42,8 @@
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
 # REFUSES if the worktree holds work that has not LANDED, because cleanup
-# hard-resets/removes the worktree and kills its processes. Work has landed when it is
+# hard-resets/removes the worktree and kills its processes. Subject to the recorded
+# open-PR gate below, committed work passes this test when it is
 # reachable from any remote-tracking branch (a fork counts as a remote, so
 # upstream-contribution PRs pushed to a fork satisfy this in any mode), or when
 # HEAD exactly matches a branch tip proven directly on origin (a proxy push need
@@ -69,6 +70,9 @@
 # by itself causes a false refusal of landed work.
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
+# A ship with a recorded GitHub PR still open refuses before cleanup even if
+# its commits are published, its worktree is gone, or its slot was reassigned.
+# --force retains its explicit-discard meaning and bypasses this gate.
 # Uncommitted changes are never landed; dirty refusals distinguish untracked-only
 # leftovers from tracked edits and list at most ten non-exempt untracked paths.
 # local-only projects additionally accept work merged into the local default
@@ -143,7 +147,8 @@
 # slot is taken and dropped here once it is genuinely returned; bin/fm-wake-lib.sh
 # owns the claim, its location, and its states. A claim naming another task is
 # proof of reassignment: the slot is no longer this task's, so teardown warns,
-# names the claimant, and then finishes only this task's own cleanup - endpoint,
+# names the claimant, and, subject to the recorded open-PR gate above, finishes
+# only this task's own cleanup - endpoint,
 # status, records, checks, backlog - while every step that would read or touch
 # that slot is skipped: no process kill under it, no dirty or landed-work
 # inspection of it, no branch or hook removal in it, no Treehouse return, and
@@ -3519,6 +3524,28 @@ if [ "$FORCE" != "--force" ] \
     printf '%s\n' "$PUBLIC_FOLLOWUP_BLOCKING" >&2
     echo "Deliver it with bin/fm-public-followup.sh deliver <obligation-id>, waive it with bin/fm-tasks-axi.sh public-followup waive, or use --force after explicit discard approval." >&2
     exit 1
+  fi
+fi
+
+# Published commits prove recoverability, not PR completion. Keep the task
+# record needed by fm-pr-merge.sh while its recorded PR is still open. This
+# guard is independent of worktree ownership/presence and shares --force's
+# existing explicit-discard authorization. Other outcomes and lookup failures
+# keep the existing landed-work checks below.
+if [ "$KIND" = ship ] && [ "$FORCE" != "--force" ] \
+    && [[ "$PR_URL" =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
+  RECORDED_PR_REPO=${BASH_REMATCH[1]}
+  RECORDED_PR_NUMBER=${BASH_REMATCH[2]}
+  if RECORDED_PR_VIEW=$(gh-axi pr view "$RECORDED_PR_NUMBER" --repo "$RECORDED_PR_REPO" 2>/dev/null); then
+    RECORDED_PR_STATE=$(printf '%s\n' "$RECORDED_PR_VIEW" | awk '
+      $1 == "state:" { count++; value=$2 }
+      END { if (count == 1) print value }
+    ')
+    if [ "$RECORDED_PR_STATE" = open ]; then
+      echo "REFUSED: ship task $ID still has open, unmerged PR $PR_URL." >&2
+      echo "Merge or close the PR first, or get explicit approval to discard, then --force." >&2
+      exit 1
+    fi
   fi
 fi
 
