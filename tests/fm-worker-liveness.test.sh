@@ -408,7 +408,8 @@ test_stop_after_probe_releases_recovery_attempt() {
   dir=$(new_case stop-race)
   add_ship_task "$dir" wk9 scout
   seed_backlog "$dir" wk9 in_flight
-  case_env "$dir" bash -s -- "$ROOT" > "$dir/tick.out" 2>&1 <<'SH'
+  case_env "$dir" bash -s -- "$ROOT" > "$dir/tick.out" 2>&1 <<'SH' \
+    || fail "stop race failed: $(cat "$dir/tick.out")"
     . "$1/bin/fm-watch.sh"
     meta="$STATE/wk9.meta"
     fm_worker_liveness_probe "$meta" wk9
@@ -419,7 +420,6 @@ test_stop_after_probe_releases_recovery_attempt() {
     [ "$(fm_worker_liveness_recent_attempts wk9 3600)" = 0 ] || exit 1
     [ -f "$STATE/.worker-stopped-wk9" ] || exit 1
 SH
-  [ "$?" = 0 ] || fail "stop race failed: $(cat "$dir/tick.out")"
   [ "$(launches "$dir")" = 0 ] || fail "the deliberately stopped scout relaunched"
   ! grep -q $'\tfailed$' "$dir/home/state/.worker-relaunch-wk9" || fail "the refusal counted as failure"
   pass "worker liveness: a stop after probing releases the recovery attempt"
