@@ -183,6 +183,7 @@ pass 'missing files succeed and final lines need no newline'
   got=$(fmx_env_get EMPTY "$FIXTURE")
   [ -z "$got" ] || fail 'strict shell empty value prints nothing'
 )
+[ "$?" -eq 0 ] || exit 1
 pass 'errexit and pipefail callers can read present, absent, and empty values'
 (
   set -e -o pipefail
@@ -190,6 +191,7 @@ pass 'errexit and pipefail callers can read present, absent, and empty values'
   got=$(fmx_env_get KEY "$FIXTURE" 2>&1)
   [ -z "$got" ] || fail 'failed read prints nothing on either stream'
 )
+[ "$?" -eq 0 ] || exit 1
 pass 'failed reads succeed silently under errexit and pipefail'
 ''', 'fm-env-test', sys.argv[1], str(fixture)], check=False)
     sys.exit(result.returncode)

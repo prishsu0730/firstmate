@@ -66,5 +66,5 @@ test_memo() (
 
 test_toml
 test_backend
-test_memo
+test_memo || exit 1
 echo '# fm-tasks-axi-lib.test.sh: all assertions passed'
