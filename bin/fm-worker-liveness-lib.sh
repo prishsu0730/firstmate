@@ -180,6 +180,9 @@ fm_wk_live_nm_run() {  # <branch> <worktree>
   out=$(fm_nm_run_checked "$wt" "$timeout_secs" axi status --run "$run") || return 0
   [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" id)")" = "$run" ] || return 0
   [ "$(fm_nm_strip_quotes "$(fm_nm_field "$out" branch)")" = "$branch" ] || return 0
+  fm_nm_head_matches_worktree "$wt" "$(fm_nm_strip_quotes "$(fm_nm_field "$out" head)")" \
+    || fm_nm_run_is_pipeline_owned_active "$out" \
+    || fm_nm_run_is_executing "$out" || return 0
   status=$(fm_nm_strip_quotes "$(fm_nm_field "$out" status)")
   printf '%s (%s, read from no-mistakes axi status)' "$run" "${status:-unknown status}"
 }
