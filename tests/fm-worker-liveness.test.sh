@@ -403,6 +403,43 @@ test_closed_or_unopened_task_is_not_relaunched() {
   pass "worker liveness: a task that is closed, closing, or not In flight is never relaunched"
 }
 
+test_stop_after_probe_releases_recovery_attempt() {
+  local dir
+  dir=$(new_case stop-race)
+  add_ship_task "$dir" wk9 scout
+  seed_backlog "$dir" wk9 in_flight
+  case_env "$dir" bash -s -- "$ROOT" > "$dir/tick.out" 2>&1 <<'SH'
+    . "$1/bin/fm-watch.sh"
+    meta="$STATE/wk9.meta"
+    fm_worker_liveness_probe "$meta" wk9
+    [ "$FM_WK_LIVE_STATUS" = relaunchable ] || exit 1
+    : > "$STATE/.worker-stopped-wk9"
+    fm_worker_liveness_relaunch "$meta" wk9 30 && exit 1
+    [ "$FM_WK_LIVE_STATUS" = skipped ] || exit 1
+    [ "$(fm_worker_liveness_recent_attempts wk9 3600)" = 0 ] || exit 1
+    [ -f "$STATE/.worker-stopped-wk9" ] || exit 1
+SH
+  [ "$?" = 0 ] || fail "stop race failed: $(cat "$dir/tick.out")"
+  [ "$(launches "$dir")" = 0 ] || fail "the deliberately stopped scout relaunched"
+  ! grep -q $'\tfailed$' "$dir/home/state/.worker-relaunch-wk9" || fail "the refusal counted as failure"
+  pass "worker liveness: a stop after probing releases the recovery attempt"
+}
+
+test_ineligible_worker_does_not_starve_later_worker() {
+  local dir
+  dir=$(new_case starvation)
+  add_ship_task "$dir" wk8
+  seed_backlog "$dir" wk8 in_flight
+  cat "$dir/home/state/wk8.meta" > "$dir/home/state/aa.meta"
+  printf '%s\n' fm-aa >> "$dir/fake/windows"
+  seed_backlog "$dir" aa queued
+  run_tick "$dir" || fail "the tick failed: $(cat "$dir/tick.out")"
+  [ "$(launches "$dir")" = 1 ] || fail "the later eligible worker was starved"
+  [ "$(attempts "$dir" aa)" = 0 ] || fail "the queued worker recorded an attempt"
+  [ "$(attempts "$dir" wk8)" = 1 ] || fail "the eligible worker was not attempted"
+  pass "worker liveness: an earlier queued worker leaves recovery available"
+}
+
 test_unproven_endpoint_absence_is_not_relaunched() {
   local dir
   dir=$(new_case unproven)
@@ -456,5 +493,7 @@ test_worker_waiting_on_a_decision_is_still_recovered
 test_finished_worker_is_not_relaunched
 test_deliberately_stopped_worker_is_not_relaunched
 test_closed_or_unopened_task_is_not_relaunched
+test_stop_after_probe_releases_recovery_attempt
+test_ineligible_worker_does_not_starve_later_worker
 test_unproven_endpoint_absence_is_not_relaunched
 test_repeated_death_parks_after_the_bound_then_rearms

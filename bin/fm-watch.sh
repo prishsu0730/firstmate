@@ -1345,11 +1345,12 @@ worker_liveness_tick() {
             err="relaunch park marker could not be written; agent left $FM_WK_LIVE_STATE"
           fi
         else
-          tried=1
           if fm_worker_liveness_relaunch "$meta" "$id" "$WORKER_LIVENESS_TIMEOUT"; then
+            tried=1
             reason="check: worker $id auto-relaunched after $FM_WK_LIVE_CAUSE"
             notify_key="worker-relaunch-$id-$now"
           elif [ "$FM_WK_LIVE_STATUS" = failed ]; then
+            tried=1
             reason="check: worker $id auto-relaunch failed after $FM_WK_LIVE_CAUSE: $FM_WK_LIVE_REASON"
             notify_key="worker-relaunch-failed-$id-$now"
           elif [ "$FM_WK_LIVE_STATUS" = skipped ]; then

@@ -386,7 +386,7 @@ SH
 
 # --- 0. --if-stopped: the automatic recovery form ----------------------------
 
-test_if_stopped_relaunch_refuses_a_running_agent_and_clears_a_stop_marker() {
+test_if_stopped_relaunch_preserves_deliberate_stops() {
   local dir out rc
   dir=$(new_case if-stopped-alive rl90)
   add_ship_task "$dir" rl90 claude
@@ -402,11 +402,25 @@ test_if_stopped_relaunch_refuses_a_running_agent_and_clears_a_stop_marker() {
   add_ship_task "$dir" rl91 claude
   printf 'zsh' > "$dir/fake/command"
   : > "$dir/home/state/.worker-stopped-rl91"
+  local before_meta before_brief
+  before_meta=$(cat "$dir/home/state/rl91.meta")
+  before_brief=$(cat "$dir/home/data/rl91/brief.md")
+  out=$(run_control "$dir" rl91 relaunch --if-stopped --note "auto"); rc=$?
+  expect_code 1 "$rc" "guarded relaunch must preserve a deliberate stop"$'\n'"$out"
+  assert_contains "$out" "--if-stopped preserves deliberate stops" "the refusal must be classifiable"
+  [ -f "$dir/home/state/.worker-stopped-rl91" ] || fail "the stop marker was removed"
+  [ "$(cat "$dir/home/state/rl91.meta")" = "$before_meta" ] || fail "the record changed"
+  [ "$(cat "$dir/home/data/rl91/brief.md")" = "$before_brief" ] || fail "the brief changed"
+  [ ! -s "$dir/fake/literal" ] || fail "guarded recovery sent lifecycle input"
+  out=$(run_control "$dir" rl91 relaunch --note "manual"); rc=$?
+  expect_code 0 "$rc" "plain relaunch should override a deliberate stop"$'\n'"$out"
+  [ ! -e "$dir/home/state/.worker-stopped-rl91" ] || fail "plain relaunch left the stop marker"
+  printf 'zsh' > "$dir/fake/command"
   out=$(run_control "$dir" rl91 relaunch --if-stopped --note "auto"); rc=$?
   expect_code 0 "$rc" "--if-stopped should relaunch a stopped agent"$'\n'"$out"
   [ ! -e "$dir/home/state/.worker-stopped-rl91" ] \
     || fail "a confirmed relaunch must clear the worker stop marker"
-  pass "fm-control relaunch --if-stopped: refuses a running agent and relaunches a stopped one"
+  pass "fm-control guarded recovery preserves deliberate stops; plain relaunch clears them"
 }
 
 # --- 1. same-harness relaunch -----------------------------------------------
@@ -2766,4 +2780,4 @@ test_herdr_reclaim_of_a_secondmate_names_its_own_owner
 test_herdr_rebind_failure_from_a_plain_shell_names_the_real_cause
 test_relaunch_reverifies_an_already_in_flight_item_instead_of_rewriting_it
 test_relaunch_moves_a_drifted_item_back_in_flight
-test_if_stopped_relaunch_refuses_a_running_agent_and_clears_a_stop_marker
+test_if_stopped_relaunch_preserves_deliberate_stops

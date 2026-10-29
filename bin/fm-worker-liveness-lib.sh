@@ -283,7 +283,7 @@ fm_worker_liveness_relaunch() {  # <meta> <id> <timeout-secs>
     return 0
   fi
   case "$out" in
-    *"another lifecycle action is already running for task $id"*|*"--if-stopped relaunches only an agent that has already stopped"*)
+    *"--if-stopped preserves deliberate stops"*|*"another lifecycle action is already running for task $id"*|*"--if-stopped relaunches only an agent that has already stopped"*)
       fm_worker_liveness_ledger_add "$id" released || true
       FM_WK_LIVE_STATUS=skipped
       FM_WK_LIVE_REASON=$(fm_wk_live_first_line "$out")
