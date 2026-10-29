@@ -353,7 +353,16 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta>]
       if [ -n "$t_socket" ] && [ -n "$t_pid" ] && [ -n "$t_start" ]; then
         fm_backend_tmux_endpoint_absence_proof "$target" "$t_socket" "$t_pid" "$t_start"
       else
-        printf 'unproven\ttmux absence cannot be proven from this task record: it does not carry the endpoint'"'"'s tmux server identity (a record from before that was recorded), and a server-wide window inventory only describes the tmux server this process addresses, so a window absent from it may still be alive on another'
+        t_start=$(fm_meta_get "$meta" spawn_gen)
+        case "$t_start" in
+          s[0-9]*.*) t_start=${t_start#s}; t_start=${t_start%%.*} ;;
+          *) t_start='' ;;
+        esac
+        if [ -n "$t_start" ]; then
+          fm_backend_tmux_legacy_endpoint_absence_proof "$target" "$t_start"
+        else
+          printf 'unproven\ttmux absence cannot be proven from this legacy task record: it has neither a valid spawn time nor the endpoint'"'"'s tmux server identity'
+        fi
       fi
       ;;
     herdr)
