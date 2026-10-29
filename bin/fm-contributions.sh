@@ -77,6 +77,10 @@
 # FM_CONTRIBUTIONS_NOW supplies an ISO UTC clock for tests, otherwise UTC now.
 # FM_CONTRIBUTIONS_READY_LABEL selects the equivalent triage label, default
 # ready-for-pr. Labels are matched case-insensitively and exactly.
+# config/contribution-review-bots admits additional PR event authors: one exact,
+# case-sensitive GitHub login per line, with surrounding whitespace trimmed.
+# Blank lines and lines whose first non-whitespace character is # are ignored.
+# An absent or empty file admits no additional authors; issue events are unchanged.
 #
 # New maintainer comments/reviews (OWNER, MEMBER, COLLABORATOR, excluding the
 # contribution author) and issue transitions to ready-for-pr persist as pending
