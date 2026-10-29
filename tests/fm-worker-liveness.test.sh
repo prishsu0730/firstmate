@@ -193,11 +193,13 @@ make_nm_stub() {  # <case-dir>
 #!/usr/bin/env bash
 branch=\$(git symbolic-ref --quiet --short HEAD)
 head=\$(git rev-parse HEAD)
+status=\${FM_FAKE_NM_STATUS:-running}
+head=\${FM_FAKE_NM_HEAD:-\$head}
 if [ "\${1:-} \${2:-}" = "axi status" ]; then
-  printf 'run:\n  id: %s\n  branch: %s\n  status: running\n' "$RUN_ID" "\${FM_FAKE_NM_STATUS_BRANCH:-\$branch}"
+  printf 'run:\n  id: %s\n  branch: %s\n  status: %s\n  head: %s\n' "$RUN_ID" "\${FM_FAKE_NM_STATUS_BRANCH:-\$branch}" "\$status" "\$head"
   exit 0
 elif [ "\${1:-}" = axi ]; then
-  printf 'count: 1 of 1 total\nruns[1]{id,branch,status,head,pr}:\n  %s,%s,running,%s,\n' "$RUN_ID" "\$branch" "\$head"
+  printf 'count: 1 of 1 total\nruns[1]{id,branch,status,head,pr}:\n  %s,%s,%s,%s,\n' "$RUN_ID" "\$branch" "\$status" "\$head"
   exit 0
 fi
 exit 1
@@ -558,6 +560,22 @@ test_other_branch_run_is_not_named() {
   pass "worker liveness: another branch run is not attributed to the worker"
 }
 
+test_stale_failed_run_is_not_named() {
+  local dir brief
+  dir=$(new_case stale-run)
+  add_ship_task "$dir" wk-stale
+  seed_backlog "$dir" wk-stale in_flight
+  FM_FAKE_NM_STATUS=failed FM_FAKE_NM_HEAD=$(git -C "$dir/wt" rev-parse HEAD^) \
+    run_tick "$dir" || fail "tick failed"
+  brief=$(cat "$dir/home/data/wk-stale/brief.md")
+  assert_contains "$brief" "No-mistakes run: unknown." "stale failed run must remain unknown"
+  assert_contains "$brief" "branch task-wk-stale" "unknown run guidance must name this branch"
+  [[ "$brief" != *"$RUN_ID"* ]] || fail "stale failed run was named in the note"
+  [ "$(launches "$dir")" = 1 ] || fail "worker should still restart"
+  pass "worker liveness: a failed run behind the worker HEAD is not named"
+}
+
+test_stale_failed_run_is_not_named
 test_other_branch_run_is_not_named
 test_exited_agent_is_relaunched_with_work_kept_and_a_progress_note
 test_worker_waiting_on_a_decision_is_still_recovered
