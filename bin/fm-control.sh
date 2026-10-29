@@ -1136,11 +1136,19 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state note_line marker
   local -a spawn_args
 
   require_state_verified_backend relaunch
   if [ "$IF_STOPPED" = 1 ]; then
+    case "$KIND" in
+      ship|scout)
+        marker=$(stop_marker_path)
+        if [ -e "$marker" ] || [ -L "$marker" ]; then
+          die "task $ID was deliberately stopped; --if-stopped preserves deliberate stops"
+        fi
+        ;;
+    esac
     state=$(agent_state)
     case "$state" in
       dead) ;;
