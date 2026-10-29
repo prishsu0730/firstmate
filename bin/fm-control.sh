@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--if-stopped]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -36,10 +36,12 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent). For a local secondmate,
-#              the deliberate-stop marker suppresses automatic recovery until
-#              a successful explicit relaunch or secondmate respawn clears it.
-#              Watcher ticks and session-start sweeps respect the marker.
+#              Already-stopped is success (idempotent). The deliberate-stop
+#              marker (state/.secondmate-stopped-<id> for a local secondmate,
+#              state/.worker-stopped-<id> for a ship or scout) suppresses
+#              automatic recovery until a successful explicit relaunch or
+#              respawn clears it. Watcher ticks and session-start sweeps
+#              respect the marker.
 #              An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
 #              proof (fm_control_endpoint_absence_verdict) before anything is
@@ -87,6 +89,12 @@
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
+#              --if-stopped makes the relaunch replace only an agent that has
+#              already stopped: an agent read alive under this task's control
+#              lock refuses before any record changes. The watcher's automatic
+#              worker relaunch (bin/fm-worker-liveness-lib.sh) always passes it,
+#              so a worker someone relaunched by hand in the meantime is never
+#              exited on a stale verdict.
 #              Records a durable checkpoint and that note, exits the old agent,
 #              then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. A failure before publication keeps
@@ -256,6 +264,7 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+IF_STOPPED=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -286,6 +295,7 @@ for control_arg in "$@"; do
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
+    --if-stopped) IF_STOPPED=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
       NOTE=$(cat "${control_arg#--note-file=}")
@@ -301,7 +311,8 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+    && [ "$IF_STOPPED" = 0 ] \
+    || die "--harness, --model, --effort, --note, and --if-stopped apply to 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -647,21 +658,33 @@ retire_busy_incarnation() {
   fi
 }
 
+# The marker automatic recovery reads for this task's kind; empty for a kind
+# nothing recovers automatically.
+stop_marker_path() {
+  case "$KIND" in
+    secondmate) printf '%s' "$STATE/.secondmate-stopped-$ID" ;;
+    ship|scout) printf '%s' "$STATE/.worker-stopped-$ID" ;;
+  esac
+}
+
 STOP_MARK_CREATED=0
 mark_deliberate_stop() {
-  [ "$KIND" = secondmate ] && [ "$VERB" = exit ] || return 0
-  if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
-    printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
+  local marker
+  [ "$VERB" = exit ] || return 0
+  marker=$(stop_marker_path)
+  [ -n "$marker" ] || return 0
+  if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    printf 'deliberate stop\n' > "$marker" || die "could not record deliberate stop for $ID"
     STOP_MARK_CREATED=1
   fi
 }
 
 # Take back the marker this call created when the exit command provably never
-# reached the mate; a marker an earlier exit left, or a late confirmation, stays.
+# reached the agent; a marker an earlier exit left, or a late confirmation, stays.
 unmark_undelivered_stop() {
   [ "$STOP_MARK_CREATED" = 1 ] || return 0
   STOP_MARK_CREATED=0
-  rm -f "$STATE/.secondmate-stopped-$ID" || true
+  rm -f "$(stop_marker_path)" || true
 }
 
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
@@ -1117,6 +1140,21 @@ do_relaunch() {
   local -a spawn_args
 
   require_state_verified_backend relaunch
+  if [ "$IF_STOPPED" = 1 ]; then
+    state=$(agent_state)
+    case "$state" in
+      dead) ;;
+      missing)
+        state=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T" "$META")
+        case "${state%%$'\t'*}" in
+          gone|dead) ;;
+          alive) die "task $ID's agent is running; --if-stopped relaunches only an agent that has already stopped" ;;
+          *) die "task $ID's endpoint reads 'missing', but ${state#*$'\t'}; --if-stopped relaunches only an agent proven stopped" ;;
+        esac
+        ;;
+      *) die "task $ID's agent reads '$state'; --if-stopped relaunches only an agent that has already stopped" ;;
+    esac
+  fi
   resolve_relaunch_profile
 
   case "$KIND" in
@@ -1191,9 +1229,7 @@ do_relaunch() {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
   RELAUNCH_AGENT_CONFIRMED=1
-  if [ "$KIND" = secondmate ]; then
-    rm -f "$STATE/.secondmate-stopped-$ID" || die "secondmate $ID relaunched but its stop marker could not be cleared"
-  fi
+  rm -f "$(stop_marker_path)" || die "$KIND $ID relaunched but its stop marker could not be cleared"
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0

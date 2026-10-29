@@ -798,7 +798,11 @@ test_relaunch_only_flags_are_rejected_on_other_verbs() {
   out=$(run_control "$dir" t1 exit --harness codex); rc=$?
   expect_code 1 "$rc" "--harness should not apply to exit"
   assert_contains "$out" "apply to 'relaunch' only" "the refusal should scope the flags"
-  pass "fm-control: profile and note flags belong to relaunch only"
+  out=$(run_control "$dir" t1 exit --if-stopped); rc=$?
+  expect_code 1 "$rc" "--if-stopped should not apply to exit"
+  assert_contains "$out" "apply to 'relaunch' only" "the refusal should scope --if-stopped too"
+  [ -z "$(literals "$dir")" ] || fail "a refused flag must type nothing, got: $(literals "$dir")"
+  pass "fm-control: profile, note, and --if-stopped flags belong to relaunch only"
 }
 
 # --- 5. lifecycle states ----------------------------------------------------
@@ -1217,6 +1221,29 @@ test_secondmate_exit_send_failure_leaves_no_new_stop_marker() {
   pass "fm-control exit: an undelivered exit removes only the stop marker it created"
 }
 
+test_ship_and_scout_exit_persist_a_deliberate_stop_marker() {
+  local dir out rc kind
+  for kind in ship scout; do
+    dir=$(new_case "$kind-stop")
+    add_task "$dir" t1 claude "$kind"
+    alive_as "$dir" claude
+    out=$(run_control "$dir" t1 exit); rc=$?
+    expect_code 0 "$rc" "exiting a $kind's agent should succeed"$'\n'"$out"
+    [ -f "$dir/home/state/.worker-stopped-t1" ] \
+      || fail "a deliberate $kind exit must persist the worker stop marker"
+    [ ! -e "$dir/home/state/.secondmate-stopped-t1" ] \
+      || fail "a $kind exit must not write the secondmate stop marker"
+  done
+  dir=$(new_case ship-stop-send-fails)
+  add_task "$dir" t1 claude ship
+  alive_as "$dir" claude
+  out=$(FM_FAKE_SEND_FAILS=1 run_control "$dir" t1 exit); rc=$?
+  [ "$rc" -ne 0 ] || fail "an exit command that could not be sent must fail: $out"
+  [ ! -e "$dir/home/state/.worker-stopped-t1" ] \
+    || fail "an exit that was never delivered left a worker stop marker on a live agent"
+  pass "fm-control exit: a deliberate ship or scout stop is marked so automatic recovery leaves it alone"
+}
+
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed() {
   local dir out rc
   dir=$(new_case nosettle)
@@ -1377,6 +1404,7 @@ test_exit_accepts_agent_stopped_by_busy_interrupt
 test_agent_that_does_not_stop_fails_closed
 test_secondmate_exit_timeout_preserves_deliberate_stop
 test_secondmate_exit_send_failure_leaves_no_new_stop_marker
+test_ship_and_scout_exit_persist_a_deliberate_stop_marker
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
