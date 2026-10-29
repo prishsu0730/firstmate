@@ -191,8 +191,13 @@ RUN_ID=01M6WK0RKERRVN0000000000AA
 make_nm_stub() {  # <case-dir>
   cat > "$1/fakebin/no-mistakes" <<SH
 #!/usr/bin/env bash
+branch=\$(git symbolic-ref --quiet --short HEAD)
+head=\$(git rev-parse HEAD)
 if [ "\${1:-} \${2:-}" = "axi status" ]; then
-  printf 'run:\n  id: %s\n  status: running\n' "$RUN_ID"
+  printf 'run:\n  id: %s\n  branch: %s\n  status: running\n' "$RUN_ID" "\${FM_FAKE_NM_STATUS_BRANCH:-\$branch}"
+  exit 0
+elif [ "\${1:-}" = axi ]; then
+  printf 'count: 1 of 1 total\nruns[1]{id,branch,status,head,pr}:\n  %s,%s,running,%s,\n' "$RUN_ID" "\$branch" "\$head"
   exit 0
 fi
 exit 1
@@ -538,6 +543,22 @@ test_repeated_death_parks_after_the_bound_then_rearms() {
   pass "worker liveness: a worker that keeps dying stops after the bound with one notice, then rearms when live"
 }
 
+test_other_branch_run_is_not_named() {
+  local dir brief
+  dir=$(new_case other-branch)
+  add_ship_task "$dir" wk-other
+  seed_backlog "$dir" wk-other in_flight
+  printf 'working: prior run %s\n' "$RUN_ID" > "$dir/home/state/wk-other.status"
+  FM_FAKE_NM_STATUS_BRANCH=task-someone-else run_tick "$dir" || fail "tick failed"
+  brief=$(cat "$dir/home/data/wk-other/brief.md")
+  assert_contains "$brief" "No-mistakes run: unknown." "mismatched run must remain unknown"
+  assert_contains "$brief" "branch task-wk-other" "unknown run guidance must name this branch"
+  [[ "$brief" != *"No-mistakes run: $RUN_ID"* ]] || fail "another branch run was attributed to this worker"
+  [ "$(launches "$dir")" = 1 ] || fail "worker should still restart"
+  pass "worker liveness: another branch run is not attributed to the worker"
+}
+
+test_other_branch_run_is_not_named
 test_exited_agent_is_relaunched_with_work_kept_and_a_progress_note
 test_worker_waiting_on_a_decision_is_still_recovered
 test_finished_worker_is_not_relaunched
