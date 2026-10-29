@@ -52,7 +52,7 @@ test_publication() {
   local rows="$TMP/records/.branch-eligible-rows"
   expect_status 0 publish generation-1 7 8
   [ "$(cat "$rows")" = "$(printf '7\n8')" ] || fail 'published rows'
-  [ "$(stat -f '%Lp' "$rows" 2>/dev/null || stat -c '%a' "$rows")" = 600 ] || fail 'row permissions'
+  [ "$(python3 -c 'import os, stat, sys; print(format(stat.S_IMODE(os.stat(sys.argv[1]).st_mode), "o"))' "$rows")" = 600 ] || fail 'row permissions'
   expect_status 0 publish generation-1 7 8
   expect_status 1 publish generation-1 8
   [ "$(cat "$rows")" = "$(printf '7\n8')" ] || fail 'changed existing grant'
