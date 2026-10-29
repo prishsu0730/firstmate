@@ -39,8 +39,8 @@ make_fixture() {
 # Recording stand-in for the real runner: log the call and its inherited paths.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script=${!#}
-printf 'ARGS=%s|FM_HOME=%s|STATE=%s|CONFIG=%s\n' "$*" \
-  "${FM_HOME-unset}" "${FM_STATE_OVERRIDE-unset}" "${FM_CONFIG_OVERRIDE-unset}" >>"$ROOT/runner.log"
+printf 'ARGS=%s|FM_HOME=%s|STATE=%s|CONFIG=%s|LIMIT=%s\n' "$*" \
+  "${FM_HOME-unset}" "${FM_STATE_OVERRIDE-unset}" "${FM_CONFIG_OVERRIDE-unset}" "$(ulimit -n)" >>"$ROOT/runner.log"
 if [ -f "$ROOT/.git/fm-fail-on" ] && grep -Fxq "$script" "$ROOT/.git/fm-fail-on"; then
   echo "stand-in runner: $script failed"
   exit 1
@@ -79,6 +79,15 @@ run_wrapper() {  # <repo> <args...>; leaks FM_* paths on purpose
   shift
   FIXTURE_OUT=$(cd "$repo" && FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
     FM_CONFIG_OVERRIDE=/leak/config "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr")
+  FIXTURE_CODE=$?
+  FIXTURE_ERR=$(cat "$repo/.git/fm-stderr")
+}
+
+run_wrapper_with_low_fd_limit() {  # <repo> <args...>
+  local repo=$1
+  shift
+  FIXTURE_OUT=$(cd "$repo" && (ulimit -S -n 256; FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
+    FM_CONFIG_OVERRIDE=/leak/config "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr"))
   FIXTURE_CODE=$?
   FIXTURE_ERR=$(cat "$repo/.git/fm-stderr")
 }
@@ -234,6 +243,17 @@ test_runs_each_script_separately_with_clean_env() {
   pass "each script runs separately with the three paths stripped"
 }
 
+test_raises_a_low_file_descriptor_limit_for_the_runner() {
+  local repo limit
+  repo=$(make_fixture)
+  touch_and_commit "$repo" bin/fm-foo.sh
+  run_wrapper_with_low_fd_limit "$repo" --base main
+  expect_code 0 "$FIXTURE_CODE" "wrapper under a low file-descriptor limit"
+  limit=$(sed -n 's/.*|LIMIT=//p' "$repo/runner.log")
+  [ "$limit" -ge 4096 ] || fail "wrapper did not raise the runner file-descriptor limit: $limit"
+  pass "wrapper raises the runner file-descriptor limit when the host starts low"
+}
+
 test_fallback_runs_the_two_contract_tests() {
   local repo log
   repo=$(make_fixture)
@@ -323,6 +343,7 @@ test_default_base_is_origin_main_then_main
 test_no_resolvable_default_base_falls_back_with_a_warning
 test_explicit_unknown_base_is_refused
 test_runs_each_script_separately_with_clean_env
+test_raises_a_low_file_descriptor_limit_for_the_runner
 test_fallback_runs_the_two_contract_tests
 test_failure_runs_the_rest_and_exits_nonzero
 test_missing_runner_is_refused

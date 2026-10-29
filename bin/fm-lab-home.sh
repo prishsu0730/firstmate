@@ -10,14 +10,16 @@
 # Usage:
 #   fm-lab-home.sh create <dir>       make a marked lab home and print it
 #   fm-lab-home.sh tmux-dir <dir>     create or print its private tmux socket dir
-#   fm-lab-home.sh teardown <dir>     remove its private tmux socket dir
+#   fm-lab-home.sh teardown <dir>     remove its private tmux socket dir and lab home
 #
 # A lab home is the stock layout only - state/, data/, config/, projects/ - and
-# callers remove it with ordinary rm -rf when done. Drive it with plain
-# FM_HOME=<dir>; any FM_*_OVERRIDE relocation defeats the allowance.
+# teardown removes the marked home after its private socket checks pass. Drive
+# it with plain FM_HOME=<dir>; any FM_*_OVERRIDE relocation defeats the allowance.
 # tmux-dir is the single owner of the short private socket directory. Callers
-# may set TMUX_TMPDIR=<printed-dir> for lab processes, but every control or
-# cleanup call names the private default socket with -S before teardown.
+# set TMUX_TMPDIR=<printed-dir> for lab processes and use the same socket for
+# launch, control, and shutdown, selecting it consistently with -L or -S.
+# Stop the private server before teardown; teardown probes every recorded socket
+# and refuses removal unless each server is confirmed stopped.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +37,7 @@ fm_lab_home_mode() {
 fm_lab_home_owner() {
   case "$(uname -s)" in Darwin) stat -f '%u' "$1" ;; *) stat -c '%u' "$1" ;; esac
 }
+
 
 case "${1:-}" in
   create)
@@ -80,25 +83,29 @@ case "${1:-}" in
     [ -n "$dir" ] || { fm_lab_home_error "teardown requires a marked lab home"; exit 2; }
     [ -f "$dir/.fm-lab-home" ] && [ -d "$dir/state" ] \
       || { fm_lab_home_error "refusing '$dir': not a marked lab home"; exit 1; }
+    [ -d "$dir" ] && [ ! -L "$dir" ] \
+      || { fm_lab_home_error "refusing '$dir': lab home is missing or a symlink"; exit 1; }
     record=$(fm_lab_home_tmux_record "$dir")
-    [ -f "$record" ] || exit 0
-    socket_dir=$(cat "$record")
-    case "$socket_dir" in /tmp/fml.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) ;; *) fm_lab_home_error "invalid recorded tmux directory"; exit 1 ;; esac
-    [ -d "$socket_dir" ] && [ ! -L "$socket_dir" ] \
-      || { fm_lab_home_error "recorded tmux directory is missing or unsafe"; exit 1; }
-    [ "$(fm_lab_home_mode "$socket_dir")" = 700 ] && [ "$(fm_lab_home_owner "$socket_dir")" = "$(id -u)" ] \
-      || { fm_lab_home_error "refusing to remove a non-private or non-user-owned tmux directory"; exit 1; }
-    # -L names its own socket (not "default"); inspect every socket this
-    # private TMUX_TMPDIR could have hosted before removing the directory.
-    for socket in "$socket_dir/tmux-$(id -u)"/*; do
-      [ -e "$socket" ] || [ -L "$socket" ] || continue
-      if probe=$(tmux -S "$socket" list-sessions 2>&1 >/dev/null) \
-        || [ "${probe#*no server running}" = "$probe" ]; then
-        fm_lab_home_error "refusing teardown: cannot confirm the lab tmux server has stopped"
-        exit 1
-      fi
-    done
-    rm -rf "$socket_dir" && rm -f "$record"
+    if [ -f "$record" ]; then
+      socket_dir=$(cat "$record")
+      case "$socket_dir" in /tmp/fml.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) ;; *) fm_lab_home_error "invalid recorded tmux directory"; exit 1 ;; esac
+      [ -d "$socket_dir" ] && [ ! -L "$socket_dir" ] \
+        || { fm_lab_home_error "recorded tmux directory is missing or unsafe"; exit 1; }
+      [ "$(fm_lab_home_mode "$socket_dir")" = 700 ] && [ "$(fm_lab_home_owner "$socket_dir")" = "$(id -u)" ] \
+        || { fm_lab_home_error "refusing to remove a non-private or non-user-owned tmux directory"; exit 1; }
+      # -L names its own socket (not "default"); inspect every socket this
+      # private TMUX_TMPDIR could have hosted before removing the directory.
+      for socket in "$socket_dir/tmux-$(id -u)"/*; do
+        [ -e "$socket" ] || [ -L "$socket" ] || continue
+        if probe=$(tmux -S "$socket" list-sessions 2>&1 >/dev/null) \
+          || [ "${probe#*no server running}" = "$probe" ]; then
+          fm_lab_home_error "refusing teardown: cannot confirm the lab tmux server has stopped"
+          exit 1
+        fi
+      done
+      rm -rf "$socket_dir" && rm -f "$record" || exit 1
+    fi
+    rm -rf "$dir"
     ;;
   *)
     fm_lab_home_error "usage: fm-lab-home.sh create <dir> | tmux-dir <dir> | teardown <dir>"

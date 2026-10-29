@@ -40,6 +40,11 @@
 # .no-mistakes.yaml, so a change here takes effect for runs after it lands.
 set -u
 
+# launchd starts the no-mistakes daemon with a soft file-descriptor limit of
+# 256 on macOS. The focused runner can legitimately exceed that while it
+# checks the portable shard coverage, so raise only this test process tree.
+ulimit -n 4096 2>/dev/null || true
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNNER="$ROOT/bin/fm-test-run.sh"
 # Same bound bin/fm-test-run.sh applies to --changed; see its header for the
