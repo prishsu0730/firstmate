@@ -211,10 +211,13 @@ SH
   cat > "$fb/ps" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = -axo ]; then
+  [ ! -f "$FM_FAKE_DIR/ps-unreadable" ] || exit 1
+  name='/usr/local/bin/tmux'
+  [ ! -f "$FM_FAKE_DIR/process-name" ] || name=$(cat "$FM_FAKE_DIR/process-name")
   if [ -f "$FM_FAKE_DIR/servers" ]; then
-    awk -F '\t' '{ print $2 " tmux: server" }' "$FM_FAKE_DIR/servers"
+    awk -F '\t' -v name="$name" '{ print $2 " " name }' "$FM_FAKE_DIR/servers"
   elif [ -f "$FM_FAKE_DIR/server" ]; then
-    awk -F '\t' '{ print $2 " tmux: server" }' "$FM_FAKE_DIR/server"
+    awk -F '\t' -v name="$name" '{ print $2 " " name }' "$FM_FAKE_DIR/server"
   fi
   exit 0
 fi
@@ -2153,6 +2156,24 @@ test_legacy_tmux_record_refuses_when_any_server_holds_its_window() {
   pass "tmux: a live legacy window keeps recovery refused"
 }
 
+test_legacy_tmux_inventory_uses_process_identity() {
+  local dir id=rl71 name
+  dir=$(new_case legacy-tmux-process-identity "$id")
+  add_ship_task "$dir" "$id" claude
+  stamp_launch "$dir" "$id" 2000
+  strand_endpoint "$dir" "$id"
+  tmux_servers_are "$dir" /tmp/fm-test-tmux/hidden 200 1000
+  : > "$dir/fake/windows-sock"
+
+  for name in 'tmux: server' 'tmux: server (/tmp/hidden)' 'server (/tmp/hidden)' tmux /usr/local/bin/tmux; do
+    printf '%s\n' "$name" > "$dir/fake/process-name"
+    FM_BOOT_EPOCH_OVERRIDE=500 assert_tmux_missing_refuses "$dir" "$id" "older server with process identity $name"
+  done
+  : > "$dir/fake/ps-unreadable"
+  FM_BOOT_EPOCH_OVERRIDE=500 assert_tmux_missing_refuses "$dir" "$id" "unreadable process inventory"
+  pass "tmux: legacy recovery inventories process identities and refuses unreadable inventories"
+}
+
 test_relaunch_rebinds_after_a_tmux_server_restart() {
   local dir id=rl64 out rc wt_before
   dir=$(new_case tmux-restarted "$id")
@@ -2817,6 +2838,7 @@ test_tmux_refuses_when_the_record_has_no_launch_time
 test_legacy_tmux_record_reclaims_when_every_server_is_newer_and_window_is_absent
 test_legacy_tmux_record_refuses_when_any_server_predates_its_spawn
 test_legacy_tmux_record_refuses_when_any_server_holds_its_window
+test_legacy_tmux_inventory_uses_process_identity
 test_relaunch_rebinds_after_a_tmux_server_restart
 test_tmux_identity_refuses_when_the_window_is_alive_or_unreadable
 test_spawn_publishes_the_tmux_server_identity_on_relaunch_adopt

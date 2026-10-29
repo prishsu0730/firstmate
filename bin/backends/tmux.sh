@@ -242,12 +242,20 @@ fm_backend_tmux_legacy_endpoint_absence_proof() {  # <target> <launched>
   esac
   [ -n "$session" ] && [ -n "$window" ] \
     || { printf 'unproven\tthe recorded endpoint is not a session:window address'; return 0; }
-  processes=$(LC_ALL=C ps -axo pid=,command= 2>/dev/null) \
+  case "$(uname -s)" in
+    Linux|Darwin) ;;
+    *) printf 'unproven\tthe platform has no supported tmux process inventory'; return 0 ;;
+  esac
+  processes=$(LC_ALL=C ps -axo pid=,comm= 2>/dev/null) \
     || { printf 'unproven\tthe live tmux server inventory could not be read'; return 0; }
   while IFS= read -r line; do
     pid=$(printf '%s\n' "$line" | awk '{print $1}')
     command=$(printf '%s\n' "$line" | sed 's/^[[:space:]]*[0-9][0-9]*[[:space:]]*//; s/[[:space:]]*$//')
-    [ -n "$pid" ] && [ "$command" = 'tmux: server' ] || continue
+    case "$pid" in ''|*[!0-9]*) printf 'unproven\tthe live tmux server inventory is malformed'; return 0 ;; esac
+    case "$command" in
+      tmux|*/tmux|tmux:\ server*|server\ \(*) ;;
+      *) continue ;;
+    esac
     sockets=$(LC_ALL=C lsof -nP -a -U -p "$pid" -Fn 2>/dev/null) \
       || { printf 'unproven\tthe local sockets of a live tmux server could not be read'; return 0; }
     found=0
