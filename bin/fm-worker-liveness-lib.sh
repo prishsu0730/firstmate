@@ -282,8 +282,8 @@ fm_worker_liveness_relaunch() {  # <meta> <id> <timeout-secs>
     FM_WK_LIVE_STATUS=relaunched
     return 0
   fi
-  case "$out" in
-    *"--if-stopped preserves deliberate stops"*|*"another lifecycle action is already running for task $id"*|*"--if-stopped relaunches only an agent that has already stopped"*)
+  case "$rc:$out" in
+    6:"error: lifecycle control (fm-control) refused - task '$id' is leased to the "*" supervision actor (state/.lease-$id), which is handling that task right now;"*|*"--if-stopped preserves deliberate stops"*|*"another lifecycle action is already running for task $id"*|*"--if-stopped relaunches only an agent that has already stopped"*)
       fm_worker_liveness_ledger_add "$id" released || true
       FM_WK_LIVE_STATUS=skipped
       FM_WK_LIVE_REASON=$(fm_wk_live_first_line "$out")
