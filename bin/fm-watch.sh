@@ -256,6 +256,7 @@ WATCH_HOME_EXISTED=0
 # and wake emission (secondmate_liveness_tick below).
 # shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
+. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
