@@ -505,7 +505,10 @@ test_unproven_endpoint_absence_is_not_relaunched() {
   seed_backlog "$dir" wk6 in_flight
   : > "$dir/fake/windows"
   run_tick "$dir" || fail "the tick failed: $(cat "$dir/tick.out")"
-  assert_untouched "$dir" wk6 "a missing window with no proof its server is gone"
+  [ "$(launches "$dir")" = 0 ] || fail "unproven worker relaunched"
+  [ "$(attempts "$dir" wk6)" = 0 ] || fail "unproven worker consumed retry budget"
+  run_tick "$dir" || fail "second tick failed"
+  [ "$(wc -l < "$dir/home/wake-delivered" | tr -d ' ')" = 1 ] || fail "missing worker must notify exactly once"
   pass "worker liveness: a missing endpoint without absence proof is left for a person"
 }
 

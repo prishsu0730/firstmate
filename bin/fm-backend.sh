@@ -643,9 +643,7 @@ fm_backend_source() {  # <name>
     cmux)
       set -- fm-backend-hometag-lib.sh fm-composer-lib.sh
       ;;
-    *)
-      return 1
-      ;;
+    *) set -- ;;
   esac
   fm_backend_source_readable "$adapter" || return 1
   for rel in "$@"; do
@@ -687,6 +685,10 @@ fm_backend_source() {  # <name>
         . "$adapter" || return 1
         _FM_BACKEND_CMUX_SOURCED=1
       fi
+      ;;
+    *)
+      # shellcheck source=/dev/null
+      . "$adapter" || return 1
       ;;
   esac
 }
@@ -995,34 +997,71 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
-# fm_backend_agent_state: the single recovery-grade agent/endpoint state
-# contract. It is deliberately richer than fm_backend_target_exists's cheap
-# pane-presence read and prints exactly one of:
-#   alive      - a verified harness agent is running.
-#   dead       - the endpoint exists but confidently has no agent.
-#   missing    - the recorded endpoint is authoritatively absent.
-#   ambiguous  - the endpoint exists but its process cannot be attributed.
-#   unreadable - a target or inventory read failed or contradicted itself.
-#   unverified - this backend has no recovery classifier.
-# Only `dead` and `missing` license recovery. Every `alive` is proven at
-# process level through the shared classifier in bin/fm-agent-process-lib.sh,
-# never from a registration or a rendered title alone. The tmux adapter
-# requires a successful session inventory and returns `missing` only when it
-# omits the exact window; the Herdr adapter reuses its strict husk classifier -
-# which verifies a registered agent against `pane process-info` and the real
-# process table, so a registration Herdr kept over a shell-only pane reads
-# `dead` here (issue #4115) - then maps a positively stopped session server to
-# `missing` only in this recovery-grade view. Zellij remains unverified because
-# its secondmate ghost-tab and agent-process recovery path has not been
-# empirically validated. Orca and cmux do not support secondmate spawns.
+# fm_backend_agent_state: recovery-grade states are alive, dead, missing,
+# ambiguous, unreadable, and unverified. Adapter classifiers remain authoritative.
+# Ordinary workers on other backends prove exit with a launch-written spawn_gen
+# record; absent or stale proof is ambiguous, and failed reads are unreadable.
+# Missing endpoints require the control plane's absence proof before recovery.
+# Secondmates and targets without task records remain unverified on generic backends.
+fm_backend_worker_exit_line() {  # <state-dir> <id> <spawn-gen>
+  local record="$1/.worker-exit-$2" stage="$1/.worker-exit-$2.$3.tmp"
+  printf '(umask 077; printf "%%s\\n" %s > %s && mv -f %s %s)\n' \
+    "$(shell_quote "$3")" "$(shell_quote "$stage")" "$(shell_quote "$stage")" "$(shell_quote "$record")"
+}
+
+fm_backend_worker_exit_matches() {  # <meta>
+  local meta=$1 gen record value
+  case "$(fm_meta_get "$meta" kind)" in ship|scout) ;; *) return 1 ;; esac
+  gen=$(fm_meta_get "$meta" spawn_gen)
+  [ -n "$gen" ] || return 1
+  record="${meta%/*}/.worker-exit-${meta##*/}"
+  record=${record%.meta}
+  [ -e "$record" ] || [ -L "$record" ] || return 1
+  [ -f "$record" ] && [ ! -L "$record" ] && [ -r "$record" ] || return 2
+  value=$(cat "$record" 2>/dev/null) || return 2
+  [ "$value" = "$gen" ]
+}
+
+fm_backend_generic_agent_state() {  # <backend> <target>
+  local backend=$1 target=$2 state_dir meta='' candidate endpoint proof=0
+  state_dir=${FM_STATE_OVERRIDE:-$FM_HOME/state}
+  for candidate in "$state_dir"/*.meta; do
+    [ -f "$candidate" ] || continue
+    [ "$(fm_backend_of_meta "$candidate")" = "$backend" ] || continue
+    [ "$(fm_backend_target_of_meta "$candidate")" = "$target" ] || continue
+    [ -z "$meta" ] || { printf unreadable; return; }
+    [ -r "$candidate" ] && [ ! -L "$candidate" ] || { printf unreadable; return; }
+    meta=$candidate
+  done
+  [ -n "$meta" ] || { printf unverified; return; }
+  case "$(fm_meta_get "$meta" kind)" in ship|scout) ;; *) printf unverified; return ;; esac
+  fm_backend_worker_exit_matches "$meta" || proof=$?
+  [ "$proof" != 2 ] || { printf unreadable; return; }
+  if command -v "fm_backend_${backend}_endpoint_state" >/dev/null 2>&1; then
+    endpoint=$("fm_backend_${backend}_endpoint_state" "$target") || endpoint=unreadable
+  elif command -v "fm_backend_${backend}_target_ready" >/dev/null 2>&1; then
+    if "fm_backend_${backend}_target_ready" "$target"; then endpoint=present; else endpoint=unreadable; fi
+  elif fm_backend_target_exists "$backend" "$target"; then
+    endpoint=present
+  else
+    endpoint=unreadable
+  fi
+  case "$endpoint:$proof" in
+    present:0) printf dead ;;
+    present:*) printf ambiguous ;;
+    missing:*) printf missing ;;
+    *) printf unreadable ;;
+  esac
+}
+
 fm_backend_agent_state() {  # <backend> <target>
   local backend=$1 target=$2
-  fm_backend_source "$backend" || { printf 'unverified'; return 0; }
-  case "$backend" in
-    tmux) fm_backend_tmux_agent_state "$target" ;;
-    herdr) fm_backend_herdr_agent_state "$target" ;;
-    *) printf 'unverified' ;;
-  esac
+  fm_backend_source "$backend" || { printf unverified; return 0; }
+  if command -v "fm_backend_${backend}_agent_state" >/dev/null 2>&1; then
+    "fm_backend_${backend}_agent_state" "$target"
+  else
+    fm_backend_generic_agent_state "$backend" "$target"
+  fi
 }
 
 # fm_backend_process_stopped: 0 iff <backend> can see that the agent pane's

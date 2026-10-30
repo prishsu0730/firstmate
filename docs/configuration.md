@@ -449,6 +449,10 @@ Any value other than `tmux`, `herdr`, `zellij`, `orca`, or `cmux` is rejected un
 
 `codex-app` is not an accepted runtime backend yet; [`docs/codex-app-backend.md`](codex-app-backend.md) owns the Codex App boundary.
 
+Ordinary ship and scout recovery uses adapter classifiers when available and launch-written incarnation exit records otherwise, including future backend adapters.
+Missing-endpoint rebinding on cmux, Zellij, and Orca refuses visibly and preserves the worktree.
+An unproven running agent on those backends also refuses lifecycle exit; an exited worker can relaunch in its existing endpoint.
+
 ### Liveness classification
 
 The session-start secondmate liveness sweep and the watcher's secondmate liveness tick use the recovery-grade `fm_backend_agent_state` classifier where verified.

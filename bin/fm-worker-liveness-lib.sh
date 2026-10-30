@@ -20,8 +20,7 @@
 # Every other reading leaves the worker untouched.
 #
 # A worker is never relaunched when:
-#   - its kind is not ship or scout, it is remotely placed, or its backend has
-#     no recovery-grade classifier (tmux and herdr do);
+#   - its kind is not ship or scout, or it is remotely placed;
 #   - fm-control exit stopped it deliberately (state/.worker-stopped-<id>);
 #   - a backlog close is pending for it (state/<id>.backlog-close);
 #   - its last status line is `done` or `failed` (finished either way), or
@@ -157,11 +156,12 @@ fm_worker_liveness_probe() {  # <meta> <id>
           ;;
         alive) FM_WK_LIVE_STATUS=alive ;;
         *)
-          FM_WK_LIVE_STATUS=skipped
+          FM_WK_LIVE_STATUS=missing-unproven
           FM_WK_LIVE_REASON="endpoint reads missing, but ${absence#*$'\t'}"
           ;;
       esac
       ;;
+    ambiguous) ;;
     *)
       FM_WK_LIVE_STATUS=skipped
       FM_WK_LIVE_REASON="agent state reads '$state' (backend=$backend), not a proven stop"

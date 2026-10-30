@@ -1369,6 +1369,14 @@ worker_liveness_tick() {
           fi
         fi
         ;;
+      missing-unproven)
+        if [ ! -e "$STATE/.worker-missing-notified-$id" ]; then
+          fm_wk_live_require_backlog && fm_backlog_row_probe "$(fm_wk_live_data_dir)" "$id" \
+            && [ "$FM_BACKLOG_ROW_STATE" = "in_flight no no" ] || continue
+          reason="check: worker $id auto-relaunch refused: $FM_WK_LIVE_REASON"
+          notify_key="worker-missing-$id"
+        fi
+        ;;
       skipped)
         triage_log "worker $id liveness: $FM_WK_LIVE_REASON"
         ;;
@@ -1378,6 +1386,9 @@ worker_liveness_tick() {
       if printf '%s\n' "$queued" | grep -Fx "$notify_key" >/dev/null 2>&1 \
         || fm_wake_append check "$notify_key" "$reason"; then
         [ -n "$first_reason" ] || first_reason=$reason
+        if [ "$FM_WK_LIVE_STATUS" = missing-unproven ]; then
+          touch "$STATE/.worker-missing-notified-$id" || failed=1
+        fi
       else
         err="check wake row could not be queued: $reason"
       fi
@@ -1737,6 +1748,16 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
   key=$(window_key "$win")
   marker="$STATE/.dead-reported-$key"
   agent_state=$(fm_backend_agent_state "$(window_backend "$win")" "$win" 2>/dev/null) || agent_state=unreadable
+  case "$agent_state" in
+    dead|missing)
+      if [ -f "$STATE/$task.meta" ]; then
+        fm_worker_liveness_probe "$STATE/$task.meta" "$task"
+        case "$FM_WK_LIVE_STATUS" in
+          relaunchable|missing-unproven) date +%s > "$since_file"; return 0 ;;
+        esac
+      fi
+      ;;
+  esac
   case "$agent_state" in
     dead) detail='the endpoint is still there with no agent running in it' ;;
     missing) detail='the recorded endpoint is gone' ;;

@@ -427,7 +427,11 @@ wait_agent_state() {  # <timeout> <wanted>...
 }
 
 require_state_verified_backend() {  # <verb>
-  fm_control_backend_state_verified "$BACKEND" && return 0
+  if [ "$KIND" = secondmate ]; then
+    fm_control_secondmate_state_verified "$BACKEND" && return 0
+  else
+    fm_control_backend_state_verified "$BACKEND" && return 0
+  fi
   die "task $ID runs on the $BACKEND backend, which has no recovery-grade agent-state classifier, so '$1' cannot prove the agent actually stopped; refusing rather than reporting an unproven transition as done"
 }
 
@@ -578,7 +582,7 @@ verify_interrupt_running() {
   fm_backend_target_exists "$BACKEND" "$T" "$LABEL" \
     || die "task $ID's endpoint disappeared while interrupting it; no further control action is safe"
   proof=endpoint
-  if fm_control_backend_state_verified "$BACKEND"; then
+  if command -v "fm_backend_${BACKEND}_agent_state" >/dev/null 2>&1; then
     # An interrupt cancels a turn; it must never have stopped the agent. This
     # is the postcondition that separates a landed interrupt from an accident.
     after=$(agent_state)
@@ -1233,9 +1237,16 @@ do_relaunch() {
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
 
-  state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
-    die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
-  }
+  if ! command -v "fm_backend_${BACKEND}_agent_state" >/dev/null 2>&1; then
+    state=$(agent_state)
+    if [ "$state" != ambiguous ] || ! fm_backend_target_exists "$BACKEND" "$T"; then
+      die "the replacement launch for $ID was delivered but its endpoint reads '$state'; reconcile before retrying"
+    fi
+  else
+    state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
+      die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
+    }
+  fi
   RELAUNCH_AGENT_CONFIRMED=1
   rm -f "$(stop_marker_path)" || die "$KIND $ID relaunched but its stop marker could not be cleared"
 
@@ -1251,6 +1262,10 @@ case "$VERB" in
     state=$(agent_state)
     case "$state" in
       alive) ;;
+      ambiguous)
+        command -v "fm_backend_${BACKEND}_agent_state" >/dev/null 2>&1 \
+          && die "task $ID's endpoint is ambiguous; refusing lifecycle input"
+        ;;
       unverified)
         # No recovery-grade classifier on this backend. Interrupt is
         # non-destructive and its endpoint-existence postcondition is still

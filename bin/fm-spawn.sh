@@ -1879,8 +1879,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   fm_backend_source "$BACKEND" || exit 1
   [ "$BACKEND" != tmux ] || fm_backend_tmux_clear_stale_client_env
   # A relaunch must PROVE the previous agent is gone before it launches another
-  # one into the same endpoint, and only tmux and herdr have a recovery-grade
-  # classifier that can (bin/fm-control-lib.sh owns that capability table).
+  # one into the same endpoint, using adapter state or incarnation exit proof.
   fm_control_backend_state_verified "$BACKEND" || {
     echo "error: backend '$BACKEND' has no recovery-grade agent-state classifier, so a relaunch cannot prove the previous agent exited; refusing rather than risking two agents in one endpoint" >&2
     exit 1
@@ -3807,6 +3806,21 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # terminal, no second worktree, and every uncommitted change left exactly
     # where the previous agent left it.
     T=$RELAUNCH_TARGET
+    case "$BACKEND" in
+      zellij)
+        ZELLIJ_SES=$(fm_meta_get "$RELAUNCH_META" zellij_session)
+        ZELLIJ_TAB_ID=$(fm_meta_get "$RELAUNCH_META" zellij_tab_id)
+        ZELLIJ_PANE_ID=$(fm_meta_get "$RELAUNCH_META" zellij_pane_id)
+        ;;
+      cmux)
+        CMUX_WORKSPACE_ID=$(fm_meta_get "$RELAUNCH_META" cmux_workspace_id)
+        CMUX_SURFACE_ID=$(fm_meta_get "$RELAUNCH_META" cmux_surface_id)
+        ;;
+      orca)
+        ORCA_WORKTREE_ID=$(fm_meta_get "$RELAUNCH_META" orca_worktree_id)
+        ORCA_TERMINAL=$(fm_meta_get "$RELAUNCH_META" terminal)
+        ;;
+    esac
     WT_TARGET=$T
     SES=${T%%:*}
     # The adopted window was just read on the server this process addresses, so
@@ -3823,6 +3837,9 @@ if [ "$RELAUNCH" -eq 1 ]; then
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
     WT_TARGET="$WID"
     TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
+  elif [ "$BACKEND" != herdr ]; then
+    echo "error: backend $BACKEND cannot safely rebind a missing endpoint during relaunch; preserving task $ID and its worktree" >&2
+    exit 1
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -5727,6 +5744,10 @@ LAUNCH_STAGE="$LAUNCH_DIR/.launch.$SPAWN_GEN.tmp"
 if [ -e "$LAUNCH_FILE" ] || [ -L "$LAUNCH_FILE" ]; then
   echo "error: task launch file $LAUNCH_FILE already exists; refusing to replace it" >&2
   exit 1
+fi
+if [ "$KIND" != secondmate ]; then
+  LAUNCH="$LAUNCH
+$(fm_backend_worker_exit_line "$STATE_REAL" "$ID" "$SPAWN_GEN")"
 fi
 if ! (umask 077 && printf '%s\n' "$LAUNCH" >"$LAUNCH_STAGE" &&
   chmod 0600 "$LAUNCH_STAGE" && mv -f "$LAUNCH_STAGE" "$LAUNCH_FILE"); then
