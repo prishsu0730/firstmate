@@ -1156,6 +1156,31 @@ test_portable_serial_shards_partition_the_serial_lane() {
   pass "portable serial shards are a deterministic disjoint cover of the serial lane"
 }
 
+# The guard packs every shard inside one process while CI lists each shard in its
+# own process. On macOS bash 3.2 the in-process packing once drifted from the
+# per-process packing, so the guard reported shared scripts on an untouched
+# tree. Run it under each way a caller can attach its output and require the same
+# verdict and packed numbers every time.
+test_portable_serial_guard_agrees_across_invocation_styles() {
+  local tmp piped captured first rc
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-guard-styles.XXXXXX")
+  first=$(bash "$RUNNER" --check-coverage 2>&1) \
+    || fail "coverage guard failed on the untouched tree: $first"
+  assert_contains "$first" "FM_TEST_COVERAGE ok" "coverage guard success marker"
+  piped=$(bash "$RUNNER" --check-coverage 2>&1 | cat) \
+    || fail "coverage guard failed when its output is piped: $piped"
+  set +e
+  bash "$RUNNER" --check-coverage >"$tmp/out" 2>&1 </dev/null
+  rc=$?
+  set -e
+  captured=$(cat "$tmp/out")
+  [ "$rc" -eq 0 ] || fail "coverage guard failed when its output goes to a file: $captured"
+  [ "$piped" = "$first" ] || fail "coverage guard verdict changed when piped: $piped"
+  [ "$captured" = "$first" ] || fail "coverage guard verdict changed when redirected: $captured"
+  rm -rf "$tmp"
+  pass "portable serial coverage guard gives one verdict however its output is attached"
+}
+
 test_portable_serial_hint_coverage_is_reported_and_bounded() {
   local out serial unhinted max budget
   # Shards are packed from measured duration hints, so an unmeasured script is
@@ -1853,6 +1878,7 @@ test_list_scheduled_non_lane_selections_use_serial_weights
 test_portable_shard_union_and_coverage_guard
 test_portable_parallel_lanes_stay_duration_balanced
 test_portable_serial_shards_partition_the_serial_lane
+test_portable_serial_guard_agrees_across_invocation_styles
 test_portable_serial_hint_coverage_is_reported_and_bounded
 test_portable_serial_packing_budget_boundary
 test_portable_serial_shard_lane_refusals
