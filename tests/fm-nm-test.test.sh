@@ -36,11 +36,12 @@ make_fixture() {
   cp "$WRAPPER" "$repo/bin/fm-nm-test.sh"
   cat >"$repo/bin/fm-test-run.sh" <<'RUNNER'
 #!/usr/bin/env bash
-# Recording stand-in for the real runner: log the call and its inherited paths.
+# Recording stand-in for the real runner: log the call and inherited FM_* keys.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 script=${!#}
-printf 'ARGS=%s|FM_HOME=%s|STATE=%s|CONFIG=%s|LIMIT=%s\n' "$*" \
-  "${FM_HOME-unset}" "${FM_STATE_OVERRIDE-unset}" "${FM_CONFIG_OVERRIDE-unset}" "$(ulimit -n)" >>"$ROOT/runner.log"
+fm_keys=$(env | sed -n 's/^\(FM_[^=]*\)=.*/\1/p' | LC_ALL=C paste -sd, -)
+printf 'ARGS=%s|FM_KEYS=%s|LIMIT=%s\n' "$*" "${fm_keys:-unset}" "$(ulimit -n)" >>"$ROOT/runner.log"
+printf 'HOST=%s|PATH=%s|HOME=%s|LC_ALL=%s\n' "${NM_HOST_SETTING-unset}" "$PATH" "$HOME" "${LC_ALL-unset}" >>"$ROOT/host.log"
 if [ -f "$ROOT/.git/fm-fail-on" ] && grep -Fxq "$script" "$ROOT/.git/fm-fail-on"; then
   echo "stand-in runner: $script failed"
   exit 1
@@ -74,11 +75,13 @@ touch_and_commit() {  # <repo> <paths...>
   git_fx "$repo" commit -qm change
 }
 
-run_wrapper() {  # <repo> <args...>; leaks FM_* paths on purpose
+run_wrapper() {  # <repo> <args...>; leaks FM_* values on purpose
   local repo=$1
   shift
   FIXTURE_OUT=$(cd "$repo" && FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
-    FM_CONFIG_OVERRIDE=/leak/config "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr")
+    FM_CONFIG_OVERRIDE=/leak/config FM_DATA_OVERRIDE=/leak/data \
+    FM_PROJECTS_OVERRIDE=/leak/projects FM_BACKEND=leak-backend FM_FUTURE_LEAK=leak \
+    "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr")
   FIXTURE_CODE=$?
   FIXTURE_ERR=$(cat "$repo/.git/fm-stderr")
 }
@@ -87,7 +90,9 @@ run_wrapper_with_low_fd_limit() {  # <repo> <args...>
   local repo=$1
   shift
   FIXTURE_OUT=$(cd "$repo" && (ulimit -S -n 256; FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
-    FM_CONFIG_OVERRIDE=/leak/config "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr"))
+    FM_CONFIG_OVERRIDE=/leak/config FM_DATA_OVERRIDE=/leak/data \
+    FM_PROJECTS_OVERRIDE=/leak/projects FM_BACKEND=leak-backend FM_FUTURE_LEAK=leak \
+    "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr"))
   FIXTURE_CODE=$?
   FIXTURE_ERR=$(cat "$repo/.git/fm-stderr")
 }
@@ -237,10 +242,10 @@ test_runs_each_script_separately_with_clean_env() {
   assert_not_contains "$log" "--changed" "the wrapper names scripts, never a changed/family/all selection"
   assert_not_contains "$log" "--all" "never the complete suite"
   assert_not_contains "$log" "--family" "never a family"
-  assert_not_contains "$log" "/leak/" "FM_HOME, FM_STATE_OVERRIDE and FM_CONFIG_OVERRIDE must not reach a test"
-  assert_contains "$log" "FM_HOME=unset|STATE=unset|CONFIG=unset" "all three paths stripped"
+  assert_not_contains "$log" "/leak/" "inherited FM paths must not reach a test"
+  assert_contains "$log" "FM_KEYS=unset" "every inherited FM_* variable is stripped"
   assert_contains "$log" "--per-script-timeout-secs" "each script is time-bounded"
-  pass "each script runs separately with the three paths stripped"
+  pass "each script runs separately with inherited FM_* variables stripped"
 }
 
 test_raises_a_low_file_descriptor_limit_for_the_runner() {
@@ -252,6 +257,17 @@ test_raises_a_low_file_descriptor_limit_for_the_runner() {
   limit=$(sed -n 's/.*|LIMIT=//p' "$repo/runner.log")
   [ "$limit" -ge 4096 ] || fail "wrapper did not raise the runner file-descriptor limit: $limit"
   pass "wrapper raises the runner file-descriptor limit when the host starts low"
+}
+
+test_preserves_non_fm_environment() {
+  local repo log
+  repo=$(make_fixture)
+  touch_and_commit "$repo" bin/fm-foo.sh bin/fm-bar.sh
+  NM_HOST_SETTING=$'host value\nFM_EMBEDDED=preserved' LC_ALL=C run_wrapper "$repo" --base main
+  expect_code 0 "$FIXTURE_CODE" "run with unrelated host settings"
+  log=$(cat "$repo/host.log")
+  assert_equals "$(printf 'HOST=host value\nFM_EMBEDDED=preserved|PATH=%s|HOME=%s|LC_ALL=C\n' "$PATH" "$HOME" "$PATH" "$HOME")" "$log" "every runner preserves unrelated host settings"
+  pass "unrelated host settings survive FM environment cleanup"
 }
 
 test_fallback_runs_the_two_contract_tests() {
@@ -343,6 +359,7 @@ test_default_base_is_origin_main_then_main
 test_no_resolvable_default_base_falls_back_with_a_warning
 test_explicit_unknown_base_is_refused
 test_runs_each_script_separately_with_clean_env
+test_preserves_non_fm_environment
 test_raises_a_low_file_descriptor_limit_for_the_runner
 test_fallback_runs_the_two_contract_tests
 test_failure_runs_the_rest_and_exits_nonzero
