@@ -180,8 +180,8 @@
 #                          and counts toward the bound below
 #   check: worker <id> auto-relaunch paused after <n> attempts in <s>s; ...
 #                          a worker that kept dying exceeded its bounded
-#                          relaunch budget and is parked until a probe reads it
-#                          live again (FM_WORKER_LIVENESS_MAX_ATTEMPTS and
+#                          relaunch budget and is parked until a live probe or
+#                          a successful spawn rearms it (FM_WORKER_LIVENESS_MAX_ATTEMPTS and
 #                          FM_WORKER_LIVENESS_WINDOW_SECS)
 # For normal supervision, resume the session-start primary-harness protocol
 # after each printed reason. Direct duplicate invocations of this script still
@@ -1314,7 +1314,8 @@ secondmate_liveness_tick() {
 # wake row; skips land only in the triage log. A worker that keeps dying is
 # parked after WORKER_LIVENESS_MAX_ATTEMPTS ledgered attempts inside
 # WORKER_LIVENESS_WINDOW_SECS: the park marker wakes once, further probes stay
-# silent, and a later live probe ledgers a `rearmed` row and clears it.
+# silent, and a later live probe or successful spawn ledgers a `rearmed` row
+# and clears it without requiring generic ambiguous state to mean alive.
 worker_liveness_tick() {
   local tick_marker="$STATE/.worker-liveness-tick"
   [ "$(age_of "$tick_marker")" -ge "$WORKER_LIVENESS_SECS" ] || return 0

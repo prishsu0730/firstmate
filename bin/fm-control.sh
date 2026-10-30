@@ -48,7 +48,8 @@
 #              claimed about it, because `missing` also covers an endpoint that
 #              is merely unreachable from this seat. That proof exists on HERDR,
 #              whose reads are scoped to the session the record names, and on
-#              TMUX with recorded server identity or a launch proven before boot:
+#              TMUX with recorded server identity or a launch proven before boot;
+#              generic ordinary workers require a matching incarnation exit record:
 #              proven gone reports `endpoint-gone` rather than
 #              `already-stopped`, because the endpoint this verb normally
 #              preserves did not survive; a pane that turns out to be there and
@@ -127,12 +128,11 @@
 #     is refused rather than guessed at.
 #   - A backend that cannot deliver the harness's interrupt key is refused
 #     (Orca's terminal API has no Escape).
-#   - `exit` and `relaunch` require a backend with a recovery-grade agent-state
-#     classifier (tmux, herdr), because without one the "the agent stopped"
-#     postcondition cannot be proven. zellij, orca, and cmux are refused rather
-#     than reported as successful blind.
-#   - An ambiguous or unreadable endpoint state refuses; only a positively
-#     classified state acts.
+#   - `exit` and `relaunch` require adapter-owned stop proof or an ordinary
+#     worker's matching launch-written exit record on a generic backend.
+#     Secondmates still require a verified adapter classifier.
+#   - An ambiguous or unreadable state refuses exit and relaunch. Interrupt
+#     permits generic ambiguous state with endpoint-presence proof only.
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
 #
