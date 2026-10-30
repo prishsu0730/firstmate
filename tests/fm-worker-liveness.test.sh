@@ -448,6 +448,7 @@ test_leased_worker_preserves_recovery_budget_then_relaunches() {
     [ ! -e "$dir/home/state/.worker-relaunch-bound-wk10" ] || fail "lease contention parked recovery"
     [ "$(grep -c $'\treleased$' "$dir/home/state/.worker-relaunch-wk10")" = "$i" ] || fail "the lease refusal was not released"
     ! grep -q $'\tfailed$' "$dir/home/state/.worker-relaunch-wk10" || fail "lease contention counted as failure"
+    # shellcheck disable=SC2016 # Expanded by the inner shell.
     case_env "$dir" bash -c '. "$1/bin/fm-watch.sh"; [ "$(fm_worker_liveness_recent_attempts wk10 3600)" = 0 ]' _ "$ROOT" \
       || fail "lease contention consumed the retry budget"
   done
