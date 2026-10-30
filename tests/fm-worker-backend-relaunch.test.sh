@@ -195,7 +195,7 @@ new_worker() {
   fm_git_worktree "$proj" "$wt" "task-$id" >/dev/null
   printf 'landed\n' > "$wt/landed.txt"
   git -C "$wt" add landed.txt
-  git -C "$wt" commit -qm "unlanded work for $id"
+  git -C "$wt" -c user.name="Firstmate Tests" -c user.email=tests@example.invalid commit -qm "unlanded work for $id"
   printf 'in progress\n' > "$wt/uncommitted.txt"
   printf '# Task\n## Captain'"'"'s intent\nKeep working.\n\n## Firstmate spec\nFinish.\n' > "$home/data/$id/brief.md"
   {

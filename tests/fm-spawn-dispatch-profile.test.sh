@@ -484,7 +484,7 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   # The unverified-adapter escape hatch is still an agent this fleet launched,
   # so it carries the compact-adviser floor and the AI-trailer strip; nothing
   # else may rewrite the captain's own command.
-  [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(ai_trailer_hooks_prefix "$HOME_DIR" "$id")custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  [ "$launch" = "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$HOME_DIR" "$id")$(ai_trailer_hooks_prefix "$HOME_DIR" "$id")custom-agent --flag$(fm_test_worker_exit_suffix "$HOME_DIR" "$id")" ] || fail "raw launch command changed"$'\n'"actual: $launch"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -2016,7 +2016,7 @@ SH
 # must both produce today's launch byte-for-byte, `auto` swaps only the
 # permission flag, and any other token refuses before endpoint or metadata.
 claude_settings_json_arg() {  # <launch>
-  local command=$1
+  local command=${1%%$'\n'*}
   while [[ "$command" == export\ *\;* ]]; do
     command=${command#*; }
   done
@@ -2033,7 +2033,7 @@ claude_settings_json_arg() {  # <launch>
 }
 
 claude_launch_brief_arg() {  # <launch>
-  local command=$1
+  local command=${1%%$'\n'*}
   while [[ "$command" == export\ *\;* ]]; do
     command=${command#*; }
   done
@@ -2062,6 +2062,7 @@ claude_expected_launch() {  # <launch> <home> <id> <permission-flag>
     || doorbell="not a launch-brief doorbell"
   quoted="'$(printf '%s' "$doorbell" | sed "s/'/'\\\\''/g")'"
   printf '%s' "export COMPACT_ADVISER_DISABLE=1; $(task_inbox_export "$2" "$3")$(ai_trailer_hooks_prefix "$2" "$3")env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false CLAUDE_CODE_SEND_FEEDBACK=0 claude $4 $(claude_worker_add_dirs "$2" "$3")--settings '{\"feedbackDrafts\":\"off\",\"attribution\":{\"commit\":\"\",\"pr\":\"\",\"sessionUrl\":false}}' $CLAUDE_CONTROL_CHANNEL_FLAG $quoted"
+  fm_test_worker_exit_suffix "$2" "$3"
 }
 
 test_claude_permission_mode_bypass_matches_absent_launch() {

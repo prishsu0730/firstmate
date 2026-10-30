@@ -229,7 +229,7 @@ add_ship_task() {
   fm_git_worktree "$proj" "$wt" "task-$id"
   printf 'landed\n' > "$wt/landed.txt"
   git -C "$wt" add landed.txt
-  git -C "$wt" commit -qm "unlanded work for $id"
+  git -C "$wt" -c user.name="Firstmate Tests" -c user.email=tests@example.invalid commit -qm "unlanded work for $id"
   printf 'in progress\n' > "$wt/uncommitted.txt"
   mkdir -p "$home/data/$id"
   printf '# Task\n## Captain'"'"'s intent\nKeep working on %s.\n\n## Firstmate spec\nFinish the change.\n' "$id" \

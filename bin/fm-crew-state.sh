@@ -1264,6 +1264,10 @@ if ! pane_readable "$BACKEND_TARGET"; then
   #             normal flow below instead of being discarded.
   #   anything else - the cheap probes themselves failed to answer or
   #             contradicted themselves, which is unknown, never death.
+  fm_backend_source "$TASK_BACKEND" || emit unknown none "backend unreachable ($TASK_BACKEND adapter unavailable)"
+  if ! command -v "fm_backend_${TASK_BACKEND}_agent_state" >/dev/null 2>&1; then
+    emit unknown none "backend target gone: $BACKEND_TARGET"
+  fi
   AGENT_STATE=$(fm_backend_agent_state "$TASK_BACKEND" "$BACKEND_TARGET")
   case "$AGENT_STATE" in
     alive) ;;
