@@ -706,3 +706,14 @@ EOF
   echo "error: no zellij tab named $name in any active session" >&2
   return 1
 }
+
+fm_backend_zellij_endpoint_state() {
+  local session=${1%%:*} pane=${1#*:} out
+  case "$pane" in ''|*[!0-9]*) printf unreadable; return ;; esac
+  out=$(fm_backend_zellij_cli "$session" action list-panes --json 2>/dev/null) \
+    || { printf unreadable; return; }
+  printf '%s' "$out" | jq -r --argjson p "$pane" '
+    if type != "array" then "unreadable"
+    elif any(.[]; .id == $p and .is_plugin == false) then "present"
+    else "missing" end' 2>/dev/null || printf unreadable
+}

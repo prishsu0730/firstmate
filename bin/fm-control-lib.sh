@@ -289,15 +289,13 @@ fm_control_backend_supports_key() {  # <backend> <key>
   return 1
 }
 
-# Whether <backend> has a recovery-grade agent-state classifier. Only tmux and
-# herdr implement fm_backend_agent_state; zellij, orca, and cmux report
-# `unverified`, so no reading of theirs can prove an agent stopped. The control
-# plane refuses a stop-proving verb there instead of reporting an unprovable
-# transition as success.
+# Ordinary workers have launch-exit proof on every known backend.
 fm_control_backend_state_verified() {  # <backend>
-  case "${1-}" in
-    tmux|herdr) return 0 ;;
-  esac
+  fm_backend_is_known "$1"
+}
+
+fm_control_secondmate_state_verified() {  # <backend>
+  case "$1" in tmux|herdr) return 0 ;; esac
   return 1
 }
 
@@ -368,7 +366,11 @@ fm_control_endpoint_absence_verdict() {  # <backend> <target> [<meta>]
       esac
       ;;
     *)
-      printf 'unproven\tbackend %s has no recovery-grade classifier, so absence cannot be proven on it at all' "'$backend'"
+      if [ -n "$meta" ] && fm_backend_worker_exit_matches "$meta"; then
+        printf 'gone\t'
+      else
+        printf 'unproven\tthe current worker incarnation has no matching exit record'
+      fi
       ;;
   esac
 }

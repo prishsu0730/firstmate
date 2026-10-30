@@ -86,7 +86,7 @@ fm_secondmate_restart_capable() {  # <meta-file>
     backend=$(fm_backend_of_meta "$meta")
   fi
   FM_SECONDMATE_RESTART_BACKEND=$backend
-  if ! fm_control_backend_state_verified "$backend"; then
+  if ! fm_control_secondmate_state_verified "$backend"; then
     FM_SECONDMATE_RESTART_REASON="its runtime cannot prove an agent stopped and came back (backend $backend)"
     return 1
   fi

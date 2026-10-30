@@ -660,3 +660,14 @@ fm_backend_cmux_list_live() {
     printf '%s:%s\tfm-%s\n' "$wsid" "$sfid" "$plain"
   done < <(printf '%s' "$wss" | jq -r --arg prefix "$prefix" '.workspaces[]? | select(.title | startswith($prefix)) | "\(.id)\t\(.title)"' 2>/dev/null)
 }
+
+fm_backend_cmux_endpoint_state() {
+  local out
+  fm_backend_cmux_parse_target "$1" || { printf unreadable; return; }
+  out=$(fm_backend_cmux_cli list-panes --workspace "$FM_BACKEND_CMUX_WORKSPACE" --json --id-format uuids 2>/dev/null) \
+    || { printf unreadable; return; }
+  printf '%s' "$out" | jq -r --arg s "$FM_BACKEND_CMUX_SURFACE" '
+    if (.panes | type) != "array" then "unreadable"
+    elif any(.panes[]; (.surface_ids // []) | index($s)) then "present"
+    else "missing" end' 2>/dev/null || printf unreadable
+}
