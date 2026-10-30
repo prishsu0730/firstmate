@@ -4684,6 +4684,7 @@ test_review_by_the_implementer_does_not_count() {
 test_review_tier_plus_needs_two_independent_reviews() {
   make_review_case review-plus-one 'HIGH (Plus)'
   add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" firstmate 'synthesis: no merge-blocking finding'
   merge_review_case
   assert_review_refusal "review-plus-one"
   assert_grep 'needs 2 ' "$CASE/stderr" "review-plus-one: the refusal did not name 2 reviews needed"
@@ -4699,6 +4700,7 @@ test_review_tier_plus_needs_two_independent_reviews() {
   make_review_case review-plus-two 'HIGH (Plus)'
   add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1
   add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r2
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r1 'synthesis: no merge-blocking finding'
   merge_review_case
   expect_code 0 "$RC" "review-plus-two: two independent reviews must allow the merge (stderr: $(cat "$CASE/stderr"))"
   assert_logged_gh_merge "$CASE" 610 example/repo --squash
@@ -4715,6 +4717,7 @@ test_review_tier_apex_needs_four_reviews() {
   assert_grep 'found 3' "$CASE/stderr" "review-apex-three: the refusal did not name 3 reviews found"
 
   add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" scout-r4
+  add_review "$CASE" task-x1 "$REVIEW_URL" "$REVIEW_HEAD" firstmate 'synthesis: no merge-blocking finding'
   : > "$CASE/gh.log"
   merge_review_case
   expect_code 0 "$RC" "review-apex-four: four reviews must allow the merge (stderr: $(cat "$CASE/stderr"))"
@@ -4850,6 +4853,9 @@ test_review_tier_scaffold_forms_merge() {
       for ((n = 1; n <= needed; n++)); do
         add_review "$case_dir" task-x1 "$url" "$head" "scout-r$n"
       done
+      if [ "$needed" -gt 1 ]; then
+        add_review "$case_dir" task-x1 "$url" "$head" firstmate 'synthesis: no merge-blocking finding'
+      fi
       set +e
       run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
       rc=$?
@@ -4864,6 +4870,55 @@ test_review_tier_scaffold_forms_merge() {
   done
   pass "fm-pr-merge accepts all four filled scaffold tiers on both forges"
 }
+
+test_review_synthesis_required() {
+  local provider tier needed case_dir url head mode n rc log
+  for provider in github gitlab; do
+    for tier in Plus Apex; do
+      needed=2
+      [ "$tier" != Apex ] || needed=4
+      for mode in missing stale other-pr self blocking early; do
+        if [ "$provider" = github ]; then
+          make_review_case "synthesis-$provider-$tier-$mode" "$tier"
+          case_dir=$CASE url=$REVIEW_URL head=$REVIEW_HEAD log=gh.log
+        else
+          case_dir=$(make_gitlab_case "synthesis-$provider-$tier-$mode")
+          write_review_tier_brief "$case_dir" task-x1 "$tier"
+          url=$MR_URL head=$MR_HEAD log=glab.log
+        fi
+        if [ "$mode" = early ]; then
+          add_review "$case_dir" task-x1 "$url" "$head" firstmate 'synthesis: no merge-blocking finding'
+        fi
+        for ((n = 1; n <= needed; n++)); do
+          add_review "$case_dir" task-x1 "$url" "$head" "scout-r$n"
+        done
+        case "$mode" in
+          stale) add_review "$case_dir" task-x1 "$url" "$REVIEW_OLD_HEAD" firstmate 'synthesis: no merge-blocking finding' ;;
+          other-pr) add_review "$case_dir" task-x1 "$url/other" "$head" firstmate 'synthesis: no merge-blocking finding' ;;
+          self) add_review "$case_dir" task-x1 "$url" "$head" task-x1 'synthesis: no merge-blocking finding' ;;
+          blocking) add_review "$case_dir" task-x1 "$url" "$head" firstmate 'synthesis: merge-blocking finding' ;;
+        esac
+        set +e
+        run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+        rc=$?
+        set -e
+        expect_code 1 "$rc" "synthesis-$provider-$tier-$mode: incomplete synthesis must refuse"
+        assert_grep 'needs synthesis' "$case_dir/stderr" "synthesis-$provider-$tier-$mode: missing remedy"
+        assert_no_grep ' merge ' "$case_dir/$log" "synthesis-$provider-$tier-$mode: merge ran"
+        add_review "$case_dir" task-x1 "$url" "$head" firstmate 'synthesis: no merge-blocking finding'
+        set +e
+        run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr"
+        rc=$?
+        set -e
+        expect_code 0 "$rc" "synthesis-$provider-$tier-$mode: completed synthesis must merge (stderr: $(cat "$case_dir/stderr"))"
+        assert_grep ' merge ' "$case_dir/$log" "synthesis-$provider-$tier-$mode: merge missing"
+      done
+    done
+  done
+  pass "Plus and Apex require clean synthesis after distinct reviews on both forges"
+}
+
+test_review_synthesis_required
 
 test_review_tier_scaffold_forms_merge
 test_review_tier_low_needs_no_review

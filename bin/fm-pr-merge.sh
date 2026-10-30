@@ -165,6 +165,9 @@
 # reviewer other than the task itself. A review is one line,
 # `<pr-url>|<head-sha>|<reviewer-task-id>|no merge-blocking finding`, appended to
 # <data>/<task-id>/reviews by the review scout (or by firstmate from its report).
+# Plus and Apex also require a later line in the same record:
+# `<pr-url>|<head-sha>|<synthesizer-task-id>|synthesis: no merge-blocking finding`.
+# The synthesizer may be firstmate or a reviewer, but not the shipping task.
 # Only a line naming this pull request and this exact head with that exact
 # verdict counts, so a new head voids every older review. A missing brief, a
 # missing, repeated, or unrecognised tier line, and an unreadable review record
@@ -1320,7 +1323,7 @@ read_review_tier() {
 # <data>/<task>/reviews names this pull request, this exact head, and the clean
 # verdict; the header owns the line format.
 require_review_tier() {
-  local reviews="$DATA/$ID/reviews" head found plural=
+  local reviews="$DATA/$ID/reviews" head found result synthesis=0 plural=
   read_review_tier "$DATA/$ID/brief.md" || return 1
   [ "$REVIEW_TIER_NEEDED" -gt 0 ] || return 0
   if [ "$FM_PR_GITHUB_AUTO_REQUESTED" = true ] || [ "$FM_PR_GITLAB_ASYNC_REQUESTED" = true ]; then
@@ -1341,18 +1344,27 @@ require_review_tier() {
       echo "error: refusing to merge $URL: the review record of task $ID cannot be read: $reviews" >&2
       return 1
     fi
-    found=$(awk -F'|' -v url="$URL" -v head="$head" -v task="$ID" '
+    result=$(awk -F'|' -v url="$URL" -v head="$head" -v task="$ID" -v needed="$REVIEW_TIER_NEEDED" '
       function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
       NF == 4 {
         u = trim($1); h = tolower(trim($2)); r = trim($3); v = trim($4)
-        if (u == url && h == head && r != "" && r != task && r !~ /[[:space:]]/ \
-            && v == "no merge-blocking finding" && !(r in seen)) { seen[r] = 1; n++ }
+        if (u == url && h == head && r != "" && r != task && r !~ /[[:space:]]/) {
+          if (v == "no merge-blocking finding" && !(r in seen)) { seen[r] = 1; n++ }
+          if (v == "synthesis: no merge-blocking finding" && n >= needed) synthesis = 1
+        }
       }
-      END { print n + 0 }
+      END { print n + 0, synthesis + 0 }
     ' "$reviews") || {
       echo "error: refusing to merge $URL: the review record of task $ID could not be counted: $reviews" >&2
       return 1
     }
+    found=${result%% *}
+    synthesis=${result##* }
+  fi
+  if [ "$found" -ge "$REVIEW_TIER_NEEDED" ] && [ "$REVIEW_TIER_NEEDED" -gt 1 ] && [ "$synthesis" -ne 1 ]; then
+    printf 'error: refusing to merge %s: review tier %s needs synthesis after its %s distinct reviews at head %s; append %s|%s|<synthesizer-task-id>|synthesis: no merge-blocking finding to %s (not by task %s)\n' \
+      "$URL" "$REVIEW_TIER_NAME" "$REVIEW_TIER_NEEDED" "$FM_PR_MERGE_HEAD" "$URL" "$FM_PR_MERGE_HEAD" "$reviews" "$ID" >&2
+    return 1
   fi
   [ "$found" -ge "$REVIEW_TIER_NEEDED" ] && {
     printf 'verified: review tier %s met by %s of %s review(s) at head %s\n' \
