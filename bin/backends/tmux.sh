@@ -234,7 +234,7 @@ fm_backend_tmux_endpoint_absence_proof() {  # <target> <socket> <pid> <start>
 # process, socket, or inventory is unproven - this must never turn an
 # unreachable live pane into a replacement agent.
 fm_backend_tmux_legacy_endpoint_absence_proof() {  # <target> <launched>
-  local target=$1 launched=$2 session window processes line pid command sockets socket identity now_pid now_start extra windows clients candidates= covered=
+  local target=$1 launched=$2 session window processes line pid command sockets socket identity now_pid now_start extra windows clients candidates='' covered=''
   case "$launched" in ''|*[!0-9]*) printf 'unproven\tthe legacy tmux record has no valid spawn time'; return 0 ;; esac
   case "$target" in
     *:*) session=${target%%:*}; window=${target#*:} ;;
