@@ -97,6 +97,7 @@ fm_worker_liveness_recent_attempts() {  # <id> <window-secs>
   awk -F '\t' -v cutoff="$cutoff" '
     $1 ~ /^[0-9]+$/ && $1 >= cutoff && $2 == "attempt" { n++ }
     $1 ~ /^[0-9]+$/ && $1 >= cutoff && $2 == "released" { n-- }
+    $2 == "rearmed" { n = 0 }
     END { if (n < 0) n = 0; print n + 0 }' "$ledger" 2>/dev/null
 }
 

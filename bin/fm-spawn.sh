@@ -5913,6 +5913,16 @@ if [ -n "$SPAWN_STOP_MARKER" ]; then
     || { echo "error: $KIND $ID launched but its stop marker $SPAWN_STOP_MARKER could not be cleared" >&2; exit 1; }
 fi
 
+case "$KIND" in
+  ship|scout)
+    if [ -e "$STATE/.worker-relaunch-bound-$ID" ] || [ -L "$STATE/.worker-relaunch-bound-$ID" ]; then
+      printf '%s\trearmed\n' "$(date +%s)" >> "$STATE/.worker-relaunch-$ID" \
+        && rm -f "$STATE/.worker-relaunch-bound-$ID" \
+        || { echo "error: $KIND $ID launched but its automatic relaunch pause could not be cleared" >&2; exit 1; }
+    fi
+    ;;
+esac
+
 SPAWN_DELIVERY=
 [ -z "$MODE" ] || SPAWN_DELIVERY=" mode=$MODE yolo=$YOLO"
 SPAWN_ACCOUNT=

@@ -335,6 +335,7 @@ test_exited_agent_is_relaunched_with_work_kept_and_a_progress_note() {
   assert_grep 'worker-relaunch-wk1-' "$dir/home/state/.wake-queue" "the relaunch should leave a durable notification"
   [ "$(attempts "$dir" wk1)" = 1 ] || fail "one attempt should be ledgered"
   grep -q $'\trelaunched$' "$dir/home/state/.worker-relaunch-wk1" || fail "the success should be ledgered"
+  ! grep -q $'\tfailed$' "$dir/home/state/.worker-relaunch-wk1" || fail "successful tmux relaunch consumed failure budget"
   ! ls "$dir/home/state"/.worker-relaunch-note-* >/dev/null 2>&1 || fail "the temporary note was left behind"
 
   : > "$dir/home/wake-delivered"
@@ -579,6 +580,41 @@ test_stale_failed_run_is_not_named() {
   pass "worker liveness: a failed run behind the worker HEAD is not named"
 }
 
+test_generic_parked_worker_rearms_after_manual_relaunch() {
+  local dir gen i
+  dir=$(new_case generic-rearm)
+  add_ship_task "$dir" wk-generic
+  seed_backlog "$dir" wk-generic in_flight
+  printf 'spawn_gen=old\n' >> "$dir/home/state/wk-generic.meta"
+  printf 'old\n' > "$dir/home/state/.worker-exit-wk-generic"
+  printf '1\tdead\n' > "$dir/home/state/.worker-relaunch-bound-wk-generic"
+  for i in 1 2 3; do
+    printf '%s\tattempt\n' "$(date +%s)" >> "$dir/home/state/.worker-relaunch-wk-generic"
+  done
+  cat > "$dir/generic-env.sh" <<SH
+. '$ROOT/bin/fm-backend.sh'
+fm_backend_source tmux
+unset -f fm_backend_tmux_agent_state
+SH
+  BASH_ENV="$dir/generic-env.sh" run_tick "$dir" || fail "parked generic tick failed"
+  [ "$(launches "$dir")" = 0 ] || fail "parked generic worker restarted"
+  BASH_ENV="$dir/generic-env.sh" case_env "$dir" "$ROOT/bin/fm-control.sh" wk-generic relaunch --note 'Resume work' \
+    > "$dir/manual.out" 2>&1 || fail "manual generic relaunch failed: $(cat "$dir/manual.out")"
+  [ ! -e "$dir/home/state/.worker-relaunch-bound-wk-generic" ] || fail "manual launch left retry pause"
+  BASH_ENV="$dir/generic-env.sh" case_env "$dir" bash -c '
+    . "$1/bin/fm-worker-liveness-lib.sh"
+    STATE=$FM_HOME/state
+    [ "$(fm_worker_liveness_recent_attempts wk-generic 3600)" = 0 ]
+    [ "$(fm_backend_agent_state tmux fmses:fm-wk-generic)" = ambiguous ]
+  ' _ "$ROOT" || fail "manual launch did not reset budget while preserving ambiguous"
+  gen=$(sed -n 's/^spawn_gen=//p' "$dir/home/state/wk-generic.meta")
+  printf '%s\n' "$gen" > "$dir/home/state/.worker-exit-wk-generic"
+  BASH_ENV="$dir/generic-env.sh" run_tick "$dir" || fail "later proven exit tick failed"
+  [ "$(launches "$dir")" = 2 ] || fail "later proven exit was not automatically recovered"
+  pass "generic classifier worker rearms after manual relaunch and recovers a later exit"
+}
+
+test_generic_parked_worker_rearms_after_manual_relaunch
 test_stale_failed_run_is_not_named
 test_other_branch_run_is_not_named
 test_exited_agent_is_relaunched_with_work_kept_and_a_progress_note
