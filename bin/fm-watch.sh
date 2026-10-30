@@ -1327,12 +1327,15 @@ worker_liveness_tick() {
     id=${meta##*/}
     id=${id%.meta}
     case "$id" in ''|*[!A-Za-z0-9._-]*) continue ;; esac
+    # Newly launched workers are still inside their startup grace. Avoid even
+    # the recovery-grade endpoint probe until that grace has elapsed.
+    [ "$(age_of "$meta")" -ge "$WORKER_LIVENESS_GRACE_SECS" ] || continue
     fm_worker_liveness_probe "$meta" "$id"
     bound_marker="$STATE/.worker-relaunch-bound-$id"
     reason='' notify_key='' err=''
     case "$FM_WK_LIVE_STATUS" in
       relaunchable)
-        if [ "$tried" -eq 1 ] || [ "$(age_of "$meta")" -lt "$WORKER_LIVENESS_GRACE_SECS" ]; then
+        if [ "$tried" -eq 1 ]; then
           :
         elif [ -e "$bound_marker" ] || [ -L "$bound_marker" ]; then
           :

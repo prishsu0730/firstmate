@@ -788,6 +788,17 @@ fm_git_worktree() {
   git -C "$repo" worktree add --quiet -b "$branch" "$worktree"
 }
 
+# Expected trailing command in the staged ordinary-worker launch protocol.
+fm_test_worker_exit_suffix() {  # <home> <id>
+  local state gen record stage
+  state=$(cd "$1/state" && pwd -P) || return 1
+  gen=$(sed -n 's/^spawn_gen=//p' "$state/$2.meta")
+  record="$state/.worker-exit-$2"
+  stage="$record.$gen.tmp"
+  printf '\n(umask 077; printf "%%s\\n" %s > %s && mv -f %s %s)' \
+    "'${gen//\'/\'\\\'\'}'" "'${stage//\'/\'\\\'\'}'" "'${stage//\'/\'\\\'\'}'" "'${record//\'/\'\\\'\'}'"
+}
+
 # --- state/<id>.meta writers ------------------------------------------------
 
 # fm_write_meta <file> <key=val> ...: write the given key=val lines to a meta
