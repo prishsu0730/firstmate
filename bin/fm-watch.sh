@@ -256,6 +256,7 @@ WATCH_HOME_EXISTED=0
 # and wake emission (secondmate_liveness_tick below).
 # shellcheck source=/dev/null # Analyzed separately as a canonical lint root.
 . "$SCRIPT_DIR/fm-secondmate-liveness-lib.sh"
+. "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -1532,7 +1533,7 @@ EOF
   fi
   repeat_secs=$PAUSE_RESURFACE_SECS
   if [ -n "$anchor" ]; then
-    repeat_secs=$(status_pause_recheck_secs "$(status_declared_wait_line "$anchor")" "$PAUSE_RESURFACE_SECS")
+    repeat_secs=$(watch_pause_recheck_secs "$(status_declared_wait_line "$anchor")")
   fi
   mtime=''
   [ -n "$anchor" ] && mtime=$(stat_mtime "$anchor")
@@ -1771,7 +1772,7 @@ handle_paused_stale() {  # <window> <task> <hash>
   elif status_paused_awaits_firstmate "$last"; then
     # A wait on main is owed by the supervisor, not the outside world: wake after
     # about an hour (FM_MAIN_WAIT_SECS) and repeat on that gap, never every tick.
-    min_age=$(status_pause_recheck_secs "$last" "$PAUSE_RESURFACE_SECS")
+    min_age=$(watch_pause_recheck_secs "$last")
     repeat_secs=$min_age
     detail="paused, waiting on main"
     reason="paused ${age}s, waiting on main - the next move is firstmate's, not an outside wait; act on it or answer the worker"
@@ -1999,12 +2000,20 @@ captain_call_declaration() {  # <task> <call-identity>
   printf 'captain-hold:%s:%s' "$2" "$(fm_wake_signal_sig "$STATE/$1.status" || true)"
 }
 
+watch_pause_recheck_secs() {
+  local line=$1 interval=$PAUSE_RESURFACE_SECS
+  if status_is_paused "$line" && ! status_paused_awaits_firstmate "$line"; then
+    interval=$PAUSE_SAFETY_RECHECK_SECS
+  fi
+  status_pause_recheck_secs "$line" "$interval"
+}
+
 # 0 when <declaration> has already been alarmed for this window inside the
 # current gap selected by status_pause_recheck_secs. A pure read: recording an alarm is the caller's,
 # so the throttle is never advanced by a sighting it just absorbed.
 stale_wait_throttled() {  # <window-key> <declaration> [status-line]
   local throttle="$STATE/.paused-resurfaced-$1" repeat_secs
-  repeat_secs=$(status_pause_recheck_secs "${3-}" "$PAUSE_RESURFACE_SECS")
+  repeat_secs=$(watch_pause_recheck_secs "${3-}")
   [ "$(cat "$throttle" 2>/dev/null || true)" = "$2" ] \
     && [ "$(age_of "$throttle")" -lt "$repeat_secs" ]
 }
@@ -2578,7 +2587,8 @@ auto_close_finished_records() {
 # can re-evaluate normal dispatch policy. The tasks command remains the sole
 # authority for held and blocked filtering.
 ready_queue_signal() {
-  local tool out count active marker fingerprint previous meta kind
+  local tool out count active marker fingerprint previous meta project lock state
+  local -a states
   tool=${FM_TASKS_AXI_BIN:-$SCRIPT_DIR/fm-tasks-axi.sh}
   out=$(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$tool" ready 2>/dev/null) || return 0
   count=$(printf '%s\n' "$out" | awk '
@@ -2590,13 +2600,21 @@ ready_queue_signal() {
     rm -f "$marker"
     return 0
   fi
-  active=0
-  for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
-    kind=$(fm_meta_get "$meta" kind 2>/dev/null || true)
-    [ "$kind" = secondmate ] || active=$((active + 1))
-  done
-  fingerprint="$count:$active"
+  fm_local_firstmate_state_dirs "$STATE" || return 0
+  states=("${FM_LOCAL_FIRSTMATE_STATES[@]}")
+  active=$(
+    for state in "${states[@]}"; do
+      for meta in "$state"/*.meta; do
+        [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+        project=$(fm_meta_get "$meta" project)
+        [ -d "$project" ] || continue
+        lock=$(fm_treehouse_project_lock_path "$project" 2>/dev/null) || continue
+        fm_project_capacity_occupants "$lock" "$project" "$STATE" "" || exit 1
+        printf '%s:%s\n' "$lock" "$FM_PROJECT_CAPACITY_OCCUPANTS"
+      done
+    done
+  ) || return 0
+  fingerprint="$count:$(printf '%s\n' "$active" | LC_ALL=C sort -u)"
   previous=$(cat "$marker" 2>/dev/null || true)
   [ "$previous" = "$fingerprint" ] && return 0
   fm_wake_append check "ready-queued-$count" "check: ready queued tasks: $count" || return 1
