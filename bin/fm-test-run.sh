@@ -932,48 +932,35 @@ portable_parallel_weight_for() {
 }
 
 portable_serial_weight_for() {
-  local want=$1 path ms
-  while read -r path ms; do
-    if [ "$path" = "$want" ]; then
-      printf '%s\n' "$ms"
-      return 0
-    fi
-  done < <(portable_serial_weight_hints)
-  printf '%s\n' "$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS"
+  local want=$1 ms
+  ms=$(portable_serial_weight_hints | awk -v want="$want" '$1 == want { print $2; exit }')
+  printf '%s\n' "${ms:-$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS}"
 }
 
 # Longest-processing-time assignment of the serial remainder to
 # PORTABLE_SERIAL_SHARDS bins, printing "<shard>\t<script>" for every script.
 # Deterministic: candidates are ordered by hint descending then path, and ties
 # between equally loaded bins always take the lowest bin index.
+# The hint table and the lane listing share one stream so the result never
+# depends on nested process substitutions, which macOS bash 3.2 can cross
+# between concurrent producers and so pack the same lane differently per call.
 portable_serial_assignments() {
-  local ms script i best best_load
-  local -a loads=()
-  i=1
-  while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
-    loads[i]=0
-    i=$((i + 1))
-  done
-  while IFS=$'\t' read -r ms script; do
-    [ -n "$script" ] || continue
-    best=1
-    best_load=${loads[1]}
-    i=2
-    while [ "$i" -le "$PORTABLE_SERIAL_SHARDS" ]; do
-      if [ "${loads[i]}" -lt "$best_load" ]; then
-        best_load=${loads[i]}
-        best=$i
-      fi
-      i=$((i + 1))
-    done
-    loads[best]=$((best_load + ms))
-    printf '%s\t%s\n' "$best" "$script"
-  done < <(
-    while IFS= read -r script; do
-      [ -n "$script" ] || continue
-      printf '%s\t%s\n' "$(portable_serial_weight_for "$script")" "$script"
-    done < <(list_portable_serial) | LC_ALL=C sort -t$'\t' -k1,1nr -k2,2
-  )
+  { portable_serial_weight_hints; printf '%s\n' '--'; list_portable_serial; } |
+    awk -v fallback="$PORTABLE_SERIAL_DEFAULT_WEIGHT_MS" '
+      /^--$/ { listing = 1; next }
+      !listing { if (NF) { hint[$1] = $2 }; next }
+      NF { printf "%s\t%s\n", ($1 in hint) ? hint[$1] : fallback, $1 }
+    ' |
+    LC_ALL=C sort -t$'\t' -k1,1nr -k2,2 |
+    awk -F'\t' -v shards="$PORTABLE_SERIAL_SHARDS" '
+      BEGIN { for (i = 1; i <= shards; i++) { load[i] = 0 } }
+      NF >= 2 && $2 != "" {
+        best = 1
+        for (i = 2; i <= shards; i++) { if (load[i] < load[best]) { best = i } }
+        load[best] += $1
+        printf "%d\t%s\n", best, $2
+      }
+    '
 }
 
 # Parse "<k>of<n>" from a portable-serial shard lane and echo <k>, refusing when
