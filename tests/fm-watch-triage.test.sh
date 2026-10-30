@@ -6731,6 +6731,52 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
   pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
+test_heartbeat_surfaces_ready_queue_when_no_work_is_under_way() {
+  local dir state fakebin out pid drain_out
+  dir=$(make_case heartbeat-ready-queue); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; drain_out="$dir/drain.out"
+  mkdir -p "$dir/data"
+  cat > "$fakebin/fm-tasks-axi" <<'SH'
+#!/usr/bin/env bash
+printf 'ready[2]{queued}\n  - first\n  - second\n'
+SH
+  chmod +x "$fakebin/fm-tasks-axi"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 FM_TASKS_AXI_BIN="$fakebin/fm-tasks-axi" "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "an idle home with ready queued work did not wake"
+  grep -Fx 'check: ready queued tasks: 2' "$out" >/dev/null \
+    || fail "ready-queue wake did not name the dispatchable count: $(cat "$out")"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2>/dev/null \
+    || fail "drain after ready-queue wake failed"
+  grep -F 'ready-queued-2' "$drain_out" >/dev/null \
+    || fail "ready-queue wake was not durable"
+  pass "an idle home wakes once when dispatchable queued work is available"
+}
+
+test_declared_pause_rechecks_only_on_change_or_safety_interval() {
+  local dir state marker
+  dir=$(make_case declared-pause-safety); state="$dir/state"
+  marker="$state/.paused-resurfaced-test_fm-pause"
+  printf 'declared:unchanged' > "$marker"
+  set_mtime "$(( $(date +%s) - 3600 ))" "$marker"
+  FM_STATE_OVERRIDE="$state" FM_PAUSE_SAFETY_RECHECK_SECS=86400 bash -c '
+    . "$1"
+    wake() { :; }
+    resurface_absorbed "test:fm-pause" "$2" 3600 "stale: unchanged" "declared:unchanged" 86400 86400
+  ' _ "$WATCH" "$marker" || fail "unchanged pause recheck helper failed"
+  [ ! -s "$state/.wake-queue" ] || fail "unchanged declared pause re-woke before the safety interval"
+  FM_STATE_OVERRIDE="$state" FM_PAUSE_SAFETY_RECHECK_SECS=86400 bash -c '
+    . "$1"
+    wake() { :; }
+    resurface_absorbed "test:fm-pause" "$2" 1 "stale: changed" "declared:changed" 0 86400
+  ' _ "$WATCH" "$marker" || fail "changed pause recheck helper failed"
+  grep -F 'stale: changed' "$state/.wake-queue" >/dev/null \
+    || fail "changed declared pause did not re-wake promptly"
+  pass "declared pauses recheck on a changed declaration or the low-frequency safety interval"
+}
+
 # --- beacon stays fresh while absorbing -------------------------------------
 
 test_beacon_stays_fresh_while_absorbing() {
@@ -7275,6 +7321,8 @@ test_heartbeat_leaves_an_unlanded_done_ship_alone
 test_heartbeat_auto_closes_a_squash_merged_ship
 test_heartbeat_auto_closes_a_local_main_ship
 test_heartbeat_surfaces_one_auto_close_refusal
+test_heartbeat_surfaces_ready_queue_when_no_work_is_under_way
+test_declared_pause_rechecks_only_on_change_or_safety_interval
 test_beacon_stays_fresh_while_absorbing
 test_afk_signal_records_heartbeat_endpoint
 test_afk_present_reverts_watcher_to_one_shot

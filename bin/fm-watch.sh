@@ -190,6 +190,7 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
+DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 mkdir -p "$STATE"
 # A home that never existed (a state-only test fixture) is not a home that
 # disappeared, so the per-poll home-gone exit below applies only when it did.
@@ -303,6 +304,7 @@ WATCHER_STALE_GRACE=${FM_WATCHER_STALE_GRACE:-${FM_GUARD_GRACE:-$(fm_poll_derive
 WATCHER_STALL_BOUND=$(fm_watcher_stall_bound "$POLL")
 HEARTBEAT=${FM_HEARTBEAT:-600}        # base seconds between heartbeat scans
 HEARTBEAT_MAX=${FM_HEARTBEAT_MAX:-7200}  # heartbeat backoff cap
+PAUSE_SAFETY_RECHECK_SECS=${FM_PAUSE_SAFETY_RECHECK_SECS:-86400}
 CHECK_INTERVAL=${FM_CHECK_INTERVAL:-300}  # seconds between *.check.sh sweeps
 CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 HOME_SUMMARY_INTERVAL=${FM_HOME_SUMMARY_INTERVAL:-300}
@@ -1709,8 +1711,8 @@ busy_turn_over_age() {  # <task>
 }
 
 # Absorb a stale pane under a declared external-wait pause (paused:) or a
-# dead-agent captain-held transfer, and re-surface it once every
-# PAUSE_RESURFACE_SECS for a recheck so it cannot rot invisibly. Called on any
+# dead-agent captain-held transfer, and re-surface it only when its declaration
+# changes or once per low-frequency safety interval so it cannot rot invisibly. Called on any
 # stale poll once pause_state_class permits the bounded cadence, so it must be
 # cheap: it NEVER re-reads crew state. The re-surface age is anchored on the
 # status file mtime, not a per-hash marker, so a churny idle pane (a ticking
@@ -1737,8 +1739,12 @@ handle_paused_stale() {  # <window> <task> <hash>
   now=$(date +%s)
   age=$(( now - mtime ))
   last=$(status_declared_wait_line "$statusf")
-  min_age=$PAUSE_RESURFACE_SECS
-  repeat_secs=$PAUSE_RESURFACE_SECS
+  # A declared external wait already surfaced when it was written. Do not spend
+  # a supervision turn for the same declaration on every long-poll cadence;
+  # only a changed declaration resets this scoped throttle. Keep one daily
+  # safety recheck so a forgotten wait cannot become permanently invisible.
+  min_age=$PAUSE_SAFETY_RECHECK_SECS
+  repeat_secs=$PAUSE_SAFETY_RECHECK_SECS
   declaration="declared:$(fm_wake_signal_sig "$statusf" || true)"
   if status_is_captain_held "$last"; then
     if away_record_present; then
@@ -2565,6 +2571,38 @@ auto_close_finished_records() {
     return 1
   done
   return 0
+}
+
+# The watcher never dispatches. It only turns a queue that can make progress
+# into one durable check wake after capacity changes, so the owning firstmate
+# can re-evaluate normal dispatch policy. The tasks command remains the sole
+# authority for held and blocked filtering.
+ready_queue_signal() {
+  local tool out count active marker fingerprint previous meta kind
+  tool=${FM_TASKS_AXI_BIN:-$SCRIPT_DIR/fm-tasks-axi.sh}
+  out=$(FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" "$tool" ready 2>/dev/null) || return 0
+  count=$(printf '%s\n' "$out" | awk '
+    /^ready\[[0-9]+\]/ { line=$0; sub(/^ready\[/, "", line); sub(/\].*$/, "", line); print line; exit }
+  ')
+  case "$count" in ''|*[!0-9]*) return 0 ;; esac
+  marker="$STATE/.ready-queued-signal"
+  if [ "$count" -eq 0 ]; then
+    rm -f "$marker"
+    return 0
+  fi
+  active=0
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] && [ ! -L "$meta" ] || continue
+    kind=$(fm_meta_get "$meta" kind 2>/dev/null || true)
+    [ "$kind" = secondmate ] || active=$((active + 1))
+  done
+  fingerprint="$count:$active"
+  previous=$(cat "$marker" 2>/dev/null || true)
+  [ "$previous" = "$fingerprint" ] && return 0
+  fm_wake_append check "ready-queued-$count" "check: ready queued tasks: $count" || return 1
+  printf '%s' "$fingerprint" > "$marker" || return 1
+  FM_READY_QUEUE_REASON="check: ready queued tasks: $count"
+  return 2
 }
 
 # event_wait_or_sleep: the terminal wait of each supervision cycle. For a home
@@ -3546,6 +3584,14 @@ EOF
       fi
       touch "$STATE/.last-heartbeat"
       wake "$reason"
+    fi
+    ready_queue_signal
+    ready_queue_status=$?
+    if [ "$ready_queue_status" -eq 1 ]; then
+      exit 1
+    elif [ "$ready_queue_status" -eq 2 ]; then
+      touch "$STATE/.last-heartbeat"
+      wake "$FM_READY_QUEUE_REASON"
     fi
     # Triage: in always-on mode a heartbeat is benign unless the cheap fleet-scan
     # turns up a captain-relevant status the per-wake path missed. Absorb the
