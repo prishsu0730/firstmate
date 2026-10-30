@@ -1757,7 +1757,13 @@ wedge_dead_record() {  # <window> <since-file> <triage-label> <idle-age> <pane-h
       if [ -f "$STATE/$task.meta" ]; then
         fm_worker_liveness_probe "$STATE/$task.meta" "$task"
         case "$FM_WK_LIVE_STATUS" in
-          relaunchable|missing-unproven) date +%s > "$since_file"; return 0 ;;
+          relaunchable|missing-unproven)
+            if fm_wk_live_require_backlog && fm_backlog_row_probe "$(fm_wk_live_data_dir)" "$task" \
+              && [ "$FM_BACKLOG_ROW_STATE" = "in_flight no no" ]; then
+              date +%s > "$since_file"
+              return 0
+            fi
+            ;;
         esac
       fi
       ;;
