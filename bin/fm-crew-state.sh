@@ -1268,7 +1268,7 @@ if ! pane_readable "$BACKEND_TARGET"; then
   case "$AGENT_STATE" in
     alive) ;;
     missing) emit unknown none "backend target gone: $BACKEND_TARGET" ;;
-    dead) emit unknown none "backend target gone: $BACKEND_TARGET (agent exited)" ;;
+    dead) emit unknown none "backend target gone: $BACKEND_TARGET (agent gone, pane shell remains)" ;;
     *) emit unknown none "backend unreachable ($TASK_BACKEND endpoint state: $AGENT_STATE)" ;;
   esac
 fi

@@ -7,8 +7,8 @@
 #   1. Adapter contract: every verified harness gets its own verified exit
 #      command and interrupt key, delivered as bytes to the endpoint.
 #   2. Backend capability: a backend that cannot deliver the harness's
-#      interrupt key, and a backend with no recovery-grade agent-state
-#      classifier, both refuse instead of acting blind.
+#      interrupt key, and an endpoint that cannot prove an agent stopped, both
+#      refuse instead of acting blind.
 #   3. Exact-id scoping: a window label, an explicit endpoint, an unknown id,
 #      and a record bound to another task are all refused.
 #   4. Verb allowlist: no arbitrary text, no raw keys, no resume.
@@ -21,6 +21,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-backend.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -582,13 +584,23 @@ test_orca_refuses_an_escape_harness_interrupt() {
     echo "orca_worktree_id=wt-1::/orca/wt-1"
   } > "$dir/home/state/t1.meta.new"
   sed 's|^window=.*|window=fm-t1|' "$dir/home/state/t1.meta.new" > "$dir/home/state/t1.meta"
+  # The terminal itself answers, so only the undeliverable key can refuse.
+  cat > "$dir/fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  'status --json') echo '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}' ;;
+  'terminal read') echo '{"ok":true,"result":{"text":"shell"}}' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/orca"
   out=$(run_control "$dir" t1 interrupt); rc=$?
   expect_code 1 "$rc" "an Escape harness on orca should refuse"
   assert_contains "$out" "cannot deliver" "refusal should name the undeliverable key"
   pass "fm-control interrupt: a backend that cannot deliver the harness's key refuses instead of sending another"
 }
 
-test_unverified_state_backends_refuse_stop_verbs() {
+test_unreadable_generic_endpoints_refuse_stop_verbs() {
   local dir out rc backend
   for backend in zellij cmux; do
     dir=$(new_case "nostate-$backend")
@@ -608,26 +620,30 @@ test_unverified_state_backends_refuse_stop_verbs() {
     fi
     out=$(run_control "$dir" t1 exit); rc=$?
     expect_code 1 "$rc" "exit on $backend should refuse"$'\n'"$out"
-    assert_contains "$out" "no recovery-grade agent-state classifier" \
-      "the $backend refusal should name the missing stop proof"
+    assert_contains "$out" "reads 'unreadable'" \
+      "the $backend refusal should name the unproven endpoint"
     [ -z "$(literals "$dir")" ] || fail "$backend must receive no exit command"
     out=$(run_control "$dir" t1 relaunch --note x); rc=$?
     expect_code 1 "$rc" "relaunch on $backend should refuse"$'\n'"$out"
-    assert_contains "$out" "no recovery-grade agent-state classifier" \
-      "the $backend relaunch refusal should name the missing stop proof"
+    assert_contains "$out" "reads 'unreadable'" \
+      "the $backend relaunch refusal should name the unproven endpoint"
   done
-  pass "fm-control: a backend that cannot prove an agent stopped refuses exit and relaunch"
+  pass "fm-control: an endpoint that cannot prove an agent stopped refuses exit and relaunch"
 }
 
-test_state_verified_backends_are_exactly_tmux_and_herdr() {
-  fm_control_backend_state_verified tmux || fail "tmux has a recovery-grade classifier"
-  fm_control_backend_state_verified herdr || fail "herdr has a recovery-grade classifier"
+test_stop_proof_gate_is_per_task_kind() {
   local backend
-  for backend in zellij orca cmux; do
+  for backend in tmux herdr zellij orca cmux; do
     fm_control_backend_state_verified "$backend" \
-      && fail "$backend has no recovery-grade classifier and must not claim one"
+      || fail "$backend workers can prove an exit through the launch-file record"
   done
-  pass "fm-control-lib: stop-proving verbs are gated on the backends that really classify agent state"
+  fm_control_secondmate_state_verified tmux || fail "tmux secondmates have a recovery-grade classifier"
+  fm_control_secondmate_state_verified herdr || fail "herdr secondmates have a recovery-grade classifier"
+  for backend in zellij orca cmux; do
+    fm_control_secondmate_state_verified "$backend" \
+      && fail "$backend secondmates have no recovery-grade classifier and must not claim one"
+  done
+  pass "fm-control-lib: worker stop proof covers every backend while secondmates keep their narrower gate"
 }
 
 # --- 3. exact-id scoping ----------------------------------------------------
@@ -1370,8 +1386,8 @@ test_prefixed_recorded_harness_reaches_each_control_verb
 test_backend_key_capability_matrix
 test_harness_kind_capability
 test_orca_refuses_an_escape_harness_interrupt
-test_unverified_state_backends_refuse_stop_verbs
-test_state_verified_backends_are_exactly_tmux_and_herdr
+test_unreadable_generic_endpoints_refuse_stop_verbs
+test_stop_proof_gate_is_per_task_kind
 test_window_label_is_refused_with_the_exact_id
 test_explicit_endpoint_is_refused
 test_unknown_task_is_refused

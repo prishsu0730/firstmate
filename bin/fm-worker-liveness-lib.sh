@@ -105,7 +105,7 @@ fm_worker_liveness_recent_attempts() {  # <id> <window-secs>
 #
 # Read-only probe of one ordinary worker. Populates:
 #
-#   FM_WK_LIVE_STATUS  silent | alive | relaunchable | skipped
+#   FM_WK_LIVE_STATUS  silent | alive | relaunchable | missing-unproven | skipped
 #   FM_WK_LIVE_STATE   the raw agent-state word
 #   FM_WK_LIVE_CAUSE   relaunch cause phrase, on relaunchable
 #   FM_WK_LIVE_REASON  why the worker was left alone, on skipped
@@ -113,8 +113,8 @@ fm_worker_liveness_recent_attempts() {  # <id> <window-secs>
 #                      relaunch can refuse when the record moved underneath it
 #
 # `silent` is every case that is not this library's to recover and needs no
-# log line: another kind, a remote placement, an unsupported backend, no
-# endpoint, a deliberate stop, a pending close, or a finished or held worker.
+# log line: another kind, a remote placement, no endpoint, a deliberate
+# stop, a pending close, or a finished or held worker.
 # `skipped` is an inconclusive agent reading, worth one triage line.
 fm_worker_liveness_probe() {  # <meta> <id>
   local meta=$1 id=$2 kind backend target last verb state absence

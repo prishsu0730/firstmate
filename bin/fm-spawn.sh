@@ -5916,9 +5916,11 @@ fi
 case "$KIND" in
   ship|scout)
     if [ -e "$STATE/.worker-relaunch-bound-$ID" ] || [ -L "$STATE/.worker-relaunch-bound-$ID" ]; then
-      printf '%s\trearmed\n' "$(date +%s)" >> "$STATE/.worker-relaunch-$ID" \
-        && rm -f "$STATE/.worker-relaunch-bound-$ID" \
-        || { echo "error: $KIND $ID launched but its automatic relaunch pause could not be cleared" >&2; exit 1; }
+      if ! { printf '%s\trearmed\n' "$(date +%s)" >> "$STATE/.worker-relaunch-$ID" \
+        && rm -f "$STATE/.worker-relaunch-bound-$ID"; }; then
+        echo "error: $KIND $ID launched but its automatic relaunch pause could not be cleared" >&2
+        exit 1
+      fi
     fi
     ;;
 esac

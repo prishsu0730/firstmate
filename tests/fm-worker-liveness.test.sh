@@ -601,6 +601,7 @@ SH
   BASH_ENV="$dir/generic-env.sh" case_env "$dir" "$ROOT/bin/fm-control.sh" wk-generic relaunch --note 'Resume work' \
     > "$dir/manual.out" 2>&1 || fail "manual generic relaunch failed: $(cat "$dir/manual.out")"
   [ ! -e "$dir/home/state/.worker-relaunch-bound-wk-generic" ] || fail "manual launch left retry pause"
+  # shellcheck disable=SC2016 # Expanded by the inner shell.
   BASH_ENV="$dir/generic-env.sh" case_env "$dir" bash -c '
     . "$1/bin/fm-worker-liveness-lib.sh"
     STATE=$FM_HOME/state
