@@ -2406,12 +2406,39 @@ test_inherited_git_configuration() {
   status=$?
   expect_code 0 "$status" "inherited Git configuration spawn failed: $out"
   launch=$(cat "$LAUNCH_LOG")
-  result=$(cd "$WT_DIR" && env -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 bash -c "$launch") \
+  result=$(cd "$WT_DIR" && env GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0="$key" \
+    GIT_CONFIG_VALUE_0="helper with spaces" GIT_CONFIG_KEY_1=test.marker \
+    GIT_CONFIG_VALUE_1="$value" bash -c "$launch") \
     || fail "generated launch lost inherited Git configuration"
   [ "$result" = "helper with spaces
 $value
 $HOME_DIR/state/$id.git-hooks" ] || fail "inherited Git entries or appended hooks changed: $result"
   [ ! -e "$WT_DIR/should-not-exist" ] || fail "Git configuration value executed as shell code"
+  local filter
+  for filter in empty admitted; do
+    : > "$HOME_DIR/config/launch-env-allowlist"
+    if [ "$filter" = admitted ]; then
+      printf '%s\n' GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 \
+        > "$HOME_DIR/config/launch-env-allowlist"
+    fi
+    out=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraHeader \
+      GIT_CONFIG_VALUE_0='Authorization: Bearer SECRET' \
+      run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+      "$id" "$PROJ_DIR" 'git config --get test.marker; git config --get core.hooksPath')
+    status=$?
+    expect_code 0 "$status" "filtered Git configuration spawn failed: $out"
+    launch=$(cat "$LAUNCH_LOG")
+    assert_not_contains "$launch" 'Authorization: Bearer SECRET' "launch persisted invoking credentials"
+    result=$(cd "$WT_DIR" && env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=test.marker \
+      GIT_CONFIG_VALUE_0=destination bash -c "$launch") \
+      || fail "filtered Git configuration launch failed"
+    if [ "$filter" = admitted ]; then
+      [ "$result" = "destination
+$HOME_DIR/state/$id.git-hooks" ] || fail "admitted destination Git entry lost: $result"
+    else
+      [ "$result" = "$HOME_DIR/state/$id.git-hooks" ] || fail "unadmitted destination Git entry leaked: $result"
+    fi
+  done
   for count in -1 invalid 2147483647 999999999999999999999999; do
     out=$(GIT_CONFIG_COUNT=$count run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
       "$id" "$PROJ_DIR" 'git status' 2>&1)
