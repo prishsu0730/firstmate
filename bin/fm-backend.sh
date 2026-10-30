@@ -997,8 +997,14 @@ fm_backend_target_exists() {  # <backend> <target> [expected-label]
   esac
 }
 
-# fm_backend_agent_state: recovery-grade states are alive, dead, missing,
-# ambiguous, unreadable, and unverified. Adapter classifiers remain authoritative.
+# fm_backend_agent_state: recovery-grade states are:
+#   alive - a process-level adapter classifier verifies a running harness.
+#   dead - the endpoint exists with proven agent exit or absence.
+#   missing - inventory authoritatively omits the endpoint; stop proof is separate.
+#   ambiguous - no attributable process or matching exit proof.
+#   unreadable - a required read failed or contradicted itself.
+#   unverified - no applicable classifier or ordinary-worker record.
+# Adapter classifiers remain authoritative.
 # Ordinary workers on other backends prove exit with a launch-written spawn_gen
 # record; absent or stale proof is ambiguous, and failed reads are unreadable.
 # Missing endpoints require the control plane's absence proof before recovery.
