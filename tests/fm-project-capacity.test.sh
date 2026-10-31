@@ -744,8 +744,44 @@ test_relaunch_and_send_require_readmission() {
   rc=0
   out=$(run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
   expect_code 0 "$rc" "free place refused relaunch or counted itself: $out"
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --current-gen --source claude-hook --event stop
+  mkdir -p "$home/state/task-r.inbox/handled"
+  mv "$home/state/task-r.inbox/001.msg" "$home/state/task-r.inbox/handled/001.msg"
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" task-r ' ' 2>&1) || rc=$?
+  expect_code 1 "$rc" "empty steer was accepted: $out"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 0 "$rc" "undelivered steer retained capacity: $out"
   pass "released workers require admission for inbox, typed, Enter, and relaunch delivery"
 }
+
+test_reader_only_steer_releases_capacity() {
+  local case_dir home out rc
+  case_dir=$(make_case reader-only task-g)
+  home="$case_dir/home"
+  declare_capacity "$home" "project 1"
+  write_live "$home" task-g "$case_dir/project" "harness=grok"
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" task-g 'resume work' 2>&1) || rc=$?
+  expect_code 0 "$rc" "reader-only steer failed: $out"
+  assert_absent "$home/state/task-g.busy-state" "reader-only steer created an uncleared activity record"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "pending inbox lost its place: $out"
+  mkdir -p "$home/state/task-g.inbox/handled"
+  mv "$home/state/task-g.inbox/001.msg" "$home/state/task-g.inbox/handled/001.msg"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 0 "$rc" "completed reader-only steer retained capacity: $out"
+  pass "reader-only steers retain pending delivery and release completed work"
+}
+
+test_reader_only_steer_releases_capacity
 
 test_relaunch_and_send_require_readmission
 test_freed_place_admits_one_manual_spawn

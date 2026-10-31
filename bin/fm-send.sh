@@ -451,11 +451,20 @@ shift
 # untouched (contract: bin/fm-lease-lib.sh).
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
+SEND_CAPACITY_KEEP=0
+SEND_CAPACITY_RESERVED=0
+fm_send_capacity_cleanup() {
+  if [ "$SEND_CAPACITY_RESERVED" = 1 ] && [ "$SEND_CAPACITY_KEEP" = 0 ]; then
+    "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" idle --current-gen --source fm-recovery --event send-undelivered --only-if-event capacity-submit || true
+  fi
+}
+SEND_CAPACITY_LOCK=
+
 if [ -n "$TARGET_META" ]; then
   LEASE_GUARD_TASK=$(fm_send_id_from_meta "$TARGET_META")
   if [ -n "$LEASE_GUARD_TASK" ]; then
     fm_lease_guard "$LEASE_GUARD_TASK" "steer (fm-send)"
-    trap 'fm_lease_guard_release; [ -z "${SEND_CAPACITY_LOCK:-}" ] || fm_lock_release "$SEND_CAPACITY_LOCK"' EXIT
+    trap 'fm_send_capacity_cleanup; fm_lease_guard_release; [ -z "${SEND_CAPACITY_LOCK:-}" ] || fm_lock_release "$SEND_CAPACITY_LOCK"' EXIT
   fi
 fi
 
@@ -532,6 +541,7 @@ PENDING_REPLY_CORR=
 PENDING_REPLY_CREATED=0
 TARGET_TASK_ID=
 fm_send_known_undelivered_cleanup() {
+  SEND_CAPACITY_KEEP=0
   [ -n "$PENDING_REPLY_CORR" ] || return 0
   if [ "$PENDING_REPLY_CREATED" = 1 ]; then
     fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR"
@@ -757,7 +767,6 @@ fm_send_feed_resolved_holds() { # <answer-text>
 # send implementation. A failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
 
-SEND_CAPACITY_LOCK=
 if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
   [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ] &&
   { [ "${1:-}" != --key ] || [ "${2:-}" = Enter ]; }; then
@@ -778,10 +787,13 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
             exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
           fi
         fi
-        if [ -f "$STATE/$SEND_ID.busy-gen" ]; then
-          "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" unknown --current-gen --source fm-send --event submit || exit 1
-        else
-          "$SCRIPT_DIR/fm-busy-event.sh" arm "$STATE" "$SEND_ID" --state unknown --source fm-send --event submit >/dev/null || exit 1
+        if [ -n "$(fm_busy_sources_for_harness "$TARGET_HARNESS")" ]; then
+          if [ -f "$STATE/$SEND_ID.busy-gen" ]; then
+            "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" unknown --current-gen --source fm-recovery --event capacity-submit || exit 1
+          else
+            "$SCRIPT_DIR/fm-busy-event.sh" arm "$STATE" "$SEND_ID" --state unknown --source fm-recovery --event capacity-submit >/dev/null || exit 1
+          fi
+          SEND_CAPACITY_RESERVED=1
         fi
       fi
     fi
@@ -819,6 +831,7 @@ if [ "${1:-}" = "--key" ]; then
     echo "error: key '$key' not sent to $T ($TARGET_BACKEND send failed; tried $RESOLUTION_TRIED)" >&2
     exit 1
   fi
+  SEND_CAPACITY_KEEP=1
   fm_send_clear_after_interrupt "$semantic_key" || exit 1
   fm_send_record_interrupt "$semantic_key" || exit 1
 else
@@ -1080,6 +1093,7 @@ else
       echo "error: steer not sent to $INBOX_TASK_ID: its inbox record could not be written under $STATE/$INBOX_TASK_ID.inbox" >&2
       exit 1
     fi
+    SEND_CAPACITY_KEEP=1
     fm_lock_release "$INBOX_META_LOCK"
     # Enqueue IS durable delivery to the task's record: mark the pending
     # expectation delivered now, without resolving it - only a correlated
@@ -1170,6 +1184,7 @@ else
   # verdict preserves the loud refusal boundary. Only LOCAL targets reach this
   # block: remote text rides the inbox leg above, and remote --key exits
   # earlier.
+  SEND_CAPACITY_KEEP=1
   send_rc=0
   if verdict=$(fm_backend_send_text_submit "$TARGET_BACKEND" "$T" "$MESSAGE" "$retries" "$sleep_s" "$settle" "$EXPECTED_LABEL"); then
     :
