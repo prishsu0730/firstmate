@@ -293,6 +293,7 @@ fm_send_clear_after_interrupt() { # <key>
 
 fm_send_normalize_key() { # <key>
   case "$1" in
+  Enter | enter | ENTER | Return | return | C-m | C-M | C-j | C-J | ^M | ^J | $'\r' | $'\n') printf '%s' Enter ;;
   Escape | escape | Esc | esc) printf '%s' Escape ;;
   *) printf '%s' "$1" ;;
   esac
@@ -761,7 +762,7 @@ fm_send_feed_resolved_holds() { # <answer-text>
 
 if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
   [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ] &&
-  { [ "${1:-}" != --key ] || [ "${2:-}" = Enter ]; }; then
+  { [ "${1:-}" != --key ] || [ "$(fm_send_normalize_key "${2:-}")" = Enter ]; }; then
   SEND_PROJECT=$(fm_meta_get "$TARGET_META" project)
   if [ -d "$SEND_PROJECT" ] && [ -z "$(fm_meta_get "$TARGET_META" pr)" ]; then
     SEND_CONFIG=$(fm_project_capacity_config_dir "$FM_HOME" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}") || exit 1

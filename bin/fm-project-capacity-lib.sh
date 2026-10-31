@@ -92,7 +92,7 @@ FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
-  local verdict activity endpoint backend
+  local verdict activity endpoint backend message
   [ -r "$1/$2.meta" ] || return 1
   backend=$(fm_backend_of_meta "$1/$2.meta")
   verdict=$(fm_meta_get "$1/$2.meta" worktree)
@@ -104,11 +104,25 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   endpoint=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
     meta="$2/$3.meta"
-    fm_backend_agent_state "$(fm_backend_of_meta "$meta")" "$(fm_backend_target_of_meta "$meta")"
+    backend=$(fm_backend_of_meta "$meta")
+    target=$(fm_backend_target_of_meta "$meta")
+    endpoint=$(fm_backend_agent_state "$backend" "$target")
+    if [ "$endpoint" = alive ]; then
+      fm_backend_capture "$backend" "$target" 1 >/dev/null || exit 1
+    fi
+    printf "%s" "$endpoint"
   ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2" 2>/dev/null) || endpoint=unknown
   case "$endpoint" in
     missing|dead) return 0 ;;
+    alive) ;;
+    *) return 1 ;;
   esac
+  if [ -e "$1/$2.inbox" ]; then
+    [ -d "$1/$2.inbox" ] && [ -r "$1/$2.inbox" ] && [ -x "$1/$2.inbox" ] || return 1
+    for message in "$1/$2.inbox/"*.msg; do
+      [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
+    done
+  fi
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in
