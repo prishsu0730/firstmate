@@ -20,16 +20,16 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 case "${1:-}" in
   -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 0 ;;
 esac
-[ "$#" -gt 0 ] && fm_pr_url_parse "$1" || {
+if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
   echo 'error: a valid PR URL is required' >&2; exit 2;
-}
+fi
 URL=$FM_PR_URL
 shift
 fm_local_firstmate_state_dirs "$STATE" || {
   printf 'error: cannot resolve PR ownership: %s\n' "$FM_LOCAL_FIRSTMATE_ERROR" >&2
   exit 1
 }
-owner_home= owner_state= owner_id=
+owner_home='' owner_state='' owner_id=''
 for state in "${FM_LOCAL_FIRSTMATE_STATES[@]}"; do
   [ -e "$state" ] || [ -L "$state" ] || continue
   [ -d "$state" ] && [ ! -L "$state" ] && [ -r "$state" ] && [ -x "$state" ] || {
