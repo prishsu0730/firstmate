@@ -865,6 +865,40 @@ test_typed_send_reserves_released_place() {
   pass 'key and typed sends reserve released capacity until fresh idle proof'
 }
 
+test_unarmed_sends_keep_their_place() {
+  local mode case_dir home out rc id
+  for mode in Enter typed; do
+    case_dir=$(make_case "unarmed-reservation-$mode" task-new)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 4'
+    for id in a b c sleeping; do
+      write_live "$home" "$id" "$case_dir/project" 'harness=cursor'
+    done
+    mkdir -p "$case_dir/cursor/project/agent-transcripts/conversation"
+    printf '{"workspacePath":"%s"}\n' "$home/worktree-sleeping" > "$case_dir/cursor/project/.workspace-trusted"
+    printf 'projects_root=%s\nworkspace_root=%s\n' "$case_dir/cursor" "$home/worktree-sleeping" > "$home/state/sleeping.cursor-session"
+    printf '%s\n' '{"role":"user"}' '{"type":"turn_ended"}' > "$case_dir/cursor/project/agent-transcripts/conversation/conversation.jsonl"
+    out=$(bash -c '. "$1/bin/fm-backend.sh"; . "$1/bin/fm-busy-lib.sh"; fm_busy_classify_meta "$2/state/sleeping.meta" sleeping "$2/state"' _ "$ROOT" "$home")
+    assert_contains "$out" 'idle cursor-transcript' 'the unarmed worker did not have positive idle proof'
+    printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+    case "$mode" in
+      Enter) set -- --key Enter ;;
+      typed) set -- /resume ;;
+    esac
+    rc=0
+    out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_RUN_TASK=sleeping FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+      PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode failed to deliver to an unarmed worker: $out"
+    assert_grep 'send-keys' "$case_dir/calls.log" "$mode did not reach the terminal"
+    assert_absent "$home/state/sleeping.busy-gen" "$mode armed an unarmed worker"
+    rc=0
+    out=$(FM_FAKE_RUN_TASK=sleeping spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode released an unarmed worker and admitted a fifth: $out"
+  done
+  pass 'unarmed workers accept key and typed sends while holding capacity'
+}
+
+test_unarmed_sends_keep_their_place
 test_typed_send_reserves_released_place
 test_run_activity_controls_release
 test_unread_steer_holds_fourth_place

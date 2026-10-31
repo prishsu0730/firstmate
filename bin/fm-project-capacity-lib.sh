@@ -149,6 +149,7 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
       activity=$(fm_run_timed 15 bash -c '
         . "$1/fm-backend.sh"
         . "$1/fm-busy-lib.sh"
+        fm_busy_current_gen "$2" "$3" >/dev/null || exit 1
         fm_busy_classify_meta "$2/$3.meta" "$3" "$2"
       ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
       case "$activity" in
