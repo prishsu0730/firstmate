@@ -860,6 +860,30 @@ test_stacked_task_may_start_from_an_open_tasks_commit() {
   pass "a stacked task may start from another open task's commit; its own new work stays claimed"
 }
 
+test_revision_replacement_requires_explicit_override() {
+  local out status saved_id=$NEW_ID revision
+  make_case revision-replacement
+  add_open_task "$OLD_ID" >/dev/null
+  for revision in "$OLD_ID-r2" "$OLD_ID-r12"; do
+    NEW_ID=$revision
+    write_new_brief "Replace the earlier job without naming a commit."
+    out=$(guard)
+    status=$?
+    expect_code 1 "$status" "revision replacement must refuse: $out"
+    assert_contains "$out" "$OLD_ID" "refusal must name the open job"
+    assert_contains "$out" "--supersedes" "refusal must offer supersedes"
+    assert_contains "$out" "--allow-duplicate" "refusal must offer duplicate override"
+    out=$(guard --supersedes "$OLD_ID")
+    expect_code 0 "$?" "explicit supersedes must proceed: $out"
+    out=$(guard --allow-duplicate)
+    expect_code 0 "$?" "explicit duplicate override must proceed: $out"
+    [ -f "$HOME_DIR/state/$OLD_ID.meta" ] || fail "earlier task was closed"
+  done
+  NEW_ID=$saved_id
+  pass "revision replacement requires an explicit override and preserves the earlier job"
+}
+
+test_revision_replacement_requires_explicit_override
 test_second_spawn_naming_same_commit_is_refused
 test_full_length_sha_is_matched_too
 test_supersedes_proceeds_and_records_link

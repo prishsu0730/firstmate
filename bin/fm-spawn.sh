@@ -60,8 +60,10 @@
 #   commit already on --base-branch is the task's starting point and never counts.
 #   --supersedes <task> excuses that one task and records supersedes=<task> in
 #   state/<id>.meta; --allow-duplicate proceeds past every match with a notice.
-#   Both are refused on scouts, secondmates, relaunches, and batches. Matches on
-#   anything looser than a SHA only print a warning.
+#   Both are refused on scouts, secondmates, relaunches, and batches. New
+#   revision ids ending in -r<digits> also refuse when their unversioned id
+#   matches an open task, including another revision. Other looser matches
+#   only print a warning.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a

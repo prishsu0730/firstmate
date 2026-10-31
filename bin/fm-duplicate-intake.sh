@@ -43,6 +43,9 @@
 # itself, so a retry, a relaunch, and promotion of the same id are never refused
 # by their own earlier claim.
 #
+# A new id ending in -r<digits> also collides with open tasks sharing its
+# unversioned id, including earlier revisions, without needing a named commit.
+#
 # Flags:
 #   --base-branch <branch> is the branch the new task starts from and targets, when
 #   it is not the default. Commits already on it are the task's starting point, so
@@ -235,6 +238,23 @@ for meta in "$STATE"/*.meta; do
   if [ -n "$pr" ] && fm_pr_url_parse "$pr" &&
     fm_pr_poll_merge_already_notified "$STATE" "$id" "$FM_PR_PROVIDER" "$FM_PR_HOST" "$FM_PR_PATH" "$FM_PR_NUMBER"; then
     continue
+  fi
+
+  # Revision suffixes explicitly signal a replacement, unlike title similarity.
+  if [[ "$NEW_ID" =~ ^(.+)-r[0-9]+$ ]]; then
+    revision_root=${BASH_REMATCH[1]}
+    prior_root=$id
+    if [[ "$id" =~ ^(.+)-r[0-9]+$ ]]; then
+      prior_root=${BASH_REMATCH[1]}
+    fi
+    if [ "$prior_root" = "$revision_root" ]; then
+      if [ "$ALLOW" -eq 1 ] || [ "$id" = "$SUPERSEDES" ]; then
+        printf 'notice: %s replaces open task %s under an explicit duplicate override\n' "$NEW_ID" "$id" >&2
+      else
+        printf 'error: %s replaces open task %s; pass --supersedes %s or --allow-duplicate to continue.\n' "$NEW_ID" "$id" "$id" >&2
+        exit 1
+      fi
+    fi
   fi
 
   hit=
