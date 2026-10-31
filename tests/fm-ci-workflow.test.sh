@@ -19,7 +19,7 @@ set -u
 
 CI_WORKFLOW="$ROOT/.github/workflows/ci.yml"
 
-assert_present "$CI_WORKFLOW" ".github/workflows/ci.yml is missing"
+[ -f "$CI_WORKFLOW" ] || fail ".github/workflows/ci.yml is missing"
 command -v ruby >/dev/null 2>&1 \
   || fail "ruby is required to parse .github/workflows/ci.yml as YAML"
 
@@ -249,6 +249,63 @@ RUBY
   pass "CI matrices cover every executable serial lane and canonical lint root exactly once"
 }
 
+test_merge_queue_required_checks() {
+  ruby -ryaml -rjson -ropen3 - "$ROOT" <<'RUBY' || fail "merge queue required checks contract"
+root = ARGV[0]
+ci = YAML.load_file(File.join(root, ".github/workflows/ci.yml"))
+compliance = YAML.load_file(File.join(root, ".github/workflows/no-mistakes-required.yml"))
+[ci, compliance].each do |workflow|
+  events = workflow.fetch("on") { workflow.fetch(true) }
+  raise "merge group checks never run" unless events.fetch("merge_group").fetch("types") == ["checks_requested"]
+end
+steps = compliance.fetch("jobs").fetch("check").fetch("steps")
+resolver = steps.find { |step| step["id"] == "queued-pr" }
+raise "resolver must run only for merge groups" unless resolver.fetch("if") == "github.event_name == 'merge_group'"
+action = steps.find { |step| step.fetch("uses", "").start_with?("kunchenguid/no-mistakes/") }
+inputs = action.fetch("with")
+{"pr-body" => "body", "pr-head-sha" => "head-sha", "pr-head-ref" => "head-ref",
+ "pr-author" => "author", "pr-number" => "number"}.each do |input, output|
+  raise "queued PR input lost: #{input}" unless inputs.fetch(input) == "${{ steps.queued-pr.outputs.#{output} }}"
+end
+raise "author policy changed" unless inputs.fetch("exempt-authors").split(",").sort ==
+  ["kunchenguid", "github-actions[bot]", "dependabot[bot]"].sort
+driver = <<'JS'
+const fs = require('fs');
+const {script, ref, state} = JSON.parse(fs.readFileSync(0, 'utf8'));
+const outputs = {};
+const context = {repo: {owner: 'owner', repo: 'repo'}, payload: {
+  merge_group: {head_ref: ref, head_sha: 'synthetic-group-sha'}
+}};
+const github = {rest: {pulls: {get: async args => {
+  if (args.owner !== 'owner' || args.repo !== 'repo' || args.pull_number !== 42)
+    throw new Error('Wrong PR requested');
+  return {data: {number: 42, state, body: 'live attestation',
+    head: {sha: 'actual-pr-sha', ref: 'feature'}, user: {login: 'contributor'}}};
+}}}};
+const core = {setOutput: (key, value) => {outputs[key] = value;}};
+new (Object.getPrototypeOf(async function(){}).constructor)('github', 'context', 'core', script)(github, context, core)
+  .then(() => process.stdout.write(JSON.stringify(outputs)))
+  .catch(error => {process.stderr.write(error.message); process.exitCode = 1;});
+JS
+run = lambda do |ref, state|
+  Open3.capture3("node", "-e", driver, stdin_data: JSON.generate({script: resolver.fetch("with").fetch("script"), ref: ref, state: state}))
+end
+ref = "refs/heads/gh-readonly-queue/main/pr-42-deadbeef"
+output, error, status = run.call(ref, "open")
+raise error unless status.success?
+raise "PR facts did not reach attestation" unless JSON.parse(output) == {
+  "body" => "live attestation", "head-sha" => "actual-pr-sha", "head-ref" => "feature",
+  "author" => "contributor", "number" => 42
+}
+[["refs/heads/feature", "open"], [ref, "closed"]].each do |bad_ref, state|
+  _, _, status = run.call(bad_ref, state)
+  raise "invalid queued PR accepted" if status.success?
+end
+RUBY
+  pass "merge queues run required checks and supply live PR attestation facts"
+}
+
+test_merge_queue_required_checks
 test_ci_matrices_match_executable_partitions
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
