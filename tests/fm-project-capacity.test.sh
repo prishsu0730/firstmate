@@ -728,8 +728,8 @@ test_relaunch_and_send_require_readmission() {
   declare_capacity "$home" "project 1"
   write_live "$home" holder "$case_dir/project"
   write_live "$home" task-r "$case_dir/project" "harness=claude" "branch=wt-task-r"
-  wt=$(new_worktree "$case_dir" task-r)
-  printf 'worktree=%s\n' "$wt" >> "$home/state/task-r.meta"
+  wt="$home/worktree-task-r"
+  git -C "$case_dir/project" worktree add --quiet -b wt-task-r "$wt"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
   printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
