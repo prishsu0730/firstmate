@@ -3,8 +3,6 @@ name: Keep clean
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, labeled, unlabeled, closed]
-  push:
-    paths: ['.github/keep-clean.json']
   workflow_dispatch:
   schedule:
     - cron: '0 8 * * 1'
@@ -31,31 +29,21 @@ jobs:
       - uses: actions/github-script@v8
         with:
           script: |
-            const fs = require('fs');
             const cp = require('child_process');
-            const policy = JSON.parse(fs.readFileSync('.github/keep-clean.json', 'utf8'));
             const pulls = await github.paginate(github.rest.pulls.list, {
               ...context.repo, state: 'open', per_page: 100
             });
             for (const pull of pulls) {
               const number = pull.number;
               const result = cp.spawnSync('python3', ['bin/fm-keep-clean.py', 'check-pr'], {
-                input: JSON.stringify({policy, pulls, number}), encoding: 'utf8'
+                input: JSON.stringify({pulls, number}), encoding: 'utf8'
               });
               core.info(result.stdout);
               await github.rest.repos.createCommitStatus({
                 ...context.repo, sha: pull.head.sha, context: 'Project PR limit',
                 state: result.status === 0 ? 'success' : 'failure',
-                description: result.status === 0 ? 'Within project PR budget' : 'Project PR budget exceeded',
+                description: result.status === 0 ? 'Within project PR budget' : 'PR limit or expiry requires disposition',
                 target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
               });
               if (result.status !== 0) core.setFailed(result.stderr || 'PR limit check failed');
-            }
-            if (policy.sort_done) {
-              const cutoff = Date.now() - 14 * 86400000;
-              for (const p of pulls) {
-                if (Date.parse(p.created_at) <= cutoff) {
-                  core.warning(`Expired: review disposition of ${p.html_url}`);
-                }
-              }
             }

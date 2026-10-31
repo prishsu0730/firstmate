@@ -272,7 +272,7 @@ fi
 # scout itself is the new task's own id and never collides with itself.
 PROMOTE_COMMITS=
 if [ -n "$PROMOTE_PROJECT" ]; then
-  python3 "$FM_ROOT/bin/fm-keep-clean.py" check-spawn "$PROMOTE_PROJECT" "$SCOUT_BRIEF" --home "$FM_HOME" || exit 1
+  python3 "$FM_ROOT/bin/fm-keep-clean.py" check-spawn "$PROMOTE_PROJECT" --home "$FM_HOME" || exit 1
   PROMOTE_DUPLICATE_ARGS=("$ID" "$PROMOTE_PROJECT" "$SCOUT_BRIEF" --state "$STATE" --data "$DATA")
   [ -z "$BASE_BRANCH" ] || PROMOTE_DUPLICATE_ARGS+=(--base-branch "$BASE_BRANCH")
   [ -z "$SUPERSEDES" ] || PROMOTE_DUPLICATE_ARGS+=(--supersedes "$SUPERSEDES")

@@ -413,13 +413,12 @@ Bootstrap reports a code-root `data/backlog.md` or `data/done-archive.md` that i
 
 ### Keep-clean admission and ideas
 
-[`bin/fm-keep-clean.py`](../bin/fm-keep-clean.py) owns the five-PR admission limit, initial-sort activation marker, named exceptions, private ideas with a replaces field and 14-day expiry, and Monday-sort commands.
-Its `--help` describes activation and exact commands.
+[`bin/fm-keep-clean.py`](../bin/fm-keep-clean.py) owns the five-PR admission limit, required expired-PR disposition, private ideas with a replaces field and 14-day expiry, and Monday-sort commands.
+Its `--help` describes the rules and exact commands.
 Fresh ships and scout promotions use that shared admission before creating or changing a worker; relaunches, scouts, and secondmates retain their existing behavior.
-[`Project PR limit`](../.github/workflows/keep-clean.yml) checks GitHub PR admission using trusted default-branch policy and code, with a weekly expiry report.
+[`Project PR limit`](../.github/workflows/keep-clean.yml) checks GitHub PR admission using trusted default-branch code, including expiry checks.
 Installing that workflow alone does not make it a required merge check; the existing ruleset must require its job context after it lands and reports successfully.
-The initial marker is deliberately inactive, so existing work is untouched until the first sort activates the limit.
-The helper reports expired PRs and ideas for disposition and never closes work.
+The helper refuses admission and sorting completion while expired PRs remain open, reports expired ideas, and never closes work.
 
 ## Runtime backend (config/backend / FM_BACKEND)
 
