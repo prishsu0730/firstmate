@@ -418,7 +418,7 @@ Its `--help` describes the rules and exact commands.
 Fresh ships and scout promotions use that shared admission before creating or changing a worker; relaunches, scouts, and secondmates retain their existing behavior.
 [`Project PR limit`](../.github/workflows/keep-clean.yml) checks GitHub PR admission using trusted default-branch code, including expiry checks.
 Installing that workflow alone does not make it a required merge check; the existing ruleset must require the `Project PR limit` status and a merge queue with maximum build group size one after it lands and reports successfully.
-The workflow revalidates the queued PR against current open work on each merge-group event, refusing unsupported group sizes.
+The workflow checks the queued PR against current open work at merge-queue admission on each merge-group event, refusing unsupported group sizes; expiry enforcement stops at admission and does not cover the interval until merge completion.
 The helper refuses admission and sorting completion while expired PRs remain open, permits expired PRs to merge for disposition, reports expired ideas, and never closes work.
 
 ## Runtime backend (config/backend / FM_BACKEND)
