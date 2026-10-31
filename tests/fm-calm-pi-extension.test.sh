@@ -110,6 +110,7 @@ render_export_dom() {
   wait_limit=${FM_CHROME_RENDER_WAIT_TICKS:-300}
   : >"$report"
   for attempt in 1 2 3; do
+    "$ROOT/bin/fm-test-load.sh" || return $?
     log="$TMP_ROOT/chrome-render-$attempt.err"
     profile="$TMP_ROOT/chrome-home-$attempt"
     rm -rf "$profile"
@@ -3939,6 +3940,9 @@ JS
 # that only succeeds after Chrome's start-up flake, and one that never renders
 # and must report enough to tell a Chrome failure apart from a Pi export change.
 test_export_dom_render_guard() {
+  # Fake Chrome exercises rendering retries, not host admission.
+  local FM_TEST_LOAD_MAX=1000000
+  export FM_TEST_LOAD_MAX
   local dir source_file out_file report
 
   dir="$TMP_ROOT/render-guard"
@@ -3978,6 +3982,17 @@ printf '<html><head></head><body>export'
 exec sleep 30
 SH
   chmod +x "$dir/chrome-ok" "$dir/chrome-flaky" "$dir/chrome-broken" "$dir/chrome-hang"
+
+  # Admission failure must stop before Chrome starts, without creating host load.
+  mkdir -p "$dir/busy-probe"
+  printf '#!/bin/sh\nexit 1\n' >"$dir/busy-probe/python3"
+  chmod +x "$dir/busy-probe/python3"
+  if PATH="$dir/busy-probe:$PATH" FM_TEST_LOAD_WAIT=0 \
+    FM_FAKE_CHROME_ATTEMPTS="$dir/attempts-refused" \
+    render_export_dom "$dir/chrome-ok" "$source_file" "$out_file" 9.9.9 >"$dir/report-refused" 2>&1; then
+    fail "render_export_dom admitted Chrome while machine load was high"
+  fi
+  [ ! -e "$dir/attempts-refused" ] || fail "Chrome launched before load admission"
 
   : >"$dir/attempts-ok"
   FM_FAKE_CHROME_ATTEMPTS="$dir/attempts-ok" \
@@ -4980,6 +4995,12 @@ JS
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" M-s
   pass "Pi calm native E2E replaces the stock working row with a moving, resize-clamped working ship that freezes and resumes across two working periods in one Pi session, clears on abort, keeps captain turns visible, hides exact operational user rows without changing persistence, restores stock rendering Calm-off, survives restart, and preserves export plus Ctrl+O behavior"
 }
+
+# Focused entry point for the browser admission/retry contract.
+if [ "${1:-}" = --render-guard-only ]; then
+  test_export_dom_render_guard
+  exit 0
+fi
 
 test_home_resolution
 test_pi_compat_no_upper_bound
