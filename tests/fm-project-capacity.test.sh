@@ -833,6 +833,39 @@ test_unread_steer_holds_fourth_place() {
   pass 'unread steer holds the fourth place until acknowledgement'
 }
 
+test_typed_send_reserves_released_place() {
+  local mode case_dir home gen out rc id
+  for mode in Enter typed; do
+    case_dir=$(make_case "typed-reservation-$mode" task-new)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 4'
+    for id in a b c sleeping; do
+      write_live "$home" "$id" "$case_dir/project" 'harness=claude'
+    done
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" sleeping)
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+    printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+    case "$mode" in
+      Enter) set -- --key Enter ;;
+      typed) set -- /resume ;;
+    esac
+    rc=0
+    out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+      PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode refused the available fourth place: $out"
+    assert_absent "$home/state/sleeping.inbox" "$mode unexpectedly used inbox delivery"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode reused old idle proof and admitted a fifth worker: $out"
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new) || rc=$?
+    expect_code 0 "$rc" "$mode retained capacity after fresh idle proof: $out"
+  done
+  pass 'key and typed sends reserve released capacity until fresh idle proof'
+}
+
+test_typed_send_reserves_released_place
 test_run_activity_controls_release
 test_unread_steer_holds_fourth_place
 test_other_backends_hold_capacity() {
