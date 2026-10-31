@@ -80,7 +80,6 @@ make_case() {  # <name> [task-id...]
 printf '%s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 case "$*" in
   list-windows*)
-    [ -n "${FM_FAKE_DEAD_TASK:-}" ] || exit 1
     for meta in "$FM_HOME/state/"*.meta; do
       [ -f "$meta" ] || continue
       id=${meta##*/}
@@ -88,6 +87,11 @@ case "$*" in
       [ "$id" != "${FM_FAKE_DEAD_TASK:-}" ] || continue
       printf 'fm-%s\n' "$id"
     done
+    exit 0
+    ;;
+  *"#{pane_current_command}"*)
+    [ -z "${FM_FAKE_ENDPOINT_UNREADABLE:-}" ] || exit 1
+    printf 'claude\n'
     exit 0
     ;;
   *"#{pane_current_path}"*)
@@ -729,11 +733,11 @@ test_relaunch_and_send_require_readmission() {
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
   printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
-  for mode in inbox typed enter; do
+  for mode in inbox typed Enter enter C-m C-j; do
     case "$mode" in
       inbox) set -- 'resume work' ;;
       typed) set -- /resume ;;
-      enter) set -- --key Enter ;;
+      *) set -- --key "$mode" ;;
     esac
     before=$(call_count "$case_dir")
     rc=0
@@ -754,6 +758,9 @@ test_relaunch_and_send_require_readmission() {
     "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
   expect_code 0 "$rc" "free place refused a steer: $out"
   assert_present "$home/state/task-r.inbox/001.msg" "admitted steer was not delivered"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "unread steer released its admitted place: $out"
   pass "released workers require admission for inbox, typed, Enter, and relaunch delivery"
 }
 
@@ -774,15 +781,21 @@ test_run_backed_unknown_keeps_capacity() {
 
 test_run_activity_controls_release() {
   local activity case_dir home gen out rc
-  for activity in busy idle capture-failed; do
+  for activity in busy idle capture-failed endpoint-unreadable; do
     case_dir=$(make_case "run-activity-$activity" task-r)
     home="$case_dir/home"
     declare_capacity "$home" 'project 1'
     write_live "$home" task-r "$case_dir/project" 'harness=claude'
     gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
-    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r "${activity/capture-failed/unknown}" --gen "$gen" --source claude-hook --event stop
+    case "$activity" in
+      busy) set -- busy ;;
+      *) set -- idle ;;
+    esac
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r "$1" --gen "$gen" --source claude-hook --event stop
     rc=0
-    out=$(FM_FAKE_CAPTURE_FAIL=1 FM_FAKE_RUN_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+    out=$(FM_FAKE_CAPTURE_FAIL="$([ "$activity" != capture-failed ] || printf 1)" \
+      FM_FAKE_ENDPOINT_UNREADABLE="$([ "$activity" != endpoint-unreadable ] || printf 1)" \
+      FM_FAKE_RUN_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
     if [ "$activity" = idle ]; then
       expect_code 0 "$rc" "positively idle run retained capacity: $out"
     else
@@ -792,7 +805,33 @@ test_run_activity_controls_release() {
   pass 'run-backed workers release only on positive idle activity'
 }
 
+test_unread_steer_holds_fourth_place() {
+  local case_dir home gen out rc id
+  case_dir=$(make_case unread-four task-new)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  for id in a b c sleeping; do
+    write_live "$home" "$id" "$case_dir/project" 'harness=claude'
+  done
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" sleeping)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+  rc=0
+  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping 'resume work' 2>&1) || rc=$?
+  expect_code 0 "$rc" "fourth place refused a steer: $out"
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "unread sleeping worker allowed a fifth worker: $out"
+  FM_TASK_INBOX="$home/state/sleeping.inbox" "$ROOT/bin/fm-inbox-ack.sh" 001 >/dev/null || fail 'could not acknowledge steer'
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new) || rc=$?
+  expect_code 0 "$rc" "idle worker with no unread steer retained its place: $out"
+  pass 'unread steer holds the fourth place until acknowledgement'
+}
+
 test_run_activity_controls_release
+test_unread_steer_holds_fourth_place
 test_other_backends_hold_capacity() {
   local backend case_dir home gen out rc
   for backend in orca cmux zellij; do
