@@ -687,10 +687,8 @@ list_portable_serial() {
   rm -rf "$tmp"
 }
 
-# Measured portable-serial script durations in milliseconds, from the CI timing
-# artifacts recorded in docs/fm-test-portable-shards.md. Each value is the
-# slowest successful sample in the referenced complete/partial CI runs, with
-# the version-specific host and native-Windows exceptions documented there.
+# Portable-serial duration hints in milliseconds.
+# docs/fm-test-portable-shards.md owns measurement provenance and exceptions.
 # These are balance hints only: the shard
 # partition stays complete and disjoint whatever they say, so a stale hint costs
 # balance rather than coverage. That doc owns the refresh procedure.
