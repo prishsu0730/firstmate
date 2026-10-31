@@ -47,8 +47,12 @@
 #     no longer uses local resources, and
 #   - may still be executing: bin/fm-crew-state.sh, the one reconciled source of
 #     a worker's current state, does not positively read a tmux or herdr worker
-#     as parked, paused, or done with positively idle current activity, or
-#     its tmux/herdr endpoint or worktree as positively gone. Active,
+#     as parked, paused, or done with positively idle current activity and no
+#     unread steering message, or its tmux/herdr endpoint as positively absent
+#     or dead, or its local worktree as gone. A missing window alone is not
+#     absence proof: bin/fm-control-lib.sh must confirm it gone or dead. An
+#     idle release also requires a live endpoint with a successful capture and
+#     a readable steering inbox, if present, containing no pending .msg files. Active,
 #     blocked, failed, conflict, and every uncertain read (a timeout, an
 #     unreachable endpoint, an unknown verdict) keep the place, because a live
 #     worker must never be undercounted.
