@@ -1682,6 +1682,8 @@ fi
 if [ "$RELAUNCH" -ne 1 ]; then
   fm_lease_forbid_branch "new-task spawn (fm-spawn)" --away-relocated
 fi
+# shellcheck source=bin/fm-worker-spend-lib.sh
+. "$SCRIPT_DIR/fm-worker-spend-lib.sh"
 spawn_refuse_if_away_spend_cap() {
   local cap live meta task_id verdict kind remote_host
   [ "$RELAUNCH" -ne 1 ] || return 0
@@ -1711,6 +1713,9 @@ spawn_refuse_if_away_spend_cap() {
       verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
     fi
     case "$verdict" in dead|missing) continue ;; esac
+    if [ -z "$remote_host" ] && fm_worker_spend_parked "$SCRIPT_DIR" "$STATE" "$task_id"; then
+      continue
+    fi
     live=$((live + 1))
   done
   if [ "$live" -ge "$cap" ]; then
@@ -1722,7 +1727,8 @@ spawn_refuse_if_away_spend_cap() {
 # away record exists (never a quiet-mode one, whose captain is present and
 # spends as attended: bin/fm-afk-contract.sh mode), a fresh ordinary spawn
 # refuses for BOTH actors once this home holds that many ordinary workers
-# whose endpoints are live or whose liveness cannot be proven absent. A relaunch replaces a
+# whose endpoints are live or whose liveness cannot be proven absent, excluding
+# reconciled parked, paused, and done workers. A relaunch replaces a
 # worker that already counts, and a secondmate is a persistent home rather than
 # spend, so both are exempt. Checked before any endpoint, worktree, or record
 # exists, so a refusal costs nothing to unwind; rechecked after the task-set

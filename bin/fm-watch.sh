@@ -2788,6 +2788,45 @@ home_summary_refresh_detached() {
 }
 
 RECONCILE_REQUEST_PID=
+# The queue timer is independent of status wakes and runs off the watcher
+# thread: provisioning a worker must never stall its liveness beacon.
+QUEUE_PULL_PID=
+queue_pull_detached() {
+  [ -f "$STATE/.afk-contract" ] || return 0
+  [ "$(age_of "$STATE/.queue-pull-last")" -ge 60 ] || return 0
+  if [ -n "$QUEUE_PULL_PID" ]; then
+    if kill -0 "$QUEUE_PULL_PID" 2>/dev/null; then return 0; fi
+    wait "$QUEUE_PULL_PID" 2>/dev/null || true
+  fi
+  FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+    "$SCRIPT_DIR/fm-queue-pull.sh" tick </dev/null >/dev/null 2>>"$STATE/.queue-pull-errors" &
+  QUEUE_PULL_PID=$!
+}
+
+queue_pull_after_output() {
+  if [ "$1" -eq 0 ]; then
+    printf '%s\n' "$QUEUE_PULL_SURFACED" > "$STATE/.queue-pull-surfaced"
+  fi
+  fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+}
+
+queue_pull_surface() {
+  local row seen reason
+  [ -s "$FM_WAKE_QUEUE" ] || return 0
+  fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
+  row=$(awk -F '\t' '$3 == "check" && $4 == "queue-intake" {row=$0} END {print row}' "$FM_WAKE_QUEUE")
+  seen=$(cat "$STATE/.queue-pull-surfaced" 2>/dev/null || true)
+  if [ -z "$row" ] || [ "$row" = "$seen" ]; then
+    fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+    return 0
+  fi
+  QUEUE_PULL_SURFACED=$row
+  reason=$(printf '%s\n' "$row" | cut -f5)
+  # shellcheck disable=SC2034 # Consumed by wake() in the transition owner.
+  FM_WAKE_POST_OUTPUT_ACTION=queue_pull_after_output
+  wake "$reason"
+}
+
 reconcile_requests_pending() {
   local request
   [ -d "$STATE/reconcile-notify" ] && [ ! -L "$STATE/reconcile-notify" ] || return 1
@@ -2964,6 +3003,9 @@ while :; do
   # Liveness beacon for fm-guard.sh: a fresh mtime here means a watcher is
   # alive. Supervision scripts warn when this goes stale with tasks in flight.
   touch "$STATE/.last-watcher-beat"
+
+  queue_pull_detached
+  queue_pull_surface
 
   # Opt-in fleet activity ledger (docs/fleet-ledger.md): pick up newly appended
   # status lines before this cycle can exit on a wake. Off costs one file test.
