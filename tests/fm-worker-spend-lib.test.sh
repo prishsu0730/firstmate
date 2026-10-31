@@ -15,7 +15,7 @@ printf 'state: %s · source: run-step · fixture\n' "$SPEND_VERDICT"
 exit "${SPEND_EXIT:-0}"
 SH
 chmod +x "$TMP_ROOT/bin/fm-crew-state.sh"
-for verdict in parked paused done; do
+for verdict in parked paused 'done'; do
   SPEND_VERDICT=$verdict fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker || fail "$verdict consumed spend capacity"
 done
 for verdict in working unknown conflict blocked failed; do
