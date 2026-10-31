@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Behavior tests for the shared heavy-test admission gate, without host load.
 set -eu
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-test-load)
 mkdir -p "$TMP_ROOT/fakebin"
