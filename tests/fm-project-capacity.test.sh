@@ -79,6 +79,17 @@ make_case() {  # <name> [task-id...]
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 case "$*" in
+  list-windows*)
+    [ -n "${FM_FAKE_DEAD_TASK:-}" ] || exit 1
+    for meta in "$FM_HOME/state/"*.meta; do
+      [ -f "$meta" ] || continue
+      id=${meta##*/}
+      id=${id%.meta}
+      [ "$id" != "${FM_FAKE_DEAD_TASK:-}" ] || continue
+      printf 'fm-%s\n' "$id"
+    done
+    exit 0
+    ;;
   *"#{pane_current_path}"*)
     # A spawn that is told to hold waits here, after its capacity check and
     # while it still holds the project lock, until the test releases it.
@@ -829,8 +840,9 @@ test_run_backed_steers_hold_capacity() {
 }
 
 test_dead_pending_inbox_releases_capacity() {
-  local case_dir home gen out rc
-  case_dir=$(make_case dead-inbox task-r)
+  local case_dir home gen out rc mode
+  for mode in pending acknowledged; do
+  case_dir=$(make_case "dead-inbox-$mode" task-r)
   home="$case_dir/home"
   declare_capacity "$home" 'project 1'
   write_live "$home" task-r "$case_dir/project" 'harness=claude'
@@ -841,14 +853,35 @@ test_dead_pending_inbox_releases_capacity() {
     FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
     "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
   expect_code 0 "$rc" "inbox steer failed: $out"
-  rmdir "$home/worktree-task-r"
+  if [ "$mode" = acknowledged ]; then
+    mkdir -p "$home/state/task-r.inbox/handled"
+    mv "$home/state/task-r.inbox/001.msg" "$home/state/task-r.inbox/handled/001.msg"
+  fi
   rc=0
-  out=$(spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  out=$(FM_FAKE_DEAD_TASK=task-r FM_FAKE_RUN_TASK=task-r \
+    spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
   expect_code 0 "$rc" "dead recipient retained capacity: $out"
-  assert_present "$home/state/task-r.inbox/001.msg" 'abandoned inbox was not preserved'
+  assert_present "$home/worktree-task-r" 'death test removed the surviving worktree'
+  done
   pass 'confirmed death releases capacity despite pending inbox and reservation'
 }
 
+test_run_backed_unknown_keeps_capacity() {
+  local case_dir home out rc run_state
+  for run_state in parked done; do
+    case_dir=$(make_case "unknown-$run_state" task-r)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 1'
+    write_live "$home" task-r "$case_dir/project"
+    rc=0
+    out=$(FM_FAKE_RUN_TASK=task-r FM_FAKE_RUN_STATE="$run_state" \
+      spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+    expect_code 75 "$rc" "unknown activity released $run_state worker: $out"
+  done
+  pass 'unknown activity retains capacity despite an inactive run'
+}
+
+test_run_backed_unknown_keeps_capacity
 test_run_backed_steers_hold_capacity
 test_dead_pending_inbox_releases_capacity
 test_reader_only_steer_releases_capacity
