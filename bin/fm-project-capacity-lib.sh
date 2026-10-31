@@ -92,15 +92,29 @@ FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
-  local verdict
-  fm_task_inbox_oldest_unhandled "$1" "$2" >/dev/null && return 1
+  local verdict activity
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in
+    'state: unknown · source: none · backend target gone'* | 'state: unknown · source: none · worktree gone'*) return 0 ;;
+  esac
+  fm_task_inbox_oldest_unhandled "$1" "$2" >/dev/null && return 1
+  case "$verdict" in
     'state: parked '* | 'state: paused '* | 'state: done '*)
+      activity=$(fm_run_timed 15 bash -c '
+        . "$1/fm-backend.sh"
+        . "$1/fm-busy-lib.sh"
+        record=$(fm_busy_record_read "$2" "$3" 2>/dev/null || true)
+        case "$record" in
+          "unknown fm-recovery capacity-submit "*) printf "unknown fm-recovery"; exit 0 ;;
+        esac
+        fm_busy_classify_meta "$2/$3.meta" "$3" "$2"
+      ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
+      case "$activity" in
+        busy\ * | 'unknown fm-recovery'*) return 1 ;;
+      esac
       return 0
       ;;
-    'state: unknown · source: none · backend target gone'* | 'state: unknown · source: none · worktree gone'*) return 0 ;;
     *) return 1 ;;
   esac
 }
