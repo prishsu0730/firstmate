@@ -28,6 +28,7 @@ fm_refuse_if_gate_agent "$SCRIPT_DIR/.."
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 
+# shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 
 queue_ids() {
