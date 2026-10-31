@@ -4,7 +4,7 @@
 # creates task metadata without spending model tokens or touching a backend.
 set -u
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 # shellcheck source=tests/wake-helpers.sh
 . "$ROOT/tests/wake-helpers.sh"
 TMP_ROOT=$(fm_test_tmproot fm-queue-pull)
