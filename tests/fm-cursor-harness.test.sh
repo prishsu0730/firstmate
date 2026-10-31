@@ -207,21 +207,25 @@ test_cursor_marker_outranks_inherited_claudecode() {
   # The ordering is a marker-layer tiebreak, not a licence to overrule the
   # process tree: with a real cursor-agent ancestor the two agree, and with a
   # real claude ancestor the retained cursor marker loses.
-  local tree_dir
+  local tree_dir name
   tree_dir="$TMP_ROOT/marker-ordering-trees"
   mkdir -p "$tree_dir"
-  # A copied executable is killed by macOS code-signing enforcement, so use
-  # bash's exec -a to create a real process whose kernel-reported name is the
-  # harness name. This keeps the structural ancestry assertion portable.
-  out=$(env -u CLAUDECODE -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
-    CURSOR_FIXTURE="$tree_dir/cursor-agent" HARNESS_PATH="$HARNESS" bash -c \
-    'exec -a "$CURSOR_FIXTURE" /bin/bash -c '\''r=$(CURSOR_AGENT=1 "$HARNESS_PATH"); printf "%s" "$r"'\''')
-  [ "$out" = cursor ] || fail "a real cursor-agent ancestor must detect cursor, got '$out'"
-  out=$(env -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
-    CLAUDE_FIXTURE="$tree_dir/claude" HARNESS_PATH="$HARNESS" bash -c \
-    'exec -a "$CLAUDE_FIXTURE" /bin/bash -c '\''r=$(CLAUDECODE=1 CURSOR_AGENT=1 "$HARNESS_PATH"); printf "%s" "$r"'\''')
-  [ "$out" = claude ] \
-    || fail "a retained CURSOR_AGENT must not rename a real claude ancestor, got '$out'"
+  for name in cursor-agent claude; do
+    ln -s "$(command -v bash)" "$tree_dir/$name"
+    out=$(env -u CLAUDECODE -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+      -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+      HARNESS_PATH="$HARNESS" "$tree_dir/$name" -c \
+      'r=$("$HARNESS_PATH" ancestry "$$"); printf "%s" "$r"')
+    local expected=$name
+    [ "$name" != cursor-agent ] || expected=cursor
+    [ "$out" = "comm $expected" ] \
+      || fail "a real $name ancestor must supply structural identity, got '$out'"
+    out=$(env -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+      CLAUDECODE=1 CURSOR_AGENT=1 HARNESS_PATH="$HARNESS" "$tree_dir/$name" -c \
+      'r=$("$HARNESS_PATH"); printf "%s" "$r"')
+    [ "$out" = "$expected" ] \
+      || fail "retained markers must not rename a real $name ancestor, got '$out'"
+  done
   pass "fm-harness.sh: cursor's marker outranks an inherited CLAUDECODE when ancestry is silent"
 }
 
