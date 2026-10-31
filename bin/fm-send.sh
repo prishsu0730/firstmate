@@ -256,6 +256,8 @@ fi
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
+. "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -453,7 +455,7 @@ if [ -n "$TARGET_META" ]; then
   LEASE_GUARD_TASK=$(fm_send_id_from_meta "$TARGET_META")
   if [ -n "$LEASE_GUARD_TASK" ]; then
     fm_lease_guard "$LEASE_GUARD_TASK" "steer (fm-send)"
-    trap 'fm_lease_guard_release' EXIT
+    trap 'fm_lease_guard_release; [ -z "${SEND_CAPACITY_LOCK:-}" ] || fm_lock_release "$SEND_CAPACITY_LOCK"' EXIT
   fi
 fi
 
@@ -754,6 +756,37 @@ fm_send_feed_resolved_holds() { # <answer-text>
 # target_ready path before sending, while zellij verifies pane labels in its
 # send implementation. A failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
+
+SEND_CAPACITY_LOCK=
+if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
+  [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ] &&
+  { [ "${1:-}" != --key ] || [ "${2:-}" = Enter ]; }; then
+  SEND_PROJECT=$(fm_meta_get "$TARGET_META" project)
+  if [ -d "$SEND_PROJECT" ] && [ -z "$(fm_meta_get "$TARGET_META" pr)" ]; then
+    SEND_CONFIG=$(fm_project_capacity_config_dir "$FM_HOME" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}") || exit 1
+    fm_project_capacity_lookup "$SEND_CONFIG" "$(basename "$SEND_PROJECT")" || exit 1
+    if [ -n "$FM_PROJECT_CAPACITY_ANY" ]; then
+      SEND_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$SEND_PROJECT") || exit 1
+      fm_lock_try_acquire "$SEND_PROJECT_LOCK" || exit 1
+      SEND_CAPACITY_LOCK=$SEND_PROJECT_LOCK
+      SEND_ID=$(fm_send_id_from_meta "$TARGET_META")
+      if fm_project_capacity_record_idle "$STATE" "$SEND_ID"; then
+        if [ -n "$FM_PROJECT_CAPACITY" ]; then
+          fm_project_capacity_occupants "$SEND_CAPACITY_LOCK" "$SEND_PROJECT" "$STATE" "$SEND_ID" || exit 1
+          if [ "$FM_PROJECT_CAPACITY_OCCUPANTS" -ge "$FM_PROJECT_CAPACITY" ]; then
+            echo "deferred: project $(basename "$SEND_PROJECT") is at capacity; steer to $SEND_ID was not delivered" >&2
+            exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
+          fi
+        fi
+        if [ -f "$STATE/$SEND_ID.busy-gen" ]; then
+          "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" unknown --current-gen --source fm-send --event submit || exit 1
+        else
+          "$SCRIPT_DIR/fm-busy-event.sh" arm "$STATE" "$SEND_ID" --state unknown --source fm-send --event submit >/dev/null || exit 1
+        fi
+      fi
+    fi
+  fi
+fi
 
 if [ "${1:-}" = "--key" ]; then
   [ -z "$FIRE_AND_FORGET_ID" ] ||

@@ -13,7 +13,7 @@
 set -u
 
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 unset TASKS_AXI_BACKEND || :
 
@@ -217,7 +217,7 @@ worktree_list() { git -C "$1/project" worktree list --porcelain; }
 # fm-crew-state.sh: a parked or dead worker frees its place, an active worker and
 # a worker whose state cannot be read keep theirs, and a spawn at the limit still
 # defers with the same refusal.
-test_only_possibly_executing_workers_hold_a_place() {
+test_freed_place_admits_one_manual_spawn() {
   local case_dir home out rc=0 gen
   case_dir=$(make_case idle-release task-c task-d task-e)
   home="$case_dir/home"
@@ -265,7 +265,7 @@ test_only_possibly_executing_workers_hold_a_place() {
   rc=0
   out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
-  pass "parked and dead records free a place, active and uncertain ones hold one, and the limit still defers with 75"
+  pass "parked and dead records free a place, active and uncertain ones hold one, and a freed place admits one manual spawn"
 }
 
 # The reported incident's shape before any declaration: the project is already
@@ -701,7 +701,54 @@ SH
   pass "an Orca spawn takes the shared project lock whenever a same-origin clone is capped and defers before creating anything"
 }
 
-test_only_possibly_executing_workers_hold_a_place
+test_relaunch_and_send_require_readmission() {
+  local case_dir home out rc before gen mode wt
+  case_dir=$(make_case readmission task-r)
+  home="$case_dir/home"
+  declare_capacity "$home" "project 1"
+  write_live "$home" holder "$case_dir/project"
+  write_live "$home" task-r "$case_dir/project" "harness=claude" "branch=wt-task-r"
+  wt=$(new_worktree "$case_dir" task-r)
+  printf 'worktree=%s\n' "$wt" >> "$home/state/task-r.meta"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
+  for mode in inbox typed enter; do
+    case "$mode" in
+      inbox) set -- 'resume work' ;;
+      typed) set -- /resume ;;
+      enter) set -- --key Enter ;;
+    esac
+    before=$(call_count "$case_dir")
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-send.sh" task-r "$@" 2>&1) || rc=$?
+    expect_code 75 "$rc" "$mode resumed beyond capacity: $out"
+    assert_absent "$home/state/task-r.inbox" "$mode wrote an inbox before admission"
+    assert_equals "$before" "$(call_count "$case_dir")" "$mode rang before admission"
+  done
+  rc=0
+  out=$(run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
+  expect_code 75 "$rc" "relaunch ignored capacity: $out"
+  printf 'pr=https://github.com/o/r/pull/9\n' >> "$home/state/holder.meta"
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
+  expect_code 0 "$rc" "free place refused a steer: $out"
+  assert_present "$home/state/task-r.inbox/001.msg" "admitted steer was not delivered"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "admitted steer did not retain its place: $out"
+  rc=0
+  out=$(run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
+  expect_code 0 "$rc" "free place refused relaunch or counted itself: $out"
+  pass "released workers require admission for inbox, typed, Enter, and relaunch delivery"
+}
+
+test_relaunch_and_send_require_readmission
+test_freed_place_admits_one_manual_spawn
 test_undeclared_capacity_keeps_dispatch_uncapped
 test_available_capacity_admits_the_worker
 test_exhausted_capacity_defers_without_leaving_anything_behind
