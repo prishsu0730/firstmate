@@ -107,6 +107,16 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     endpoint=$(fm_backend_agent_state "$backend" "$target")
+    if [ "$endpoint" = missing ]; then
+      . "$1/fm-control-lib.sh"
+      verdict=$(fm_control_endpoint_absence_verdict "$backend" "$target" "$meta")
+      case "${verdict%%$(printf "\t")*}" in
+        gone) endpoint=missing ;;
+        dead) endpoint=dead ;;
+        alive) endpoint=alive ;;
+        *) endpoint=unknown ;;
+      esac
+    fi
     if [ "$endpoint" = alive ]; then
       fm_backend_capture "$backend" "$target" 1 >/dev/null || exit 1
     fi

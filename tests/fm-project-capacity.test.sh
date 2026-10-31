@@ -80,7 +80,7 @@ make_case() {  # <name> [task-id...]
 printf '%s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 case "$*" in
   list-windows*)
-    for meta in "$FM_HOME/state/"*.meta; do
+    for meta in "$FM_HOME/state/"*.meta ${FM_FAKE_EXTRA_STATE:+"$FM_FAKE_EXTRA_STATE/"*.meta}; do
       [ -f "$meta" ] || continue
       id=${meta##*/}
       id=${id%.meta}
@@ -510,7 +510,7 @@ test_capacity_is_shared_by_every_local_home() {
   declare_capacity "$root" "project 1"
   write_live "$root" live-a "$case_dir/project"
   git -C "$mate_project" worktree add --quiet -b wt-m "$case_dir/wt-m"
-  out=$(run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
+  out=$(FM_FAKE_EXTRA_STATE="$root/state" run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "a local secondmate launched past the machine's capacity: $out"
   assert_contains "$out" "admits 1 worker(s) at once on this machine ($root/config/project-capacity) and 1 already hold a place (live-a in $root)" \
     "the secondmate did not count the root home's worker against the root's declaration"
@@ -748,8 +748,11 @@ test_relaunch_and_send_require_readmission() {
     assert_absent "$home/state/task-r.inbox" "$mode wrote an inbox before admission"
     assert_equals "$before" "$(call_count "$case_dir")" "$mode rang before admission"
   done
+  # A relaunch needs a positively agent-free endpoint before it reaches
+  # admission: the window is gone and the record predates this boot.
+  printf 'spawn_gen=s1.relaunch\n' >> "$home/state/task-r.meta"
   rc=0
-  out=$(run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
+  out=$(FM_FAKE_DEAD_TASK=task-r run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
   expect_code 75 "$rc" "relaunch ignored capacity: $out"
   printf 'pr=https://github.com/o/r/pull/9\n' >> "$home/state/holder.meta"
   rc=0
@@ -849,8 +852,26 @@ test_other_backends_hold_capacity() {
   pass 'other backends retain capacity despite idle activity and parked runs'
 }
 
+test_missing_window_needs_absence_proof_to_release() {
+  local case_dir home out rc
+  case_dir=$(make_case missing-window task-r another)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 1'
+  write_live "$home" task-r "$case_dir/project" 'harness=claude'
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 75 "$rc" "a window missing without absence proof released its place: $out"
+  # The same window, with a record that predates this boot, is proven gone.
+  printf 'spawn_gen=s1.proven\n' >> "$home/state/task-r.meta"
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 0 "$rc" "a window proven gone kept its place: $out"
+  pass 'a missing window releases its place only with absence proof'
+}
+
 test_other_backends_hold_capacity
 test_run_backed_unknown_keeps_capacity
+test_missing_window_needs_absence_proof_to_release
 
 test_relaunch_and_send_require_readmission
 test_freed_place_admits_one_manual_spawn
