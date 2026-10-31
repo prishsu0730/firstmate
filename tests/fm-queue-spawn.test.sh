@@ -21,6 +21,9 @@ cat > "$fakebin/tmux" <<'SH'
 case "$*" in
   *pane_current_command*) printf 'claude\n'; exit 0 ;;
 esac
+if [ "${1:-}" = new-window ] && [ -n "${FM_QUEUE_WINDOW_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$FM_QUEUE_WINDOW_LOG"
+fi
 exec "${0%/*}/tmux-fixture" "$@"
 SH
 chmod +x "$fakebin/tmux"
@@ -93,3 +96,80 @@ assert_contains "$report" 'clear: started through fm-spawn' 'queue did not launc
 [ -s "$TMP_ROOT/launch.log" ] || fail 'no native launch delivery'
 assert_contains "$("$ROOT/bin/fm-tasks-axi.sh" show clear)" 'state: in_flight' 'backlog did not start'
 pass 'idle watcher retries real spawn and starts queued work beside a parked worker at cap one'
+
+kill "$watch_pid" 2>/dev/null || true
+wait "$watch_pid" 2>/dev/null || true
+watch_pid=
+
+# A separate home makes the four-place limit independent of the cap-one case.
+export FM_HOME="$TMP_ROOT/four-home"
+fm_test_spawn_home "$FM_HOME" codex
+export FM_FAKE_LAUNCH_LOG="$TMP_ROOT/four-launch.log"
+export FM_QUEUE_WINDOW_LOG="$TMP_ROOT/four-windows.log"
+export FM_FAKE_DUPLICATE_WINDOW=$'fm-liveone\nfm-livetwo\nfm-livethree\nfm-releasing'
+"$ROOT/bin/fm-afk-contract.sh" enter --spend 4 >/dev/null || fail 'four-place away entry'
+mkdir -p "$TMP_ROOT/preserved"
+for worker in liveone livetwo livethree releasing; do
+  mkdir -p "$TMP_ROOT/$worker"
+  printf 'unfinished work for %s\n' "$worker" > "$TMP_ROOT/$worker/unfinished.txt"
+  fm_write_meta "$FM_HOME/state/$worker.meta" "window=fm:fm-$worker" \
+    "worktree=$TMP_ROOT/$worker" "project=$TMP_ROOT/project" 'kind=ship' 'harness=claude'
+  "$ROOT/bin/fm-busy-event.sh" arm "$FM_HOME/state" "$worker" --state busy --source claude-hook --event submit >/dev/null || fail 'live worker hook'
+  printf 'working [at=%s]: unfinished work\n' "$(date +%s)" > "$FM_HOME/state/$worker.status"
+  assert_contains "$("$ROOT/bin/fm-crew-state.sh" "$worker")" 'state: working' 'worker was not genuinely live'
+done
+for worker in liveone livetwo livethree; do
+  cp "$FM_HOME/state/$worker.meta" "$TMP_ROOT/preserved/$worker.meta"
+  cp "$FM_HOME/state/$worker.status" "$TMP_ROOT/preserved/$worker.status"
+  cp -R "$TMP_ROOT/$worker" "$TMP_ROOT/preserved/$worker"
+done
+for queued in nextone nexttwo; do
+  "$ROOT/bin/fm-tasks-axi.sh" add "$queued" 'four-place queued work' >/dev/null || fail 'four-place queued row'
+  fm_test_spawn_brief "$FM_HOME" "$queued"
+  "$ROOT/bin/fm-queue-pull.sh" prepare "$queued" "$TMP_ROOT/project" --mode no-mistakes --yolo off --harness codex || fail 'four-place prepare'
+done
+
+# Keep one watcher running across the release and the following timer pass.
+start_watch
+wait_report 'caps concurrent workers at 4'
+[ ! -e "$FM_HOME/state/nextone.meta" ] && [ ! -e "$FM_HOME/state/nexttwo.meta" ] || fail 'launched at full capacity'
+[ ! -s "$FM_FAKE_LAUNCH_LOG" ] || fail 'backend launched at full capacity'
+"$ROOT/bin/fm-busy-event.sh" arm "$FM_HOME/state" releasing --state idle --source claude-hook --event stop >/dev/null || fail 'release hook'
+printf 'paused [at=%s]: waiting for an external condition\n' "$(date +%s)" > "$FM_HOME/state/releasing.status"
+assert_contains "$("$ROOT/bin/fm-crew-state.sh" releasing)" 'state: paused' 'release was not reconciled'
+printf '0\n' > "$FM_HOME/state/.queue-pull-last"
+fm_touch_epoch 0 "$FM_HOME/state/.queue-pull-last"
+wait_report 'started through fm-spawn'
+
+if [ -f "$FM_HOME/state/nextone.meta" ] && [ ! -f "$FM_HOME/state/nexttwo.meta" ]; then
+  launched=nextone remaining=nexttwo
+elif [ -f "$FM_HOME/state/nexttwo.meta" ] && [ ! -f "$FM_HOME/state/nextone.meta" ]; then
+  launched=nexttwo remaining=nextone
+else
+  fail 'one freed place did not start exactly one queued job'
+fi
+launch_bytes=$(cksum < "$FM_FAKE_LAUNCH_LOG")
+# The backend logs each native launch payload, which may contain newlines.
+# A separate log records each backend window creation, one per launch.
+[ "$(wc -l < "$FM_QUEUE_WINDOW_LOG" | tr -d ' ')" -eq 1 ] || fail 'not exactly one backend launch'
+assert_contains "$("$ROOT/bin/fm-tasks-axi.sh" show "$launched")" 'state: in_flight' 'launched row not started'
+assert_contains "$("$ROOT/bin/fm-tasks-axi.sh" show "$remaining")" 'state: queued' 'second row left queue'
+
+# The first pass defers the second item after its one successful launch.
+# The next timer must actually try it and record the capacity refusal.
+printf '0\n' > "$FM_HOME/state/.queue-pull-last"
+fm_touch_epoch 0 "$FM_HOME/state/.queue-pull-last"
+wait_report "$remaining: spawn refused"
+assert_contains "$(cat "$FM_HOME/state/.queue-pull-report")" 'caps concurrent workers at 4 and 4 ordinary task(s)' 'second pass did not preserve the four-worker cap'
+[ ! -f "$FM_HOME/state/$remaining.meta" ] || fail 'second queued job started'
+[ "$(cksum < "$FM_FAKE_LAUNCH_LOG")" = "$launch_bytes" ] || fail 'duplicate backend launch on second timer pass'
+[ "$(wc -l < "$FM_QUEUE_WINDOW_LOG" | tr -d ' ')" -eq 1 ] || fail 'duplicate backend window on second timer pass'
+metas=("$FM_HOME/state/"*.meta)
+[ "${#metas[@]}" -eq 5 ] || fail 'unexpected worker count (four counted plus one parked)'
+for worker in liveone livetwo livethree; do
+  cmp "$FM_HOME/state/$worker.meta" "$TMP_ROOT/preserved/$worker.meta" || fail 'live metadata disturbed'
+  cmp "$FM_HOME/state/$worker.status" "$TMP_ROOT/preserved/$worker.status" || fail 'live status disturbed'
+  diff -r "$TMP_ROOT/$worker" "$TMP_ROOT/preserved/$worker" || fail 'unfinished worktree disturbed'
+done
+[ -f "$TMP_ROOT/releasing/unfinished.txt" ] || fail 'freed worker unfinished work deleted'
+pass 'a freed place at the limit of four starts exactly one queued job through the idle watcher, with no duplicate and no unfinished worker disturbed'
