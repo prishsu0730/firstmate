@@ -3443,6 +3443,50 @@ SH
   pass "device re-record publication waits without rewriting its registration"
 }
 
+
+test_worker_done_records_pr() {
+  local dir state rc
+  dir=$(make_case worker-done-records-pr)
+  state="$dir/home/state"
+  write_task_meta "$dir"
+  printf 'done [at=1700000000]: PR https://github.com/o/r/pull/42 checks green\n' > "$state/task-a.status"
+  local id kind mode verb
+  for id in direct mate scout local active invalid; do
+    kind=ship; mode=no-mistakes; verb="done"
+    case "$id" in
+      direct) mode=direct-PR ;;
+      mate) kind=secondmate ;;
+      scout) kind=scout ;;
+      local) mode=local-only ;;
+      active) verb=working ;;
+    esac
+    fm_write_meta "$state/$id.meta" "worktree=$dir/wt" "kind=$kind" "mode=$mode"
+    printf '%s: PR https://github.com/o/r/pull/43 checks green\n' "$verb" > "$state/$id.status"
+  done
+  printf 'done: PR https://github.com/o/r/pull/0 checks green\n' > "$state/invalid.status"
+  set +e
+  FM_TEST_GH_STATE=OPEN FM_TEST_GUARD_LOG="$dir/guard.log" FM_TEST_GH_LOG="$dir/gh.log" \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
+  rc=$?
+  set -e
+  [ "$rc" -eq 0 ] || fail "done-status watcher failed: $(cat "$dir/watch.err")"
+  grep -qxF 'pr=https://github.com/o/r/pull/42' "$state/task-a.meta" \
+    || fail "worker done did not save its PR URL in the task record"
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "done-status registration did not arm an authenticated poll"
+  grep -qxF 'pr=https://github.com/o/r/pull/43' "$state/direct.meta" \
+    || fail "direct-PR completion did not record its URL"
+  for id in mate scout local active invalid; do
+    if grep -q '^pr=' "$state/$id.meta"; then
+      fail "completion registration accepted $id"
+    fi
+    [ ! -e "$state/$id.check.sh" ] || fail "completion registration armed $id"
+  done
+  assert_no_grep 'pr merge' "$dir/gh.log" "completion registration attempted a merge"
+  pass "worker done saves its PR URL through guarded registration"
+}
+
+test_worker_done_records_pr
+
 test_parser_matrix
 test_gitlab_merge_watch
 test_gerrit_merge_watch
