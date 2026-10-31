@@ -391,6 +391,7 @@ A GitLab merge request and a Gerrit change expose no such ref, so a task recordi
 Where a no-mistakes pipeline stores evidence in the repo, it publishes that PR-viewable validation evidence to an orphan evidence branch that shares no history with code branches, so it never enters the crew branch or the default branch.
 This repo uses that setting, and its own `.no-mistakes/` directory remains local state that stays gitignored and is rejected by CI if tracked; [`configuration.md`](configuration.md) owns the setting.
 PR-based task merges go through `bin/fm-pr-merge.sh`, which records `pr=` and any available `pr_head=` through `bin/fm-pr-check.sh` before calling the forge CLI.
+For URL-only landing, [`bin/fm-pr-land.sh`](../bin/fm-pr-land.sh)'s header owns local task-home resolution before entering that guarded merge.
 For a task with a recorded file boundary, that merge path checks the live GitHub PR file list against the task's list and refuses a GitLab merge it cannot check; [`fm-file-boundary.sh`](../bin/fm-file-boundary.sh)'s header owns the comparison and missing-record rules.
 The helper requires a full canonical URL and rejects malformed URLs or repo override flags before recording merge state.
 A `https://github.com/<owner>/<repo>/pull/<n>` URL requires `gh` and `jq`; [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh)'s header owns the live pre-merge guards, and `gh pr merge` binds the verified head with `--match-head-commit`.
