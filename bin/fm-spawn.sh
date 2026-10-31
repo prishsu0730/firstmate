@@ -62,6 +62,8 @@
 #   state/<id>.meta; --allow-duplicate proceeds past every match with a notice.
 #   Both are refused on scouts, secondmates, relaunches, and batches. Matches on
 #   anything looser than a SHA only print a warning.
+#   Fresh ships also pass bin/fm-keep-clean.py admission before launch; that
+#   helper owns PR expiry, the open-PR budget, and weekly-sort policy.
 #   Ship/scout launches always put fm-dod-lib.sh's current worker role scope
 #   first in the private launch-brief overlay, including the exact task-owned
 #   steering inbox. This never rewrites a project's instruction files or a
@@ -3296,6 +3298,8 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   # One logical change, one task: refuse before any launch brief, worktree, or
   # endpoint exists (bin/fm-duplicate-intake.sh owns the match and open rules).
   if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ]; then
+    # Shared admission, before any backend creates a worker or worktree.
+    python3 "$FM_ROOT/bin/fm-keep-clean.py" check-spawn "$PROJ_ABS" --home "$FM_HOME" || exit 1
     DUPLICATE_INTAKE_ARGS=("$ID" "$PROJ_ABS" "$BRIEF" --state "$STATE" --data "$DATA")
     [ "$BASE_BRANCH_SET" -eq 0 ] || DUPLICATE_INTAKE_ARGS+=(--base-branch "$BASE_BRANCH")
     [ -z "$SUPERSEDES" ] || DUPLICATE_INTAKE_ARGS+=(--supersedes "$SUPERSEDES")

@@ -411,6 +411,16 @@ Run every routine Firstmate backlog command through [`bin/fm-tasks-axi.sh`](../b
 Like lifecycle transitions, it addresses this home's backlog and archive from any working directory.
 Bootstrap reports a code-root `data/backlog.md` or `data/done-archive.md` that is not this home's own file as a `BACKLOG_RECONCILE: code-root ...` line, even in a read-only session.
 
+### Keep-clean admission and ideas
+
+[`bin/fm-keep-clean.py`](../bin/fm-keep-clean.py) owns the five-PR admission limit, required expired-PR disposition, private ideas with a replaces field and 14-day expiry, and Monday-sort commands.
+Its `--help` describes the rules and exact commands.
+Fresh ships and scout promotions use that shared admission before creating or changing a worker; relaunches, scouts, and secondmates retain their existing behavior.
+[`Project PR limit`](../.github/workflows/keep-clean.yml) checks GitHub PR admission using trusted default-branch code, including expiry checks.
+Installing that workflow alone does not make it a required merge check; the existing ruleset must require the `Project PR limit` status and a merge queue with maximum build group size one after it lands and reports successfully.
+The workflow checks the queued PR against current open work at merge-queue admission on each merge-group event, refusing unsupported group sizes; expiry enforcement stops at admission and does not cover the interval until merge completion.
+The helper refuses admission and sorting completion while expired PRs remain open, permits expired PRs to merge for disposition, reports expired ideas, and never closes work.
+
 ## Runtime backend (config/backend / FM_BACKEND)
 
 For spawn-capable adapters, the runtime session-provider backend controls where task windows/endpoints are created, captured, sent to, watched, and killed.

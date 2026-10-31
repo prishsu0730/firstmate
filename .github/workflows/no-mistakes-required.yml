@@ -6,6 +6,8 @@ on:
     types: [opened, edited, synchronize, reopened]
     branches:
       - main
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -16,7 +18,7 @@ permissions:
 # an immutable per-event group so first-time-fork approvals can never collapse
 # opened/edited checks. Keep synchronize/reopened coalescing as before.
 concurrency:
-  group: no-mistakes-required-${{ github.event.pull_request.number }}-${{ (github.event.action == 'opened' || github.event.action == 'edited') && github.run_id || 'head-change' }}
+  group: no-mistakes-required-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.merge_group.head_sha }}-${{ (github.event.action == 'opened' || github.event.action == 'edited') && github.run_id || 'head-change' }}
   cancel-in-progress: true
 
 jobs:
@@ -27,7 +29,30 @@ jobs:
       github.event.pull_request.user.login != 'github-actions[bot]' &&
       github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
+      - name: Resolve queued PR
+        if: github.event_name == 'merge_group'
+        id: queued-pr
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const group = context.payload.merge_group;
+            const match = group.head_ref.match(/^refs\/heads\/gh-readonly-queue\/(.+)\/pr-(\d+)-/);
+            if (!match) throw new Error('Unrecognized merge queue ref');
+            const {data: pull} = await github.rest.pulls.get({
+              ...context.repo, pull_number: Number(match[2])
+            });
+            if (pull.state !== 'open') throw new Error('Queued PR is no longer open');
+            core.setOutput('body', pull.body || '');
+            core.setOutput('head-sha', pull.head.sha);
+            core.setOutput('head-ref', pull.head.ref);
+            core.setOutput('author', pull.user.login);
+            core.setOutput('number', pull.number);
       - name: Verify no-mistakes signature and pipeline attestation
         uses: kunchenguid/no-mistakes/.github/actions/require-no-mistakes@f6441c96c352a18b9cadcaef6b6c7017e9ac3970 # v1.80.1
         with:
-          exempt-authors: kunchenguid
+          pr-body: ${{ steps.queued-pr.outputs.body }}
+          pr-head-sha: ${{ steps.queued-pr.outputs.head-sha }}
+          pr-head-ref: ${{ steps.queued-pr.outputs.head-ref }}
+          pr-author: ${{ steps.queued-pr.outputs.author }}
+          pr-number: ${{ steps.queued-pr.outputs.number }}
+          exempt-authors: kunchenguid,github-actions[bot],dependabot[bot]

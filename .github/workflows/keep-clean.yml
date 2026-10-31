@@ -1,0 +1,67 @@
+name: Keep clean
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled, closed]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+concurrency:
+  group: keep-clean-${{ github.repository }}-${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || 'refresh' }}
+  cancel-in-progress: false
+
+jobs:
+  limit:
+    name: Evaluate PR budget
+    runs-on: ubuntu-latest
+    steps:
+      # Only trusted default-branch code runs, including for fork events.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const cp = require('child_process');
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              ...context.repo, state: 'open', per_page: 100
+            });
+            let targets = pulls;
+            if (context.eventName === 'merge_group') {
+              const group = context.payload.merge_group;
+              const match = group.head_ref.match(/^refs\/heads\/gh-readonly-queue\/(.+)\/pr-(\d+)-/);
+              if (!match) throw new Error('Unrecognized merge queue ref');
+              const {data: rules} = await github.rest.repos.getBranchRules({
+                ...context.repo, branch: group.base_ref.replace(/^refs\/heads\//, '')
+              });
+              const queues = rules.filter(rule => rule.type === 'merge_queue');
+              if (!queues.length || queues.some(rule => rule.parameters.max_entries_to_build !== 1)) {
+                throw new Error('Keep clean requires merge queue build groups of one PR');
+              }
+              const pull = pulls.find(pull => pull.number === Number(match[2]));
+              if (!pull) throw new Error('Queued PR is no longer open');
+              targets = [{...pull, head: {sha: group.head_sha}}];
+            }
+            for (const pull of targets) {
+              const number = pull.number;
+              const result = cp.spawnSync('python3', ['bin/fm-keep-clean.py', 'check-pr'], {
+                input: JSON.stringify({pulls, number}), encoding: 'utf8'
+              });
+              core.info(result.stdout);
+              await github.rest.repos.createCommitStatus({
+                ...context.repo, sha: pull.head.sha, context: 'Project PR limit',
+                state: result.status === 0 ? 'success' : 'failure',
+                description: result.status === 0 ? 'Within project PR budget' : 'PR limit or expiry requires disposition',
+                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              });
+              if (result.status !== 0) core.setFailed(result.stderr || 'PR limit check failed');
+            }
