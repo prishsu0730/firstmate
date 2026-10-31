@@ -92,7 +92,15 @@ FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
-  local verdict activity
+  local verdict activity endpoint
+  endpoint=$(fm_run_timed 15 bash -c '
+    . "$1/fm-backend.sh"
+    meta="$2/$3.meta"
+    fm_backend_agent_state "$(fm_backend_of_meta "$meta")" "$(fm_backend_target_of_meta "$meta")"
+  ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2" 2>/dev/null) || endpoint=unknown
+  case "$endpoint" in
+    missing|dead) return 0 ;;
+  esac
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in
@@ -111,9 +119,9 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
         fm_busy_classify_meta "$2/$3.meta" "$3" "$2"
       ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
       case "$activity" in
-        busy\ * | 'unknown fm-recovery'*) return 1 ;;
+        idle\ *) return 0 ;;
       esac
-      return 0
+      return 1
       ;;
     *) return 1 ;;
   esac
