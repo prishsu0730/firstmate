@@ -2,6 +2,9 @@
 # Full queue -> fm-spawn -> task metadata/backlog/launch delivery regression.
 # The backend and agent are fixture executables; all lifecycle scripts are real.
 set -u
+# Build the fixture without the invoking gate's runtime controls.
+for inherited in $(compgen -v FM_); do unset "$inherited"; done
+unset NO_MISTAKES_GATE
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh" || exit 1
 declare -F fm_test_tmproot >/dev/null || fail 'fixture initialization failed (process identity unavailable)'
@@ -69,7 +72,20 @@ printf 'paused [at=%s]: waiting for an external condition\n' "$(date +%s)" > "$F
 assert_contains "$("$ROOT/bin/fm-crew-state.sh" parked)" 'state: paused' 'real crew-state did not reconcile the parked endpoint'
 # Advance only the persisted timer deadline, keeping the queued plan unchanged.
 printf '0\n' > "$FM_HOME/state/.queue-pull-last"
+fm_touch_epoch 0 "$FM_HOME/state/.queue-pull-last"
 start_watch
+# A stopped watcher first delivers its downtime notification and exits. The
+# supervisor normally rearms it after consuming that notification.
+for ((n=0; n<300; n++)); do
+  if ! kill -0 "$watch_pid" 2>/dev/null; then
+    wait "$watch_pid" || fail 'watcher recovery notification failed'
+    watch_pid=
+    assert_contains "$(cat "$TMP_ROOT/watcher.out")" 'check: rearm-resurface' 'unexpected watcher exit'
+    start_watch
+    break
+  fi
+  sleep 0.1
+done
 wait_report 'clear: started through fm-spawn'
 report=$(cat "$FM_HOME/state/.queue-pull-report")
 assert_contains "$report" 'clear: started through fm-spawn' 'queue did not launch through real spawn'
