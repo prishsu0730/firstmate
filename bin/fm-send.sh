@@ -780,6 +780,13 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
             exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
           fi
         fi
+        if [ "${1:-}" = --key ] ||
+          { [ -z "$FIRE_AND_FORGET_ID" ] &&
+            { [ -z "$TARGET_SELECTOR" ] || [[ "$*" = /* ]] ||
+              { [ "$TARGET_HARNESS" = codex ] && [[ "$*" = \$* ]]; }; }; }; then
+          "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" unknown \
+            --current-gen --source fm-recovery --event send-admitted || exit 1
+        fi
       fi
     fi
   fi
