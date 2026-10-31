@@ -46,7 +46,9 @@
 #              claimed about it, because `missing` also covers an endpoint that
 #              is merely unreachable from this seat. That proof exists on HERDR,
 #              whose reads are scoped to the session the record names, and on
-#              TMUX with recorded server identity or a launch proven before boot:
+#              TMUX with recorded server identity, a launch proven before boot,
+#              or a legacy record whose complete live-server inventory proves
+#              every server began after the task and lacks its window:
 #              proven gone reports `endpoint-gone` rather than
 #              `already-stopped`, because the endpoint this verb normally
 #              preserves did not survive; a pane that turns out to be there and
@@ -54,7 +56,10 @@
 #              takes the ordinary interrupt-then-exit path. A tmux `missing`
 #              is proven gone against the recorded server identity, or independently
 #              when spawn_gen strictly predates this machine's boot, including
-#              legacy records without server identity; otherwise it refuses.
+#              legacy records without server identity. A legacy record launched
+#              after boot can instead be reclaimed only after every live tmux
+#              server is proven newer and its window is absent; otherwise it
+#              refuses.
 #   relaunch   Transactionally replace the running agent with a new one, in the
 #              SAME worktree - and the same endpoint whenever that endpoint
 #              still exists - on the same or a newly chosen
@@ -66,8 +71,9 @@
 #              whose terminal was destroyed is reclaimed by the home that owns
 #              it, rather than being stranded with a parked approval nobody can
 #              answer. Reclaim is HERDR and TMUX for the reason `exit` gives above:
-#              a tmux `missing` needs server-absence, server-replacement, or
-#              spawn_gen-before-boot proof, including for legacy records.
+#              a tmux `missing` needs server-absence, server-replacement,
+#              spawn_gen-before-boot, or complete newer-server proof for a
+#              legacy record.
 #              An explicit `default` model or effort clears that
 #              axis for the replacement. With no explicit axis, a secondmate
 #              re-resolves its durable config/secondmate-harness pin (harness

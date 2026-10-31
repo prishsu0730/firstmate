@@ -44,6 +44,7 @@ A HERDR endpoint that is not merely idle but destroyed - a pane or workspace rem
 That relaunch proves the endpoint is destroyed before it rebinds, so a Herdr server that was merely stopped is adopted back rather than duplicated.
 On tmux the same relaunch reclaims a destroyed window when the task record carries the endpoint's tmux server identity (`tmux_socket`, `tmux_server_pid`, `tmux_server_start`, written at spawn) and that server is proven gone or restarted.
 A record without that identity still reclaims after a reboot when its `spawn_gen` predates this machine's boot, because every tmux server and agent from that launch is gone.
+For a legacy record launched after boot, recovery reclaims only when it can inspect every live tmux server, prove each started after the record, and prove none holds the recorded window.
 Otherwise it cannot tell a `missing` window from one on a tmux server this seat cannot address, so both `exit` and `relaunch` refuse.
 Do not work around either refusal by respawning - it means a live agent may still hold that worktree.
 That reclaim is the owning home's operation only, and a secondmate is the one exception: recover it through `bin/fm-spawn.sh <id> --secondmate` as above.

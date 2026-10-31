@@ -87,11 +87,8 @@
 #   its own step, because a backend's `missing` also covers an endpoint that is
 #   merely unreachable from here - and it is available on HERDR, which must
 #   still read the recorded pane as gone once that session's server is running
-#   again, and on TMUX when the record carries the endpoint's server identity
-#   (tmux_socket, tmux_server_pid, tmux_server_start, written at spawn): the
-#   recorded socket must have no server or a restarted one.
-#   Independently, spawn_gen strictly before this machine's boot proves absence,
-#   including for legacy records without server identity; otherwise they refuse.
+#   again. TMUX uses the shared endpoint-absence proof documented in
+#   docs/agent-control.md (Reclaiming a task whose endpoint is gone).
 #   A rebound tmux window is created on the server this
 #   process addresses and the record re-records that server. An endpoint that turns out
 #   to have survived refuses too. The worktree is reused untouched either way; a
@@ -1903,11 +1900,8 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - when the record carries the endpoint's server identity (written
-  #           at spawn), the recorded socket itself is asked (-S): no server, a
-  #           restarted server proves it gone. Independently, spawn_gen strictly
-  #           before this machine's boot proves absence, including for legacy
-  #           records without server identity; otherwise they refuse.
+  #   tmux  - uses the shared proof documented in docs/agent-control.md,
+  #           "Reclaiming a task whose endpoint is gone".
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
