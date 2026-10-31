@@ -210,13 +210,16 @@ test_cursor_marker_outranks_inherited_claudecode() {
   local tree_dir
   tree_dir="$TMP_ROOT/marker-ordering-trees"
   mkdir -p "$tree_dir"
-  cp "$(command -v bash)" "$tree_dir/cursor-agent"
-  cp "$(command -v bash)" "$tree_dir/claude"
-  out=$(env -u CLAUDECODE "$tree_dir/cursor-agent" -c \
-    "r=\$(CURSOR_AGENT=1 \"$HARNESS\"); printf '%s' \"\$r\"")
+  # A copied executable is killed by macOS code-signing enforcement, so use
+  # bash's exec -a to create a real process whose kernel-reported name is the
+  # harness name. This keeps the structural ancestry assertion portable.
+  out=$(env -u CLAUDECODE -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+    CURSOR_FIXTURE="$tree_dir/cursor-agent" HARNESS_PATH="$HARNESS" bash -c \
+    'exec -a "$CURSOR_FIXTURE" /bin/bash -c '\''r=$(CURSOR_AGENT=1 "$HARNESS_PATH"); printf "%s" "$r"'\''')
   [ "$out" = cursor ] || fail "a real cursor-agent ancestor must detect cursor, got '$out'"
-  out=$("$tree_dir/claude" -c \
-    "r=\$(CLAUDECODE=1 CURSOR_AGENT=1 \"$HARNESS\"); printf '%s' \"\$r\"")
+  out=$(env -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+    CLAUDE_FIXTURE="$tree_dir/claude" HARNESS_PATH="$HARNESS" bash -c \
+    'exec -a "$CLAUDE_FIXTURE" /bin/bash -c '\''r=$(CLAUDECODE=1 CURSOR_AGENT=1 "$HARNESS_PATH"); printf "%s" "$r"'\''')
   [ "$out" = claude ] \
     || fail "a retained CURSOR_AGENT must not rename a real claude ancestor, got '$out'"
   pass "fm-harness.sh: cursor's marker outranks an inherited CLAUDECODE when ancestry is silent"
