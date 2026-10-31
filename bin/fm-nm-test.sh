@@ -32,9 +32,14 @@
 # inherited FM_* variables removed from its environment. The remaining scripts
 # still run after a failure. The command exits non-zero when any script fails,
 # and the gate parks the Test step.
+# Before executing tests, probe ps and (when installed) a fresh private tmux
+# server. An Operation not permitted denial exits 77 as BLOCKED by sandbox,
+# without running tests or claiming a test verdict. Rerun this same command
+# on the daemon host, outside the agent sandbox, using commands.test.
+# Other probe errors fail closed; actual test failures still exit 1.
 #
 # Exit status: 0 all selected scripts passed (or --list), 1 a script failed,
-# 2 usage error or missing runner.
+# 2 usage error or missing runner, 77 sandbox-blocked host capabilities.
 #
 # The gate reads commands.test only from the default-branch copy of
 # .no-mistakes.yaml, so a change here takes effect for runs after it lands.
@@ -179,6 +184,48 @@ if [ "$LIST_ONLY" -eq 1 ]; then
 fi
 
 [ -x "$RUNNER" ] || die "test runner is missing or not executable: $RUNNER"
+
+# Probe capabilities before tests can turn a denied process query or socket into
+# an assertion failure. Never classify arbitrary test output as sandbox-blocked:
+# a real assertion failure may legitimately mention either tool or that error.
+check_host() {
+  local probe_dir output rc
+  output=$(ps -p "$$" -o pid= 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    host_error ps "$rc" "$output"
+  fi
+  command -v tmux >/dev/null 2>&1 || return 0
+  probe_dir=$(mktemp -d "${TMPDIR:-/tmp}/fm-nm-host.XXXXXX") || exit 2
+  output=$(TMUX='' tmux -f /dev/null -S "$probe_dir/socket" new-session -d -s probe 'exec sleep 30' 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    output=$(TMUX='' tmux -f /dev/null -S "$probe_dir/socket" kill-server 2>&1)
+    rc=$?
+  fi
+  # The probe creates only its socket inside this fresh private directory.
+  rmdir "$probe_dir" 2>/dev/null || true
+  if [ "$rc" -ne 0 ]; then
+    host_error tmux "$rc" "$output"
+  fi
+}
+
+host_error() {
+  local tool=$1 rc=$2 output=$3
+  case "$output" in
+    *"Operation not permitted"*)
+      log "BLOCKED by sandbox: $tool: $output"
+      log "No tests ran. Rerun bin/fm-nm-test.sh on the no-mistakes daemon host outside the agent sandbox (commands.test); this is not a test failure or a pass."
+      exit 77
+      ;;
+    *)
+      log "host capability check failed: $tool (exit $rc): $output"
+      exit 1
+      ;;
+  esac
+}
+
+check_host
 
 total=$(printf '%s\n' "$SELECTION" | wc -l | tr -d ' ')
 log "running $total test script(s) one at a time"
