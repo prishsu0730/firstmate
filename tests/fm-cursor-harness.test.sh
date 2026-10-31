@@ -207,18 +207,27 @@ test_cursor_marker_outranks_inherited_claudecode() {
   # The ordering is a marker-layer tiebreak, not a licence to overrule the
   # process tree: with a real cursor-agent ancestor the two agree, and with a
   # real claude ancestor the retained cursor marker loses.
-  local tree_dir
+  local tree_dir name
   tree_dir="$TMP_ROOT/marker-ordering-trees"
   mkdir -p "$tree_dir"
-  cp "$(command -v bash)" "$tree_dir/cursor-agent"
-  cp "$(command -v bash)" "$tree_dir/claude"
-  out=$(env -u CLAUDECODE "$tree_dir/cursor-agent" -c \
-    "r=\$(CURSOR_AGENT=1 \"$HARNESS\"); printf '%s' \"\$r\"")
-  [ "$out" = cursor ] || fail "a real cursor-agent ancestor must detect cursor, got '$out'"
-  out=$("$tree_dir/claude" -c \
-    "r=\$(CLAUDECODE=1 CURSOR_AGENT=1 \"$HARNESS\"); printf '%s' \"\$r\"")
-  [ "$out" = claude ] \
-    || fail "a retained CURSOR_AGENT must not rename a real claude ancestor, got '$out'"
+  for name in cursor-agent claude; do
+    ln -s "$(command -v bash)" "$tree_dir/$name"
+    # shellcheck disable=SC2016 # Expand variables in the child shell.
+    out=$(env -u CLAUDECODE -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
+      -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+      HARNESS_PATH="$HARNESS" "$tree_dir/$name" -c \
+      'r=$("$HARNESS_PATH" ancestry "$$"); printf "%s" "$r"')
+    local expected=$name
+    [ "$name" != cursor-agent ] || expected=cursor
+    [ "$out" = "comm $expected" ] \
+      || fail "a real $name ancestor must supply structural identity, got '$out'"
+    # shellcheck disable=SC2016 # Expand variables in the child shell.
+    out=$(env -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
+      CLAUDECODE=1 CURSOR_AGENT=1 HARNESS_PATH="$HARNESS" "$tree_dir/$name" -c \
+      'r=$("$HARNESS_PATH"); printf "%s" "$r"')
+    [ "$out" = "$expected" ] \
+      || fail "retained markers must not rename a real $name ancestor, got '$out'"
+  done
   pass "fm-harness.sh: cursor's marker outranks an inherited CLAUDECODE when ancestry is silent"
 }
 
