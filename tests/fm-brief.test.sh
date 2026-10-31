@@ -1624,6 +1624,29 @@ test_a_leftover_state_marker_refuses_the_brief() {
   pass "fm-brief.sh: a leftover boundary marker for the task id refuses the scaffold and is kept"
 }
 
+# Generated briefs are the public instruction interface consumed by workers.
+test_report_commit_provenance_contract() {
+  local home="$TMP_ROOT/provenance" kind id brief
+  mkdir -p "$home/data"
+  for kind in ship scout; do
+    id="provenance-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --scout >/dev/null || fail "scaffold scout"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" firstmate --mode no-mistakes >/dev/null || fail "scaffold ship"
+    fi
+    brief=$(cat "$home/data/$id/brief.md")
+    assert_contains "$brief" 'Before dispatch, compare every referenced report' "missing live-main preflight for $kind"
+    assert_contains "$brief" 'live main' "missing comparison target for $kind"
+    if [ "$kind" = scout ]; then
+      assert_contains "$brief" 'Record the full commit SHA' "scout report lacks read-commit provenance"
+      assert_contains "$brief" 'git rev-parse HEAD' "scout lacks executable provenance command"
+    fi
+  done
+  pass "report provenance and live-main preflight reach generated briefs"
+}
+test_report_commit_provenance_contract
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header

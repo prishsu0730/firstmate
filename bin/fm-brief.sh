@@ -16,6 +16,8 @@
 # charters still use a single `{TASK}` charter fill. Firstmate may adjust other
 # sections when the task genuinely deviates (e.g. working an existing external
 # PR instead of shipping a new one).
+# Scout reports record their read commit; ship and scout scaffolds require
+# comparing referenced reports with live main before dispatch.
 # Usage: fm-brief.sh <task-id> <repo-name> --mode <no-mistakes|direct-PR|local-only> [--branch-prefix <prefix>] [--base-branch <branch>] [--forge <none|gerrit> [--shape squash]] [--allowed-files <file>] [--herdr-lab]
 #        fm-brief.sh <task-id> <repo-name> --scout [--base-branch <branch>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
@@ -640,6 +642,10 @@ IFS= read -r -d '' TASK_SECTION <<'EOF' || true
 ## Firstmate spec
 {FIRSTMATE_SPEC}
 
+Before dispatch, compare every referenced report's recorded read commit with live main (fetch the project remote and resolve its main commit).
+Recheck the report's findings against that commit; if already fixed, do not dispatch implementation, and otherwise update the brief to the remaining work.
+A report without a recorded read commit needs fresh verification before dispatch.
+
 ## Risk and review
 Blast radius: {BLAST_RADIUS}
 Risk tiers: {RISK_TIERS}
@@ -739,6 +745,7 @@ $WAIT_BLOCK$INBOX_SECTION
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
+Record the full commit SHA read for each repository in the report using \`git rev-parse HEAD\` before investigating; distinguish any later commits or local edits from that read baseline.
 $LAVISH_LINE
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/captain-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
 When the report is complete, append \`done [at=<epoch>]: {one-line conclusion}\` to the status file and stop.
