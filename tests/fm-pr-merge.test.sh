@@ -2655,6 +2655,9 @@ test_url_landing() {
       fm_test_tasks_toml "$mate/.tasks.toml"
       printf '## In flight\n\n## Done\n' > "$mate/data/backlog.md"
       cp "$case_dir/state/task-x1.meta" "$mate/state/task-x1.meta"
+      # The review gate reads the brief from the owning home, so the mate holds its own.
+      mkdir -p "$mate/data/task-x1"
+      cp "$case_dir/home/data/task-x1/brief.md" "$mate/data/task-x1/brief.md"
       printf -- '- mate - Test mate (home: %s; scope: tests; projects: test; added 2026-10-31)\n' "$mate" > "$case_dir/home/data/secondmates.md"
       if [ "$variant" = secondmate ]; then
         printf 'pr=https://github.com/example/other/pull/9\n' >> "$case_dir/state/task-x1.meta"
