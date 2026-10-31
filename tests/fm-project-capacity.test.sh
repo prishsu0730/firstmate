@@ -769,7 +769,7 @@ test_relaunch_and_send_require_readmission() {
 
 test_run_backed_unknown_keeps_capacity() {
   local case_dir home out rc run_state
-  for run_state in parked done; do
+  for run_state in parked "done"; do
     case_dir=$(make_case "unknown-$run_state" task-r)
     home="$case_dir/home"
     declare_capacity "$home" 'project 1'

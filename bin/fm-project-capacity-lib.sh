@@ -105,6 +105,7 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
     return 0
   fi
   case "$backend" in tmux|herdr) ;; *) return 1 ;; esac
+  # shellcheck disable=SC2016 # Expand positional parameters in the child shell.
   endpoint=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
     meta="$2/$3.meta"
@@ -144,6 +145,7 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   esac
   case "$verdict" in
     'state: parked '* | 'state: paused '* | 'state: done '*)
+      # shellcheck disable=SC2016 # Expand positional parameters in the child shell.
       activity=$(fm_run_timed 15 bash -c '
         . "$1/fm-backend.sh"
         . "$1/fm-busy-lib.sh"
