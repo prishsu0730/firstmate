@@ -1576,6 +1576,14 @@ FAKE
       live|unknown) assert_contains "$out" 'caps concurrent workers' "$mode endpoints must consume capacity" ;;
     esac
   done
+  for id in task-a task-b; do
+    printf 'paused [at=%s]: waiting for an external condition\n' "$(date +%s)" > "$home/state/$id.status"
+    printf 'harness=claude\n' >> "$home/state/$id.meta"
+    "$ROOT/bin/fm-busy-event.sh" arm "$home/state" "$id" --state idle --source claude-hook --event stop >/dev/null || fail 'idle hook setup failed'
+  done
+  out=$(PATH="$fakebin:$PATH" FM_TEST_ENDPOINT=live FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    "$ROOT/bin/fm-spawn.sh" task-new --mode no-mistakes --yolo off 2>&1)
+  assert_not_contains "$out" 'caps concurrent workers' 'reconciled paused workers must release away spend capacity'
   pass 'away capacity excludes dead and missing endpoints while retaining uncertain liveness'
 }
 
