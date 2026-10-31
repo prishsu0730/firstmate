@@ -53,8 +53,8 @@
 #     worker must never be undercounted.
 # A place therefore frees when a PR-based ship records its ready PR, when a
 # worker parks, pauses, finishes, or dies, or when any task is cleaned up and its
-# record removed. A worker that resumes work holds its place again at the next
-# admission, and one steered back into work after its PR handoff is not counted.
+# record removed. Relaunches and steers to released workers must pass admission
+# before resuming; a worker with a recorded PR handoff is not counted.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -85,17 +85,22 @@ FM_PROJECT_CAPACITY_DEFER_EXIT=75
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-busy-lib.sh"
 FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Succeeds only when fm-crew-state.sh positively reads the record as not
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
-  local verdict
+  local verdict activity
+  activity=$(fm_busy_record_read "$1" "$2" 2>/dev/null || true)
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in
-    'state: parked '* | 'state: paused '* | 'state: done '*) return 0 ;;
+    'state: parked '* | 'state: paused '* | 'state: done '*)
+      case "$activity" in 'unknown fm-send '*) return 1 ;; esac
+      return 0
+      ;;
     'state: unknown · source: none · backend target gone'* | 'state: unknown · source: none · worktree gone'*) return 0 ;;
     *) return 1 ;;
   esac
@@ -190,8 +195,8 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
 # admitted, and <project-dir> is that project's own directory, which matches
 # without recomputing its identity. The local homes come from
 # fm_local_firstmate_state_dirs <first-state>. <own-id> is the task being
-# admitted; its own record in <first-state> is the one this spawn replaces, so
-# it is not counted.
+# admitted or resumed; its own record in <first-state> is excluded so it
+# cannot consume its own admission place.
 # Sets FM_PROJECT_CAPACITY_OCCUPANTS to the count and
 # FM_PROJECT_CAPACITY_OCCUPANT_IDS to a comma-separated list of the holders,
 # each outside <first-state> qualified with its home. Returns 1 with

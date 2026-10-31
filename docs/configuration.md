@@ -1083,6 +1083,7 @@ A project name may begin with `#` when that `#` is written immediately against t
 A name that is `#`, or that begins with `#` and a space, cannot be declared, because that line is a comment.
 A place is held by every ship or scout on that project in the root home or any local secondmate home registered under it, including one working in a separate clone of the same origin, while its worker may still be executing.
 A place frees when its ready PR is recorded, when it is cleaned up, or when `bin/fm-crew-state.sh` reads the worker as parked, paused, done, or gone; an active, blocked, failed, or uncertain read, including a failed one, keeps the place.
+A relaunch excludes its own record and must pass admission; steering a released worker also requires a free place, otherwise `bin/fm-send.sh` exits 75 before delivery.
 The declaration is matched by the spawning clone's directory name, so clones of the same origin share the cap only when they use that same directory name.
 A clone of that origin under a different directory name finds no declaration and is not capped, though its workers are still counted as holders for a same-origin clone that is capped.
 When every place is held, `bin/fm-spawn.sh` launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line naming the holders, and exits 75, so Firstmate dispatches the item again once a place frees.
