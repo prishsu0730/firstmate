@@ -38,8 +38,9 @@
 # on the daemon host, outside the agent sandbox, using commands.test.
 # Other probe errors fail closed; actual test failures still exit 1.
 #
-# Exit status: 0 all selected scripts passed (or --list), 1 a script failed,
-# 2 usage error or missing runner, 77 sandbox-blocked host capabilities.
+# Exit status: 0 all selected scripts passed (or --list), 1 a script or
+# non-sandbox host capability probe failed, 2 usage error, missing runner, or
+# probe temporary-directory creation failure, 77 sandbox-blocked host capabilities.
 #
 # The gate reads commands.test only from the default-branch copy of
 # .no-mistakes.yaml, so a change here takes effect for runs after it lands.
