@@ -2814,7 +2814,7 @@ queue_pull_surface() {
   local row seen reason
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
-  row=$(awk -F '\t' '$3 == "check" && ($4 == "queue-intake" || $4 == "queue-idle") {row=$0} END {print row}' "$FM_WAKE_QUEUE")
+  row=$(awk -F '\t' '$3 == "check" && $4 == "queue-intake" {row=$0} END {print row}' "$FM_WAKE_QUEUE")
   seen=$(cat "$STATE/.queue-pull-surfaced" 2>/dev/null || true)
   if [ -z "$row" ] || [ "$row" = "$seen" ]; then
     fm_lock_release "$FM_WAKE_QUEUE_LOCK"

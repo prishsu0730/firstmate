@@ -11,9 +11,6 @@
 # At most one successful launch per tick; failures are retried next minute.
 # Queued items without a plan wake supervision once per changed queue report
 # for normal intake. state/.queue-pull-report records every non-start reason.
-# With no start, landing, or running job for 1800 seconds, one durable check
-# names that report. The episode resets only on observed progress, survives
-# watcher restarts, and never repeats just because its wake was acknowledged.
 # No quiet/attended dispatch. State paths follow the ordinary FM_* overrides.
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,14 +28,20 @@ fm_refuse_if_gate_agent "$SCRIPT_DIR/.."
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
 
+. "$SCRIPT_DIR/fm-pr-lib.sh"
+
 queue_ids() {
   # IDs are the first TOON column, never titles or arbitrary shell text.
-  awk '/^  [a-zA-Z0-9][a-zA-Z0-9_-]*,/ {sub(/^  /, ""); sub(/,.*/, ""); print}'
+  local id
+  while IFS= read -r id; do
+    fm_pr_task_id_valid "$id" && printf '%s\n' "$id"
+  done < <(awk '/^  [^ ,]+,/ {sub(/^  /, ""); sub(/,.*/, ""); print}')
+  return 0
 }
 
 queue_prepare() {
   local id=${1:-} project=${2:-} tmp arg
-  case "$id" in ''|*[!a-zA-Z0-9_-]*) echo 'error: invalid task id' >&2; return 2 ;; esac
+  fm_pr_task_id_valid "$id" || { echo 'error: invalid task id' >&2; return 2; }
   [ "$#" -ge 3 ] && [ -d "$project" ] && [ -f "$DATA/$id/brief.md" ] || {
     echo 'error: prepare needs an existing project, task brief, and explicit spawn options' >&2; return 2;
   }
@@ -59,11 +62,15 @@ queue_prepare() {
 }
 
 queue_tick() {
-  local now last entered report queued ready ids eligible id plan arg out rc
-  local running=0 started=0 needs_intake=0 meta task kind progress fingerprint old event
+  local now last report queued ready ids eligible id plan arg out rc
+  local started=0 needs_intake=0 fingerprint old
   local -a argv
-  fm_afk_contract_away_present "$STATE" || return 0
-  fm_afk_contract_validate "$STATE/.afk-contract" >/dev/null 2>&1 || return 0
+  (
+    fm_afk_contract_lock_hold "$STATE" || exit 1
+    trap 'fm_afk_contract_lock_release' EXIT
+    fm_afk_contract_away_present "$STATE" &&
+      fm_afk_contract_validate "$STATE/.afk-contract" >/dev/null 2>&1
+  ) || return 0
   fm_lock_try_acquire "$STATE/.queue-pull.lock" || return 0
   trap 'fm_lock_release "$STATE/.queue-pull.lock"' EXIT
   now=$(date +%s)
@@ -116,7 +123,13 @@ queue_tick() {
         continue
       fi
       # Never execute a command from a plan; fm-spawn owns every launch gate.
-      if out=$("$SCRIPT_DIR/fm-spawn.sh" "${argv[@]}" 2>&1); then
+      if out=$( (
+        fm_afk_contract_lock_hold "$STATE" || exit 1
+        trap 'fm_afk_contract_lock_release' EXIT
+        fm_afk_contract_away_present "$STATE" &&
+          fm_afk_contract_validate "$STATE/.afk-contract" >/dev/null 2>&1 || exit 1
+        "$SCRIPT_DIR/fm-spawn.sh" "${argv[@]}"
+      ) 2>&1); then
         started=1
         printf '%s: started through fm-spawn\n' "$id" >> "$report"
       else
@@ -129,33 +142,6 @@ queue_tick() {
     printf 'backlog unavailable: %s\n' "${queued:-} ${ready:-}" >> "$report"
   fi
 
-  # Only reconciled working state proves running work; uncertainty is reported.
-  entered=$(fm_afk_contract_read_field "$STATE/.afk-contract" entered_epoch 2>/dev/null || true)
-  case "$entered" in ''|*[!0-9]*) entered=$now ;; esac
-  progress=$(cat "$STATE/.queue-pull-progress" 2>/dev/null || printf '%s' "$entered")
-  case "$progress" in ''|*[!0-9]*) progress=$now ;; esac
-  [ "$progress" -ge "$entered" ] || progress=$entered
-  # Lifecycle owners record even jobs that started and landed between ticks.
-  if [ -f "$STATE/.queue-pull-activity" ]; then
-    while IFS=$'\t' read -r last event; do
-      case "$last" in ''|*[!0-9]*) continue ;; esac
-      case "$event" in start|landing) ;; *) continue ;; esac
-      [ "$last" -le "$progress" ] || progress=$last
-    done < "$STATE/.queue-pull-activity"
-  fi
-  for meta in "$STATE"/*.meta; do
-    [ -f "$meta" ] || continue
-    kind=$(sed -n 's/^kind=//p' "$meta" | head -1)
-    [ "$kind" != secondmate ] || continue
-    task=${meta##*/}; task=${task%.meta}
-    out=$(FM_CREW_STATE_NO_FORGE=1 "$SCRIPT_DIR/fm-crew-state.sh" "$task" 2>/dev/null || true)
-    case "$out" in
-      'state: working '*) running=1 ;;
-      'state: unknown '*|'state: conflict '*) printf '%s: current worker activity uncertain: %s\n' "$task" "$out" >> "$report" ;;
-    esac
-  done
-  if [ "$started" -eq 1 ] || [ "$running" -eq 1 ]; then progress=$now; fi
-  printf '%s\n' "$progress" > "$STATE/.queue-pull-progress"
   fingerprint=$(cksum < "$report")
   old=$(cat "$STATE/.queue-pull-intake" 2>/dev/null || true)
   # Publish reasons before any wake can ask supervision to read them.
@@ -163,11 +149,6 @@ queue_tick() {
   if [ "$needs_intake" -eq 1 ] && [ "$fingerprint" != "$old" ]; then
     fm_wake_append check queue-intake "check: queue intake needed; read $STATE/.queue-pull-report, complete normal intake and dispatch through bin/fm-spawn.sh (save deferred argv with bin/fm-queue-pull.sh prepare)" || return 1
     printf '%s\n' "$fingerprint" > "$STATE/.queue-pull-intake"
-  fi
-  old=$(cat "$STATE/.queue-pull-alarm" 2>/dev/null || true)
-  if [ $((now - progress)) -ge 1800 ] && [ "$old" != "$progress" ]; then
-    fm_wake_append check queue-idle "check: no start, landing, or running job for 30 minutes; reason: $STATE/.queue-pull-report" || return 1
-    printf '%s\n' "$progress" > "$STATE/.queue-pull-alarm"
   fi
 }
 
