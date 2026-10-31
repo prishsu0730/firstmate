@@ -85,16 +85,10 @@
 #   ADOPTED as-is, while an endpoint PROVEN gone is RE-CREATED in the recorded
 #   worktree and the republished record rebinds the task to it. That proof is
 #   its own step, because a backend's `missing` also covers an endpoint that is
-#   merely unreachable from here - and it is available on HERDR, which must
-#   still read the recorded pane as gone once that session's server is running
-#   again, and on TMUX when the record carries the endpoint's server identity
-#   (tmux_socket, tmux_server_pid, tmux_server_start, written at spawn): the
-#   recorded socket must have no server or a restarted one.
-#   Independently, spawn_gen strictly before this machine's boot proves absence,
-#   including for legacy records without server identity; otherwise they refuse.
-#   A rebound tmux window is created on the server this
-#   process addresses and the record re-records that server. An endpoint that turns out
-#   to have survived refuses too. The worktree is reused untouched either way; a
+#   merely unreachable from here. fm_control_endpoint_absence_verdict in
+#   fm-control-lib.sh owns the shared proof for Herdr and for tmux records whose
+#   last launch predates this machine's boot; unproven absence refuses.
+#   The worktree is reused untouched either way; a
 #   rebind is a recovery, never a teardown. Only a crewmate or scout rebinds: a
 #   secondmate whose endpoint is gone is respawned by its own owner
 #   (`--secondmate`, driven by the session-start liveness sweep).
@@ -372,17 +366,26 @@
 #   This is an exec environment boundary, not a sandbox for the pane's startup
 #   shell, credential files, same-user processes, or later shell initialization.
 #   See docs/configuration.md for provider/Git setup and supported limits.
+# Codex permission mode: docs/configuration.md owns config/codex-permission-mode.
+#
 # Claude permission mode (config/claude-permission-mode):
 #   One token selecting the permission flag every claude launch (ship, scout,
-#   secondmate, and relaunch) carries. Absent or `bypass` keeps today's
-#   `--dangerously-skip-permissions`; `auto` launches with `--permission-mode
-#   auto` instead, Claude Code's classifier-reviewed mode, for a captain who
-#   refuses to run workers in bypass mode. Every other part of the claude launch
+#   secondmate, and relaunch) carries. Absent or `bypass` selects
+#   `--dangerously-skip-permissions`; `auto` selects `--permission-mode auto`,
+#   the model-reviewed remedy for managed machines. Every other part of the claude launch
 #   is unchanged. The token is the file's whitespace-trimmed content; any other
 #   value, or an unreadable file, refuses the spawn before any endpoint,
 #   worktree, or record exists and names the accepted values. The file is read
 #   on every spawn and relaunch, so a change reaches the next launch without a
 #   restart, and it is inherited into secondmate homes (bin/fm-config-inherit-lib.sh).
+# Codex approval mode (config/codex-approval-mode):
+#   One whitespace-trimmed token: absent or `bypass` selects
+#   --dangerously-bypass-approvals-and-sandbox; `approve-for-me` selects
+#   --approve-for-me, with model-reviewed approvals in workspace-write.
+#   Any other value or unreadable file refuses before mutation, like the Claude
+#   file. Both files apply to ships, scouts, secondmates, and relaunches.
+#   bin/fm-approval-failover.sh owns captain-approved durable failover after
+#   firstmate observes a bypass approval prompt or policy refusal; no polling.
 # Worker tool exclusions:
 #   docs/configuration.md "Worker tool exclusions" owns config/crew-exclude-tools
 #   and its operator contract. Resolve it with bin/fm-exclude-tools-lib.sh
@@ -543,6 +546,20 @@
 #   Local spawns never pass it and resolve their own carrier exactly as before.
 set -eu
 
+# Git's environment config count is a nonnegative signed integer. Validate
+# before any Git operation or spawn mutation, and normalize leading zeroes.
+SPAWN_GIT_CONFIG_COUNT=${GIT_CONFIG_COUNT-0}
+case "$SPAWN_GIT_CONFIG_COUNT" in
+  ''|*[!0-9]*) echo 'fm-spawn: invalid GIT_CONFIG_COUNT' >&2; exit 1 ;;
+esac
+while [ "${SPAWN_GIT_CONFIG_COUNT#0}" != "$SPAWN_GIT_CONFIG_COUNT" ] && [ "${#SPAWN_GIT_CONFIG_COUNT}" -gt 1 ]; do
+  SPAWN_GIT_CONFIG_COUNT=${SPAWN_GIT_CONFIG_COUNT#0}
+done
+if [ "${#SPAWN_GIT_CONFIG_COUNT}" -gt 10 ] || [ "$SPAWN_GIT_CONFIG_COUNT" -ge 2147483647 ]; then
+  echo 'fm-spawn: invalid GIT_CONFIG_COUNT' >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -645,6 +662,57 @@ case "$CLAUDE_PERMISSION_MODE" in
 auto) CLAUDE_PERM_FLAG='--permission-mode auto' ;;
 *) CLAUDE_PERM_FLAG='--dangerously-skip-permissions' ;;
 esac
+if ! CODEX_APPROVAL_PRESENT=$(fm_config_source_present "$CONFIG/codex-approval-mode"); then
+  exit 1
+fi
+CODEX_APPROVAL_MODE=bypass
+if [ "$CODEX_APPROVAL_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/codex-approval-mode" ] || [ ! -r "$CONFIG/codex-approval-mode" ]; then
+    echo "error: config/codex-approval-mode must be a readable regular file holding one of: bypass, approve-for-me" >&2
+    exit 1
+  fi
+  if ! CODEX_APPROVAL_MODE=$(perl -0777 -pe 's/\A\s+|\s+\z//g' <"$CONFIG/codex-approval-mode"); then
+    echo 'error: could not read config/codex-approval-mode' >&2
+    exit 1
+  fi
+  case "$CODEX_APPROVAL_MODE" in
+    bypass | approve-for-me) ;;
+    *)
+      echo "error: config/codex-approval-mode holds '$CODEX_APPROVAL_MODE'; accepted values are: bypass (the default), approve-for-me" >&2
+      exit 1
+      ;;
+  esac
+fi
+case "$CODEX_APPROVAL_MODE" in
+  approve-for-me) CODEX_APPROVAL_FLAG='--approve-for-me' ;;
+  *) CODEX_APPROVAL_FLAG='--dangerously-bypass-approvals-and-sandbox' ;;
+esac
+# Resolve the opt-in Codex posture before any spawn or relaunch mutation.
+# docs/configuration.md owns config/codex-permission-mode and its limits.
+CODEX_PERMISSION_MODE=bypass
+if ! CODEX_PERM_PRESENT=$(fm_config_source_present "$CONFIG/codex-permission-mode"); then
+  exit 1
+fi
+if [ "$CODEX_PERM_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/codex-permission-mode" ] || [ ! -r "$CONFIG/codex-permission-mode" ]; then
+    echo "error: config/codex-permission-mode must be a readable regular file holding bypass or restricted" >&2
+    exit 1
+  fi
+  CODEX_PERMISSION_MODE=$(cat "$CONFIG/codex-permission-mode") || exit 1
+  case "$CODEX_PERMISSION_MODE" in
+  bypass | restricted) ;;
+  *)
+    echo "error: config/codex-permission-mode must contain bypass or restricted" >&2
+    exit 1
+    ;;
+  esac
+fi
+# Restricted replaces whichever approval flag was selected above, and the task
+# record reports it so approval failover never treats the launch as bypass.
+if [ "$CODEX_PERMISSION_MODE" = restricted ]; then
+  CODEX_APPROVAL_MODE=restricted
+  CODEX_APPROVAL_FLAG='--sandbox workspace-write --ask-for-approval on-request'
+fi
 # config/lavish-axi-host is the primary-owned per-machine address for the
 # shared Lavish server. Read it once per launch and refuse malformed values so
 # every worker reaches the same server instead of starting a second one.
@@ -1903,11 +1971,12 @@ if [ "$RELAUNCH" -eq 1 ]; then
   #           survived the restart and is adopted after all; `alive` means the
   #           agent came back and refuses; only a second `missing` proves the
   #           pane itself did not survive.
-  #   tmux  - when the record carries the endpoint's server identity (written
-  #           at spawn), the recorded socket itself is asked (-S): no server, a
-  #           restarted server proves it gone. Independently, spawn_gen strictly
-  #           before this machine's boot proves absence, including for legacy
-  #           records without server identity; otherwise they refuse.
+  #   tmux  - REFUSES, unless the task record predates this machine's boot. A
+  #           task record carries no socket identity for its endpoint, and a
+  #           server-wide inventory describes only the server this process
+  #           addresses, so no read available here can tell "gone" from "on a
+  #           server I cannot see" - but a reboot ended every agent, which the
+  #           record's launch time against the boot time does prove.
   # Every transient or self-contradicting read stays `unreadable`/`ambiguous`
   # and refuses as it always did (bin/fm-backend.sh's fm_backend_agent_state
   # owns that vocabulary). The proof itself lives in one place for the whole
@@ -2153,7 +2222,7 @@ launch_template() {
   # policy in force regardless of which settings scopes end up loaded.
   # __CLAUDEPERMFLAG__ is the permission flag config/claude-permission-mode
   # selects (header above): --dangerously-skip-permissions by default, or
-  # --permission-mode auto for a captain who refuses bypass mode.
+  # --permission-mode auto when configured.
   # __CLAUDEADDDIRS__ is the task-channel directory grant
   # claude_add_dirs_flag below builds: Claude path-checks Read/Glob/Grep (and
   # an Edit's mandatory prior Read) against cwd plus --add-dir, and since
@@ -2179,8 +2248,8 @@ launch_template() {
     # naming it is passed. A record that cannot be published stops the spawn.
     printf '%s' '__MODELFLAG____EFFORTFLAG____BRIEFDOORBELL__'
     ;;
-  # --disable hooks (equivalent to -c features.hooks=false) turns codex's whole
-  # lifecycle-hook layer off for CREWMATE and SCOUT launches only.
+  # --disable hooks (equivalent to -c features.hooks=false) requests that codex
+  # turn its whole lifecycle-hook layer off for CREWMATE and SCOUT launches only.
   # Without it a crewmate launch parks forever on codex's hook-trust modal
   # ("N hooks are new or changed"), whose selection sits on "Review hooks" -
   # neither trusting nor declining. Firstmate's key plane carries Enter, Escape
@@ -2193,19 +2262,26 @@ launch_template() {
   # disabled, codex-cli 0.151.0), and firstmate's own .codex/hooks.json registers
   # PRIMARY-session infrastructure that already stands down in a child worktree.
   # This is the opposite of --dangerously-bypass-hook-trust, which RUNS untrusted
-  # hooks; disabling the feature runs none of them and leaves the operator's
-  # ~/.codex untouched. An unknown feature name is a hard codex error, so a future
-  # release that drops this flag fails the launch loudly instead of silently
-  # restoring the modal.
+  # hooks; when honored, disabling the feature runs none of them and leaves the
+  # operator's ~/.codex untouched. An unknown feature name is a hard codex error, so a future
+  # release that drops this flag stops the launch rather than silently restoring
+  # the modal. A managed policy can override the requested disablement, so its
+  # effective hook state is not guaranteed.
+  # --approve-for-me uses Codex's automatic approval review with its workspace-write
+  # sandbox. When selected, it replaces complete bypass because managed settings
+  # can override its approval component while accepting the sandbox bypass. The
+  # workspace-write sandbox starts with network access disabled and reviews writes
+  # outside the worktree, so networked operations and external task channels may
+  # need automatic review before they proceed.
   # A secondmate is a firstmate PRIMARY in its own home, and its turn-end guard,
   # session-start digest, and cd/arm seatbelts are exactly those project hooks
   # (docs/turnend-guard.md, docs/sessionstart-nudge.md, docs/cd-guard.md), so the
-  # secondmate launch deliberately keeps hooks on.
+  # secondmate launch deliberately keeps hooks on but shares this approval posture.
   codex)
     if [ "$kind" = secondmate ]; then
-      printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      printf '%s' 'codex __MODELFLAG____EFFORTFLAG____CODEXAPPROVALFLAG__ "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     else
-      printf '%s' 'codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals-and-sandbox --disable hooks -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
+      printf '%s' 'codex __MODELFLAG____EFFORTFLAG____CODEXAPPROVALFLAG__ --disable hooks -c "notify=[\"bash\",\"-c\",\"touch __TURNEND__\"]" "$(__OPINPUT__ encode launch-brief < __BRIEF__)"'
     fi
     ;;
   opencode) printf '%s' 'OPENCODE_CONFIG_CONTENT='\''{"permission":{"*":"allow"}__EFFORTFLAG__}'\'' opencode __MODELFLAG__--prompt "$(__OPINPUT__ encode launch-brief < __BRIEF__)"' ;;
@@ -2686,7 +2762,8 @@ muse_worker_meta_api_key_present() {
   fi
   [ "$BACKEND" = tmux ] || return 1
   if [ -n "${TMUX:-}" ]; then
-    session=$(tmux display-message -p '#S' 2>/dev/null) || return 1
+    fm_backend_source tmux >/dev/null 2>&1 || return 1
+    session=$(fm_backend_tmux_own_session 2>/dev/null) || return 1
   else
     tmux has-session -t firstmate 2>/dev/null || return 1
     session=firstmate
@@ -2865,8 +2942,6 @@ effort_flag_for_harness() {
     # separate effort flag.
   esac
 }
-
-
 
 case "$LAUNCH" in
 *__KIMIBIN__*)
@@ -3809,20 +3884,15 @@ if [ "$RELAUNCH" -eq 1 ]; then
     T=$RELAUNCH_TARGET
     WT_TARGET=$T
     SES=${T%%:*}
-    # The adopted window was just read on the server this process addresses, so
-    # that server's identity replaces the recorded one.
-    [ "$BACKEND" != tmux ] || TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
   elif [ "$BACKEND" = tmux ]; then
-    # The recorded tmux server is gone (or restarted), so its window is too.
-    # Create ONE fresh window for the same task on the server this process
-    # addresses, opened directly in the recorded worktree; the record published
-    # below rebinds window= and re-records that server's identity. The task id,
-    # brief, worktree, armed poll and status log are untouched.
+    # A tmux endpoint is only ever proven gone by a reboot (the record predates
+    # this boot), which also took the tmux server with it. Create ONE fresh
+    # window directly in the recorded worktree, so the published record rebinds
+    # to it just as the herdr reclaim below does.
     SES=$(fm_backend_tmux_container_ensure)
     T="$SES:$W"
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
     WT_TARGET="$WID"
-    TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
   else
     # The recorded endpoint is authoritatively gone, so there is nothing to
     # adopt: create ONE fresh endpoint for the same task, opened directly in the
@@ -3830,9 +3900,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
     # ids) from these values, which is the whole rebind - the task id, brief,
     # worktree, armed poll and status log are untouched.
     #
-    # Only herdr reaches this branch; tmux was handled above and every
-    # secondmate was already refused. fm_control_endpoint_absence_verdict
-    # owns the shared absence proof.
+    # Herdr is the only backend that reaches here: the gate above rebinds only
+    # on a PROVEN-gone endpoint, and the only other proof
+    # (fm_control_endpoint_absence_verdict owns that argument) is a tmux record
+    # that predates this boot, handled by the branch above. Every secondmate
+    # was already refused, so there is no further dispatch to make.
     #
     # This deliberately uses the FLAT container shape rather than Herdr's
     # presentation projection: projection is a presentation-only layout that is
@@ -3906,7 +3978,6 @@ else
     # stays $T (the name form), which is safe now that rename is disabled.
     WID=$(fm_backend_tmux_create_task "$SES" "$W" "$PROJ_ABS") || exit 1
     WT_TARGET="$WID"
-    TMUX_SERVER_IDENTITY=$(fm_backend_tmux_server_identity || true)
     ;;
   herdr)
     # fm_backend_herdr_workspace_label resolves the target workspace from
@@ -5234,7 +5305,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx tmux_socket tmux_server_pid tmux_server_start", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen approval_mode traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5246,6 +5317,12 @@ preserve_relaunch_meta() {
   echo "worktree=$WT"
   echo "project=$PROJ_ABS"
   echo "harness=$HARNESS"
+  if [ "$RAW_LAUNCH" = 0 ]; then
+    case "$HARNESS" in
+      claude) echo "approval_mode=$CLAUDE_PERMISSION_MODE" ;;
+      codex) echo "approval_mode=$CODEX_APPROVAL_MODE" ;;
+    esac
+  fi
   echo "kind=$KIND"
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
@@ -5263,18 +5340,10 @@ preserve_relaunch_meta() {
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
   # Default-off writes no traceparent= line.
-  # backend= is written only for a non-default (non-tmux) backend;
-  # absent backend= continues to mean tmux.
+  # backend= is written only for a non-default (non-tmux) backend, so the
+  # default path's meta stays byte-identical (absent backend= means tmux;
+  # data/fm-backend-design-d7's P1 compatibility contract).
   [ "$BACKEND" = tmux ] || echo "backend=$BACKEND"
-  # The tmux server this endpoint lives on, so a later control verb can prove
-  # the endpoint gone after a server restart instead of refusing forever. Written
-  # only when all three fields read back (bin/backends/tmux.sh).
-  if [ "$BACKEND" = tmux ] && [ -n "${TMUX_SERVER_IDENTITY:-}" ]; then
-    IFS=$'\t' read -r TMUX_SERVER_SOCKET TMUX_SERVER_PID TMUX_SERVER_START <<< "$TMUX_SERVER_IDENTITY"
-    echo "tmux_socket=$TMUX_SERVER_SOCKET"
-    echo "tmux_server_pid=$TMUX_SERVER_PID"
-    echo "tmux_server_start=$TMUX_SERVER_START"
-  fi
   if [ "$BACKEND" = herdr ]; then
     echo "herdr_session=$HERDR_SES"
     echo "herdr_workspace_id=$HERDR_WORKSPACE_ID"
@@ -5418,6 +5487,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
 fi
 LAUNCH=${LAUNCH//__PIRESUME__/$RESUME_ARGS}
 LAUNCH=${LAUNCH//__CLAUDEPERMFLAG__/$CLAUDE_PERM_FLAG}
+LAUNCH=${LAUNCH//__CODEXAPPROVALFLAG__/$CODEX_APPROVAL_FLAG}
 if [ "$KEEP_AI_TRAILERS" = 1 ]; then
   LAUNCH=${LAUNCH//__CLAUDEATTRIBUTION__/}
 else
@@ -5551,7 +5621,18 @@ fi
 # directly. An export statement inside the pane command carries the override
 # across every step of a compound raw launch while firstmate's own git is unchanged.
 if [ "$KEEP_AI_TRAILERS" = 0 ]; then
-  LAUNCH="export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=$(shell_quote "$GIT_HOOKS_DIR"); $LAUNCH"
+  git_config_exports="export GIT_CONFIG_COUNT=$((SPAWN_GIT_CONFIG_COUNT + 1))"
+  for ((git_config_index=0; git_config_index<SPAWN_GIT_CONFIG_COUNT; git_config_index++)); do
+    for git_config_kind in KEY VALUE; do
+      git_config_name="GIT_CONFIG_${git_config_kind}_$git_config_index"
+      if [ "${!git_config_name+x}" != x ]; then
+        echo "fm-spawn: missing $git_config_name" >&2
+        exit 1
+      fi
+      git_config_exports="$git_config_exports $git_config_name=$(shell_quote "${!git_config_name}")"
+    done
+  done
+  LAUNCH="$git_config_exports GIT_CONFIG_KEY_$SPAWN_GIT_CONFIG_COUNT=core.hooksPath GIT_CONFIG_VALUE_$SPAWN_GIT_CONFIG_COUNT=$(shell_quote "$GIT_HOOKS_DIR"); $LAUNCH"
 fi
 # Every agent this fleet launches - crewmate, scout, and secondmate, on a fresh
 # spawn and on a relaunch alike - runs with the compact-adviser kill switch on.

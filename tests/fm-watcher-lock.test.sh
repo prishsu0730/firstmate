@@ -51,6 +51,34 @@ drain_and_ack() {  # <state>
     --recovery-generation "$generation"
 }
 
+test_lock_wait_stops_when_parent_disappears() {
+  local dir
+  dir=$(make_case lock-parent-gone)
+  python3 - "$LIB" "$dir/state" <<'PY' || fail "lock wait outlived its removed parent"
+import os
+import signal
+import subprocess
+import sys
+
+for method in ("fm_lock_acquire_wait", "fm_lock_acquire_wait_refusable"):
+    parent = os.path.join(sys.argv[2], method)
+    os.mkdir(parent)
+    script = '. "$1"; rmdir "$2"; "$3" "$2/lock"'
+    p = subprocess.Popen(["bash", "-c", script, "_", sys.argv[1], parent, method],
+                         env=dict(os.environ, FM_STATE_OVERRIDE=sys.argv[2]),
+                         start_new_session=True)
+    try:
+        rc = p.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+        raise
+    assert rc == 1, (method, rc)
+    assert not os.path.exists(parent), method
+PY
+  pass "lock waits stop when their parent directory disappears"
+}
+
 test_wait_deadline_reaps_a_stopped_child() {
   # A stopped TERM-resistant child cannot finish graceful cleanup. The helper waited
   # forever after its nominal deadline. An outer process-group deadline keeps
@@ -1882,6 +1910,7 @@ test_lock_reclaims_self_held_steal_mutex
 test_lock_resumes_own_interrupted_steal_reap
 test_lock_live_steal_mutex_is_not_reclaimed
 test_lock_wait_survives_errexit_contention
+test_lock_wait_stops_when_parent_disappears
 test_lock_dead_recovery_holder_is_reclaimed
 test_lock_stale_empty_recovery_holder_is_reclaimed
 test_lock_live_recovery_holder_is_not_reclaimed

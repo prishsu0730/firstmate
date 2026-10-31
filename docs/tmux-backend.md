@@ -22,8 +22,9 @@ For the best visible experience, launch the primary harness inside a tmux sessio
 tmux new -s firstmate
 ```
 
-Crew tasks become windows in that session.
-`tmux display-message -p '#S'` prints its name.
+Crew tasks become windows in that session, even while another client is attached through a grouped session (`tmux new-session -t <session>`).
+Firstmate resolves the inherited `$TMUX` session id first, then the surviving `$TMUX_PANE` if that session id is stale, before falling back to an untargeted lookup.
+An untargeted `tmux display-message -p '#S'` can instead name another client's session.
 If the primary harness runs outside tmux, Firstmate creates or reuses a detached session named `firstmate`:
 
 ```sh
