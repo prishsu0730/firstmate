@@ -782,7 +782,7 @@ test_run_backed_unknown_keeps_capacity() {
 test_run_activity_controls_release() {
   local activity case_dir home gen out rc
   for activity in busy idle capture-failed endpoint-unreadable; do
-    case_dir=$(make_case "run-activity-$activity" task-r)
+    case_dir=$(make_case "run-activity-$activity" task-r another)
     home="$case_dir/home"
     declare_capacity "$home" 'project 1'
     write_live "$home" task-r "$case_dir/project" 'harness=claude'
