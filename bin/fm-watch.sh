@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Firstmate watcher.
+# Changed current ship done statuses register their canonical PR through
+# fm-pr-check.sh (bounded to 20 seconds) before the completion wake is queued.
+# Registration failure retains the wake and never bypasses registration guards.
 # Classifies supervision wakes in bash. In normal mode it absorbs benign wakes
 # and keeps blocking; it queues and exits only for actionable wakes.
 # The no-verb signal and stale path is absorb-only-on-positive-evidence: a wake
@@ -204,8 +207,34 @@ WATCH_HOME_EXISTED=0
 # runtime needlessly spends per-root CI lint memory while adding no uncovered file.
 # shellcheck source=/dev/null
 . "$SCRIPT_DIR/fm-push-transition-lib.sh"
+# Register only a current ship completion, never a secondmate's child report.
+# This shared status path is independent of worker harness and runtime backend.
+record_done_pr() {  # <task.status>
+  local id=${1%.status} meta line url mode
+  fm_pr_task_id_valid "$id" || return 0
+  meta="$STATE/$id.meta"
+  [ -f "$meta" ] && [ ! -L "$meta" ] || return 0
+  [ -f "$STATE/$id.status" ] && [ ! -L "$STATE/$id.status" ] || return 0
+  [ "$(fm_dod_meta_value "$meta" kind)" = ship ] || return 0
+  mode=$(fm_dod_meta_value "$meta" mode)
+  case "$mode" in no-mistakes|direct-PR|'') ;; *) return 0 ;; esac
+  line=$(last_status_line "$STATE/$id.status")
+  [ "$(status_line_verb "$line")" = "done" ] || return 0
+  url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") || return 0
+  fm_pr_url_parse "$url" || return 0
+  if [ "$(fm_dod_meta_value "$meta" pr)" = "$url" ] \
+    && fm_pr_poll_artifacts_valid "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
+    return 0
+  fi
+  if ! fm_run_timed 20 "$SCRIPT_DIR/fm-pr-check.sh" "$id" "$url" >/dev/null; then
+    triage_log "PR registration refused for $id; completion wake retained"
+  fi
+}
+
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # Only for the arm-time check on FM_PROCEVENT_LAUNCH_CONFIRM_SECONDS below;
 # the per-cycle reconcile itself runs as a separate process.
 # shellcheck source=bin/fm-procevent-lib.sh
@@ -3186,6 +3215,17 @@ EOF
     while IFS=$(printf '\t') read -r sf sig f; do
       [ -n "$sf" ] || continue
       case " $files " in *" $f "*) ;; *) files="$files $f" ;; esac
+    done <<EOF
+$pending
+EOF
+    # Persist a ship's delivered PR through the existing registration guards
+    # before waking firstmate. A refusal remains visible with the status wake;
+    # it never suppresses completion or authorizes a merge.
+    while IFS=$(printf '\t') read -r sf sig f; do
+      [ -n "$sf" ] || continue
+      case "$f" in
+        "$STATE"/*.status) record_done_pr "${f##*/}" ;;
+      esac
     done <<EOF
 $pending
 EOF
