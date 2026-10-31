@@ -22,6 +22,7 @@ TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-project-capacity)
 DEFER_EXIT=75
 HAVE_TASKS_AXI=0
+REAL_BASH=$(command -v bash)
 command -v tasks-axi >/dev/null 2>&1 && HAVE_TASKS_AXI=1
 
 # --- fixture ----------------------------------------------------------------
@@ -102,7 +103,16 @@ SH
 printf 'treehouse %s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 exit 0
 SH
-  chmod +x "$fakebin/tmux" "$fakebin/treehouse"
+  # A state read for the task named in FM_FAKE_CREW_STATE_FAIL dies before it
+  # can answer; every other bash call runs the real shell.
+  cat > "$fakebin/bash" <<SH
+#!$REAL_BASH
+if [ "\${1##*/}" = fm-crew-state.sh ] && [ "\${2:-}" = "\${FM_FAKE_CREW_STATE_FAIL:-}" ]; then
+  exit 9
+fi
+exec $REAL_BASH "\$@"
+SH
+  chmod +x "$fakebin/tmux" "$fakebin/treehouse" "$fakebin/bash"
   fm_fake_exit0 "$fakebin" gh gh-axi no-mistakes
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -133,10 +143,14 @@ declare_capacity() {  # <home> <line>...
 write_live() {  # <home> <id> <project-dir> [extra-line...]
   local home=$1 id=$2 project=$3
   shift 3
+  # A live worker's copy exists on disk; fm-crew-state.sh reads a record whose
+  # copy is gone as a dead worker. The fake terminal reports no pane state, so
+  # this record reads as uncertain and holds its place.
+  mkdir -p "$home/worktree-$id"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" \
     "endpoint_task_id=$id" \
-    "worktree=$home/absent-worktree-$id" \
+    "worktree=$home/worktree-$id" \
     "project=$project" \
     "harness=codex" \
     "kind=ship" \
@@ -163,6 +177,7 @@ run_spawn() {  # <case-dir> <home> <pane-path> <args...>
     FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    FM_FAKE_CREW_STATE_FAIL="${FM_FAKE_CREW_STATE_FAIL:-}" \
     PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -179,6 +194,7 @@ assert_nothing_created() {  # <case-dir> <home> <id> <calls-before> <worktrees-b
   local case_dir=$1 home=$2 id=$3 before=$4 worktrees=$5 after
   assert_absent "$home/state/$id.meta" "a deferred spawn published a task record for $id"
   assert_absent "$home/data/$id/launch-brief.md" "a deferred spawn rendered a launch brief for $id"
+  # State reads of other holders (display-message, capture-pane) change nothing.
   after=$(call_count "$case_dir")
   [ "$after" -eq "$before" ] ||
     fail "a deferred spawn touched the terminal or worktree pool for $id: $(tail -n +"$((before + 1))" "$case_dir/calls.log")"
@@ -189,11 +205,68 @@ assert_nothing_created() {  # <case-dir> <home> <id> <calls-before> <worktrees-b
   fi
 }
 
-call_count() { wc -l < "$1/calls.log" | tr -d ' '; }
+# Calls that could change something; the read-only probes fm-crew-state.sh makes
+# of other holders' terminals are not counted.
+call_count() { grep -cv -E '^(display-message|capture-pane|list-panes|list-windows|show-)' "$1/calls.log" | tr -d ' '; }
 
 worktree_list() { git -C "$1/project" worktree list --porcelain; }
 
 # --- cases ------------------------------------------------------------------
+
+# A record holds a place only while its worker may be executing, judged by
+# fm-crew-state.sh: a parked or dead worker frees its place, an active worker and
+# a worker whose state cannot be read keep theirs, and a spawn at the limit still
+# defers with the same refusal.
+test_only_possibly_executing_workers_hold_a_place() {
+  local case_dir home out rc=0 gen
+  case_dir=$(make_case idle-release task-c task-d task-e)
+  home="$case_dir/home"
+  declare_capacity "$home" "project 3"
+
+  # Parked: an idle pane whose worker declared a pause.
+  write_live "$home" parked "$case_dir/project" "harness=claude"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" parked)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" parked idle --gen "$gen" \
+    --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting on an outside tool\n' "$(date +%s)" > "$home/state/parked.status"
+  # Dead: the worker's copy no longer exists.
+  write_live "$home" dead "$case_dir/project"
+  rmdir "$home/worktree-dead"
+  # Active: the pane is busy.
+  write_live "$home" active "$case_dir/project" "harness=claude"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" active)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active busy --gen "$gen" \
+    --source claude-hook --event prompt
+  # Unreadable: a state read that dies before answering keeps the place.
+  write_live "$home" unread "$case_dir/project"
+  # Uncertain: the terminal gives no verdict, so the record keeps its place.
+  write_live "$home" plain "$case_dir/project"
+
+  # Three places: active, unread, plain hold; parked and dead are free.
+  rc=0
+  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "three holders did not fill a limit of three: $out"
+  assert_contains "$out" "3 already hold a place" "the count included a parked or dead worker"
+  case "$out" in
+    *parked* | *dead*) fail "a parked or dead worker held a place: $out" ;;
+  esac
+  assert_contains "$out" "active" "the active worker did not hold a place"
+  assert_contains "$out" "unread" "the worker whose state read failed did not hold a place"
+  assert_contains "$out" "plain" "the uncertain worker did not hold a place"
+
+  # A holder that stops executing frees one place for exactly one worker.
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/active.status"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" active)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active idle --gen "$gen" \
+    --source claude-hook --event stop
+  rc=0
+  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c) || rc=$?
+  expect_code 0 "$rc" "a worker that parked did not free a place: $out"
+  rc=0
+  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
+  pass "parked and dead records free a place, active and uncertain ones hold one, and the limit still defers with 75"
+}
 
 # The reported incident's shape before any declaration: the project is already
 # busy, and nothing caps a further launch. Absent a declaration that stays true.
@@ -354,7 +427,10 @@ test_release_frees_a_place() {
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
   assert_contains "$out" "2 already hold a place (live-b, task-c)" "the new worker did not take the freed place"
 
-  # Cleanup: the real teardown removes the record, which frees its place.
+  # Cleanup: the real teardown removes the record, which frees its place. The
+  # fixture copy is an empty directory, not a git worktree, so remove it first
+  # as the pool does when it reclaims a copy.
+  rmdir "$home/worktree-live-b"
   rc=0
   out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
@@ -377,7 +453,8 @@ test_occupancy_counts_only_this_projects_workers() {
   declare_capacity "$home" "project 3"
   write_live "$home" scout-a "$case_dir/project"
   sed -i.bak 's/^kind=ship$/kind=scout/' "$home/state/scout-a.meta" && rm -f "$home/state/scout-a.meta.bak"
-  fm_write_meta "$home/state/legacy-b.meta" "window=firstmate:fm-legacy-b" "project=$case_dir/project"
+  mkdir -p "$home/worktree-legacy-b"
+  fm_write_meta "$home/state/legacy-b.meta" "window=firstmate:fm-legacy-b" "worktree=$home/worktree-legacy-b" "project=$case_dir/project"
   write_live "$home" other-c "$case_dir/other-project"
   fm_write_meta "$home/state/mate-d.meta" "window=remote:mate-d" "project=$case_dir/project" "kind=secondmate"
   out=$(spawn_ship "$case_dir" task-c) || rc=$?
@@ -624,6 +701,7 @@ SH
   pass "an Orca spawn takes the shared project lock whenever a same-origin clone is capped and defers before creating anything"
 }
 
+test_only_possibly_executing_workers_hold_a_place
 test_undeclared_capacity_keeps_dispatch_uncapped
 test_available_capacity_admits_the_worker
 test_exhausted_capacity_defers_without_leaving_anything_behind

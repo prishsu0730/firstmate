@@ -44,11 +44,17 @@
 #     are counted, and
 #   - has no recorded PR handoff: the pr= line bin/fm-pr-check.sh records when a
 #     worker's PR is ready, after which the worker waits on review or merge and
-#     no longer uses local resources.
-# A place therefore frees when a PR-based ship records its ready PR, or when any
-# task is cleaned up and its record removed. A local-only ship and a scout have
-# no recorded handoff and hold their place until cleanup. A worker that is
-# steered back into work after its PR handoff is not counted again.
+#     no longer uses local resources, and
+#   - may still be executing: bin/fm-crew-state.sh, the one reconciled source of
+#     a worker's current state, does not read it as parked, paused, or done, or
+#     as a record whose endpoint or worktree is positively gone. Active,
+#     blocked, failed, conflict, and every uncertain read (a timeout, an
+#     unreachable endpoint, an unknown verdict) keep the place, because a live
+#     worker must never be undercounted.
+# A place therefore frees when a PR-based ship records its ready PR, when a
+# worker parks, pauses, finishes, or dies, or when any task is cleaned up and its
+# record removed. A worker that resumes work holds its place again at the next
+# admission, and one steered back into work after its PR handoff is not counted.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -76,6 +82,24 @@
 # the task queued from an ordinary failure.
 # shellcheck disable=SC2034 # read by bin/fm-spawn.sh after sourcing.
 FM_PROJECT_CAPACITY_DEFER_EXIT=75
+
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# Succeeds only when fm-crew-state.sh positively reads the record as not
+# executing. Any failed, timed-out, or unrecognized read returns 1, so the
+# record keeps its place.
+fm_project_capacity_record_idle() {  # <state-dir> <task-id>
+  local verdict
+  verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
+    fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
+  case "$verdict" in
+    'state: parked '* | 'state: paused '* | 'state: done '*) return 0 ;;
+    'state: unknown · source: none · backend target gone'* | 'state: unknown · source: none · worktree gone'*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # The config directory holding this machine's declaration: the spawning home's
 # own <config-dir> when that home is the local root (so an override of it
@@ -219,6 +243,9 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       fi
       [ -n "$lock" ] && [ "$lock" = "$want" ] || continue
       id=$(basename "$meta" .meta)
+      if fm_project_capacity_record_idle "$state" "$id"; then
+        continue
+      fi
       label=$id
       [ "$state" = "$first" ] || label="$id in $(dirname "$state")"
       FM_PROJECT_CAPACITY_OCCUPANTS=$((FM_PROJECT_CAPACITY_OCCUPANTS + 1))
