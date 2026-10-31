@@ -212,6 +212,7 @@ test_cursor_marker_outranks_inherited_claudecode() {
   mkdir -p "$tree_dir"
   for name in cursor-agent claude; do
     ln -s "$(command -v bash)" "$tree_dir/$name"
+    # shellcheck disable=SC2016 # Expand variables in the child shell.
     out=$(env -u CLAUDECODE -u CURSOR_AGENT -u CURSOR_INVOKED_AS \
       -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
       HARNESS_PATH="$HARNESS" "$tree_dir/$name" -c \
@@ -220,6 +221,7 @@ test_cursor_marker_outranks_inherited_claudecode() {
     [ "$name" != cursor-agent ] || expected=cursor
     [ "$out" = "comm $expected" ] \
       || fail "a real $name ancestor must supply structural identity, got '$out'"
+    # shellcheck disable=SC2016 # Expand variables in the child shell.
     out=$(env -u FM_SUPERVISION_ACTOR -u FM_SUPERVISION_PRIMARY_HARNESS \
       CLAUDECODE=1 CURSOR_AGENT=1 HARNESS_PATH="$HARNESS" "$tree_dir/$name" -c \
       'r=$("$HARNESS_PATH"); printf "%s" "$r"')
