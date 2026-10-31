@@ -107,7 +107,13 @@ ci(6, exempt, ok=False)
 expired = json.loads(json.dumps(pulls[:1]))
 expired[0]['created_at'] = (dt.datetime.now(dt.timezone.utc)-dt.timedelta(days=14, seconds=5)).isoformat()
 fixture(values=expired)
-ci(1, expired, ok=False)
+ci(1, expired)
+ci(2, expired + pulls[1:2], ok=False)
+ci(1, expired + pulls[1:6])
+expired_overflow = json.loads(json.dumps(pulls[:6]))
+for pull in expired_overflow:
+    pull['created_at'] = expired[0]['created_at']
+ci(6, expired_overflow, ok=False)
 cli('check-spawn', *common, ok=False, contains='Expired PRs require disposition')
 record = json.loads(record_path.read_text())
 record['sorted_week'] = '2000-01-03'

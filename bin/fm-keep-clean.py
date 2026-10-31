@@ -17,6 +17,7 @@ Ideas are private JSON records in HOME/data/keep-clean/OWNER/REPO.json, expire
 after 14 days, and carry an explicit replaces field (null means no replacement).
 sort --done records review without changing jobs.
 check-pr consumes {pulls, number}; pulls use GitHub REST PR fields.
+Expired PRs may pass check-pr to permit their disposition; other PRs wait.
 All API reads use gh-axi with full base64 output to avoid TOON truncation.
 """
 
@@ -79,12 +80,17 @@ def counted(pulls):
     return sorted(pulls, key=lambda p: (p["created_at"], p["number"]))
 
 
-def require_disposition(pulls):
+def expired_pulls(pulls):
     cutoff = now() - dt.timedelta(days=14)
-    expired = [str(p["number"]) for p in pulls
-               if dt.datetime.fromisoformat(p["created_at"].replace("Z", "+00:00")) <= cutoff]
+    return [p for p in pulls
+            if dt.datetime.fromisoformat(p["created_at"].replace("Z", "+00:00")) <= cutoff]
+
+
+def require_disposition(pulls):
+    expired = expired_pulls(pulls)
     if expired:
-        raise ValueError("Expired PRs require disposition (merge or close): " + ", ".join(expired))
+        raise ValueError("Expired PRs require disposition (merge or close): " +
+                         ", ".join(str(p["number"]) for p in expired))
 
 
 def load_record(path):
@@ -120,7 +126,8 @@ def main():
     args = parser.parse_args()
     if args.command == "check-pr":
         data = json.load(sys.stdin)
-        require_disposition(data["pulls"])
+        if data["number"] not in [p["number"] for p in expired_pulls(data["pulls"])]:
+            require_disposition(data["pulls"])
         ranked = counted(data["pulls"])
         if data["number"] in [p["number"] for p in ranked[5:]]:
             raise ValueError("PR limit exceeded: sort existing work before opening another PR")
