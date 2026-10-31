@@ -34,9 +34,10 @@ A recorded `harness=` is not always an exact adapter name: a task launched from 
 | --- | --- | --- |
 | `interrupt` | Deliver the harness's verified interrupt sequence while leaving the agent running. | Delivery succeeds while the endpoint still exists and the agent is still alive where the backend can classify that; cancellation is confirmed only from an adapter-owned acknowledgement and otherwise reports `cancel=unconfirmed`. |
 | `exit` | Stop the agent, preserving the endpoint, the worktree, and every uncommitted change. | The backend's recovery-grade classifier reports the agent gone. Already-stopped is idempotent success. An endpoint reading `missing` goes through the same [absence proof](#reclaiming-a-task-whose-endpoint-is-gone) the reclaim uses before anything is claimed about it, as described in that section: proven gone reports `endpoint-gone` (the agent went with it, and the endpoint this verb normally preserves did not survive), a pane that turns out to be there and idle is the ordinary `already-stopped`, one whose agent is back takes the ordinary interrupt-then-exit path. A tmux `missing` requires proof that its recorded server is gone or replaced, or that its launch predates this machine’s boot; otherwise it refuses rather than claim a stop it cannot see. |
-| `relaunch` | Replace the running agent with a new one in the same worktree - and the same endpoint whenever that endpoint still exists - on the exact recorded adapter or an explicitly chosen harness, model, and effort. | The new agent is alive on the endpoint the task's record now names, and that record names the harness that is actually running. |
+| `relaunch` | Replace the running agent with a new one in the same worktree - and the same endpoint whenever that endpoint still exists - on the exact recorded adapter or an explicitly chosen harness, model, and effort. | An adapter classifier confirms the replacement alive; on generic backends, launch delivery and endpoint presence are confirmed while agent state remains ambiguous. The record names the replacement harness and endpoint. |
 
-For local secondmates, the `exit` header in [`bin/fm-control.sh`](../bin/fm-control.sh) owns deliberate-stop persistence across automatic recovery and the explicit restart paths that clear it.
+For local secondmates and for ship and scout workers, the `exit` header in [`bin/fm-control.sh`](../bin/fm-control.sh) owns deliberate-stop persistence across automatic recovery and the explicit restart paths that clear it.
+The watcher's automatic worker recovery ([`bin/fm-worker-liveness-lib.sh`](../bin/fm-worker-liveness-lib.sh)) always relaunches with `--if-stopped`, which re-reads the agent under the task's control lock and refuses unless it has already stopped.
 
 An exit that delivers lifecycle input but cannot prove the agent stopped fails with `exit=unconfirmed`, reports the observed agent state and any interrupt cancellation claim, and never claims that nothing changed.
 Interrupt never rewrites busy state as proof of its own success.
@@ -172,10 +173,10 @@ The worktree and the task's records are unaffected either way.
   Muse is a crewmate and scout adapter only, so relaunching a secondmate onto it refuses while its agent is still up rather than leaving that secondmate with no agent when the launch owner refuses.
 - A backend that cannot deliver the harness's interrupt key, or the composer clear that key needs, is refused rather than sent a different key.
   Orca's terminal API exposes only an interrupt and an Enter, so it can deliver neither Escape nor Ctrl+U.
-- `exit` and `relaunch` require a backend with a recovery-grade agent-state classifier - tmux and herdr - because without one the "the agent stopped" postcondition cannot be proven.
-  zellij, orca, and cmux are refused rather than reported as successful blind.
-- An ambiguous or unreadable endpoint state refuses.
-  Only a positively classified state acts.
+- `exit` and `relaunch` require proof that the agent stopped: an adapter classifier or, for ordinary workers on other backends, a matching launch-written incarnation exit record.
+  See [runtime backend limits](configuration.md#accepted-backends-and-secondmate-limits) for ordinary-worker recovery on generic backends.
+- An ambiguous or unreadable endpoint state refuses `exit` and `relaunch`.
+  `interrupt` may proceed on a generic backend with endpoint-presence proof, without claiming the agent is alive.
 - `exit`'s composer-empty check, above, is itself a fail-closed boundary that `relaunch` inherits by stopping the old agent through `exit`.
 - `fm-spawn --relaunch` independently refuses unless the endpoint is positively agent-free - either a `dead` endpoint that survives, or an endpoint proven gone by the absence proof above - so a replacement can never join a live agent.
   An `alive`, `ambiguous`, or `unreadable` verdict all refuse, and so does any endpoint whose absence is not provable, including a tmux `missing` without server-absence, server-replacement, or reboot proof; absence is claimed only from positive evidence of it.

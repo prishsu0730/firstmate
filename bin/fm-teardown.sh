@@ -3929,6 +3929,7 @@ rm -f "$STATE/$ID.turn-ended" "$STATE/$ID.progress" \
   "$STATE/$ID.reconcile-nudged" "$STATE/$ID.gemini-settings.json" "$STATE/$ID.devin-config.json" \
   "$STATE/.$ID.branch-outcome-index" "$STATE/$ID.file-boundary" \
   "$STATE/.secondmate-relaunch-$ID" "$STATE/.secondmate-relaunch-bound-$ID" "$STATE/.secondmate-stopped-$ID" \
+  "$STATE/.worker-relaunch-$ID" "$STATE/.worker-relaunch-bound-$ID" "$STATE/.worker-stopped-$ID" "$STATE/.worker-exit-$ID" "$STATE/.worker-missing-notified-$ID" \
   "$STATE/.auto-close-refusal-$ID"
 # The steering inbox (bin/fm-task-inbox-lib.sh) is runtime state for the
 # retired endpoint; teardown only runs after landing is confirmed, so any

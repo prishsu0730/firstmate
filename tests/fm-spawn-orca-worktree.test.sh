@@ -14,13 +14,10 @@
 # error but lets a genuine Orca launch complete.
 #
 # The matching relaunch-side carve-out at the `[ "$RELAUNCH" -eq 1 ] &&
-# [ "$BACKEND" = orca ]` branch is guarded by an earlier, unconditional gate:
-# fm_control_backend_state_verified (bin/fm-control-lib.sh) only recognizes
-# tmux and herdr as having a recovery-grade agent-state classifier, so any
-# `--relaunch` on backend=orca is refused before that branch can ever run.
-# The second test below pins that refusal so a future change that starts
-# routing orca through the classifier does not silently reach the untested
-# branch without also covering it.
+# [ "$BACKEND" = orca ]` branch needs a positively agent-free endpoint. The
+# second test below pins that a relaunch with no readable Orca terminal is
+# refused before any launch. tests/fm-worker-backend-relaunch.test.sh drives
+# the same branch through a real relaunch on a fake Orca CLI.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -118,7 +115,7 @@ EOF
   pass "an Orca-backed fresh spawn enters the worktree Orca created for it, instead of hard-refusing on the post-launch proof"
 }
 
-test_orca_relaunch_is_refused_before_the_worktree_carveout_could_run() {
+test_orca_relaunch_without_a_readable_terminal_is_refused() {
   local case_dir home proj wt id=orca-relaunch-a2 out status
   case_dir="$TMP_ROOT/relaunch"
   home="$case_dir/home"
@@ -135,7 +132,7 @@ test_orca_relaunch_is_refused_before_the_worktree_carveout_could_run() {
 Exercise a relaunch attempt against a recorded Orca task.
 
 ## Firstmate spec
-Confirm the relaunch is refused before any worktree re-entry logic runs.
+Confirm the relaunch is refused before any worktree re-entry logic runs when the terminal cannot be read.
 EOF
   {
     echo "window=fm-$id"
@@ -159,12 +156,12 @@ EOF
   status=$?
 
   expect_code 1 "$status" "a relaunch against a recorded Orca task should refuse"$'\n'"$out"
-  assert_contains "$out" "no recovery-grade agent-state classifier" \
-    "the refusal should name the missing classifier, proving relaunch never reaches the worktree carve-out"
-  pass "a relaunch against an Orca-backed task is refused before the RELAUNCH+orca worktree carve-out could run"
+  assert_contains "$out" "endpoint reads 'unreadable'" \
+    "the refusal should say the terminal could not be read, proving relaunch never reaches the worktree carve-out"
+  pass "a relaunch against an Orca task with no readable terminal is refused before the RELAUNCH+orca worktree carve-out could run"
 }
 
 test_orca_fresh_spawn_enters_the_worktree_it_created
-test_orca_relaunch_is_refused_before_the_worktree_carveout_could_run
+test_orca_relaunch_without_a_readable_terminal_is_refused
 
 echo "# all fm-spawn-orca-worktree tests passed"

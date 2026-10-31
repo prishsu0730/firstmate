@@ -690,6 +690,11 @@ test_local_only_fork_remote_allows() {
   # The supervision branch's bounded per-task outcome cache is a footprint of
   # the retired task, not a record anything reads after it is gone.
   printf 'fm-branch-outcome-index-v1\t5\t0\t-\n' > "$case_dir/state/.task-x1.branch-outcome-index"
+  # Automatic worker recovery's ledger, park, and deliberate-stop markers belong
+  # to the retired task and must not suppress or count against a successor.
+  printf '1\tattempt\n' > "$case_dir/state/.worker-relaunch-task-x1"
+  printf '1\tdead\n' > "$case_dir/state/.worker-relaunch-bound-task-x1"
+  printf 'deliberate stop\n' > "$case_dir/state/.worker-stopped-task-x1"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -697,6 +702,9 @@ test_local_only_fork_remote_allows() {
   set -e
 
   expect_code 0 "$rc" "fork-allow: teardown should succeed when HEAD is on a fork remote"
+  for f in .worker-relaunch-task-x1 .worker-relaunch-bound-task-x1 .worker-stopped-task-x1; do
+    [ ! -e "$case_dir/state/$f" ] || fail "fork-allow: teardown left $f behind"
+  done
   [ ! -e "$case_dir/state/.auto-close-refusal-task-x1" ] \
     || fail "fork-allow: teardown left refusal suppression for a successor"
   ! grep -q REFUSED "$case_dir/stderr" || fail "fork-allow: teardown printed a REFUSED line"

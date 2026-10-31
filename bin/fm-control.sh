@@ -5,7 +5,7 @@
 # Usage: fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
-#                                         [--effort <level>]
+#                                         [--effort <level>] [--if-stopped]
 #                                         (--note <text> | --note-file <path>)
 #
 # Why this exists, and how it differs from fm-send.sh. bin/fm-send.sh is the
@@ -36,17 +36,20 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
-#              Already-stopped is success (idempotent). For a local secondmate,
-#              the deliberate-stop marker suppresses automatic recovery until
-#              a successful explicit relaunch or secondmate respawn clears it.
-#              Watcher ticks and session-start sweeps respect the marker.
+#              Already-stopped is success (idempotent). The deliberate-stop
+#              marker (state/.secondmate-stopped-<id> for a local secondmate,
+#              state/.worker-stopped-<id> for a ship or scout) suppresses
+#              automatic recovery until a successful explicit relaunch or
+#              respawn clears it. Watcher ticks and session-start sweeps
+#              respect the marker.
 #              An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
 #              proof (fm_control_endpoint_absence_verdict) before anything is
 #              claimed about it, because `missing` also covers an endpoint that
 #              is merely unreachable from this seat. That proof exists on HERDR,
 #              whose reads are scoped to the session the record names, and on
-#              TMUX with recorded server identity or a launch proven before boot:
+#              TMUX with recorded server identity or a launch proven before boot;
+#              generic ordinary workers require a matching incarnation exit record:
 #              proven gone reports `endpoint-gone` rather than
 #              `already-stopped`, because the endpoint this verb normally
 #              preserves did not survive; a pane that turns out to be there and
@@ -87,6 +90,12 @@
 #              inherits the local copy but none of the conversation; a
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
+#              --if-stopped makes the relaunch replace only an agent that has
+#              already stopped: an agent read alive under this task's control
+#              lock refuses before any record changes. The watcher's automatic
+#              worker relaunch (bin/fm-worker-liveness-lib.sh) always passes it,
+#              so a worker someone relaunched by hand in the meantime is never
+#              exited on a stale verdict.
 #              Records a durable checkpoint and that note, exits the old agent,
 #              then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. A failure before publication keeps
@@ -119,12 +128,11 @@
 #     is refused rather than guessed at.
 #   - A backend that cannot deliver the harness's interrupt key is refused
 #     (Orca's terminal API has no Escape).
-#   - `exit` and `relaunch` require a backend with a recovery-grade agent-state
-#     classifier (tmux, herdr), because without one the "the agent stopped"
-#     postcondition cannot be proven. zellij, orca, and cmux are refused rather
-#     than reported as successful blind.
-#   - An ambiguous or unreadable endpoint state refuses; only a positively
-#     classified state acts.
+#   - `exit` and `relaunch` require adapter-owned stop proof or an ordinary
+#     worker's matching launch-written exit record on a generic backend.
+#     Secondmates still require a verified adapter classifier.
+#   - An ambiguous or unreadable state refuses exit and relaunch. Interrupt
+#     permits generic ambiguous state with endpoint-presence proof only.
 #   - A composer that visibly holds pending text refuses before an exit command
 #     is typed, so existing text is preserved instead of being concatenated.
 #
@@ -256,6 +264,7 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+IF_STOPPED=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -286,6 +295,7 @@ for control_arg in "$@"; do
     --note) control_want_value=note ;;
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
+    --if-stopped) IF_STOPPED=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
       NOTE=$(cat "${control_arg#--note-file=}")
@@ -301,7 +311,8 @@ fi
 
 if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
-    || die "--harness, --model, --effort, and --note apply to 'relaunch' only"
+    && [ "$IF_STOPPED" = 0 ] \
+    || die "--harness, --model, --effort, --note, and --if-stopped apply to 'relaunch' only"
 fi
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -363,6 +374,7 @@ fi
 
 fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
 BACKEND=$FM_BACKEND_VALIDATED_BACKEND
+fm_backend_source "$BACKEND" || die "cannot load backend $BACKEND"
 T=$FM_BACKEND_VALIDATED_TARGET
 LABEL="fm-$ID"
 RECORDED_HARNESS=$(fm_meta_get "$META" harness)
@@ -416,7 +428,11 @@ wait_agent_state() {  # <timeout> <wanted>...
 }
 
 require_state_verified_backend() {  # <verb>
-  fm_control_backend_state_verified "$BACKEND" && return 0
+  if [ "$KIND" = secondmate ]; then
+    fm_control_secondmate_state_verified "$BACKEND" && return 0
+  else
+    fm_control_backend_state_verified "$BACKEND" && return 0
+  fi
   die "task $ID runs on the $BACKEND backend, which has no recovery-grade agent-state classifier, so '$1' cannot prove the agent actually stopped; refusing rather than reporting an unproven transition as done"
 }
 
@@ -567,7 +583,7 @@ verify_interrupt_running() {
   fm_backend_target_exists "$BACKEND" "$T" "$LABEL" \
     || die "task $ID's endpoint disappeared while interrupting it; no further control action is safe"
   proof=endpoint
-  if fm_control_backend_state_verified "$BACKEND"; then
+  if command -v "fm_backend_${BACKEND}_agent_state" >/dev/null 2>&1; then
     # An interrupt cancels a turn; it must never have stopped the agent. This
     # is the postcondition that separates a landed interrupt from an accident.
     after=$(agent_state)
@@ -647,21 +663,33 @@ retire_busy_incarnation() {
   fi
 }
 
+# The marker automatic recovery reads for this task's kind; empty for a kind
+# nothing recovers automatically.
+stop_marker_path() {
+  case "$KIND" in
+    secondmate) printf '%s' "$STATE/.secondmate-stopped-$ID" ;;
+    ship|scout) printf '%s' "$STATE/.worker-stopped-$ID" ;;
+  esac
+}
+
 STOP_MARK_CREATED=0
 mark_deliberate_stop() {
-  [ "$KIND" = secondmate ] && [ "$VERB" = exit ] || return 0
-  if [ ! -e "$STATE/.secondmate-stopped-$ID" ] && [ ! -L "$STATE/.secondmate-stopped-$ID" ]; then
-    printf 'deliberate stop\n' > "$STATE/.secondmate-stopped-$ID" || die "could not record deliberate stop for $ID"
+  local marker
+  [ "$VERB" = exit ] || return 0
+  marker=$(stop_marker_path)
+  [ -n "$marker" ] || return 0
+  if [ ! -e "$marker" ] && [ ! -L "$marker" ]; then
+    printf 'deliberate stop\n' > "$marker" || die "could not record deliberate stop for $ID"
     STOP_MARK_CREATED=1
   fi
 }
 
 # Take back the marker this call created when the exit command provably never
-# reached the mate; a marker an earlier exit left, or a late confirmation, stays.
+# reached the agent; a marker an earlier exit left, or a late confirmation, stays.
 unmark_undelivered_stop() {
   [ "$STOP_MARK_CREATED" = 1 ] || return 0
   STOP_MARK_CREATED=0
-  rm -f "$STATE/.secondmate-stopped-$ID" || true
+  rm -f "$(stop_marker_path)" || true
 }
 
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
@@ -1113,10 +1141,33 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state note_line marker
   local -a spawn_args
 
   require_state_verified_backend relaunch
+  if [ "$IF_STOPPED" = 1 ]; then
+    case "$KIND" in
+      ship|scout)
+        marker=$(stop_marker_path)
+        if [ -e "$marker" ] || [ -L "$marker" ]; then
+          die "task $ID was deliberately stopped; --if-stopped preserves deliberate stops"
+        fi
+        ;;
+    esac
+    state=$(agent_state)
+    case "$state" in
+      dead) ;;
+      missing)
+        state=$(fm_control_endpoint_absence_verdict "$BACKEND" "$T" "$META")
+        case "${state%%$'\t'*}" in
+          gone|dead) ;;
+          alive) die "task $ID's agent is running; --if-stopped relaunches only an agent that has already stopped" ;;
+          *) die "task $ID's endpoint reads 'missing', but ${state#*$'\t'}; --if-stopped relaunches only an agent proven stopped" ;;
+        esac
+        ;;
+      *) die "task $ID's agent reads '$state'; --if-stopped relaunches only an agent that has already stopped" ;;
+    esac
+  fi
   resolve_relaunch_profile
 
   case "$KIND" in
@@ -1187,13 +1238,18 @@ do_relaunch() {
     die "the replacement agent for $ID could not be launched on $TARGET_HARNESS"
   fi
 
-  state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
-    die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
-  }
-  RELAUNCH_AGENT_CONFIRMED=1
-  if [ "$KIND" = secondmate ]; then
-    rm -f "$STATE/.secondmate-stopped-$ID" || die "secondmate $ID relaunched but its stop marker could not be cleared"
+  if ! command -v "fm_backend_${BACKEND}_agent_state" >/dev/null 2>&1; then
+    state=$(agent_state)
+    if [ "$state" != ambiguous ] || ! fm_backend_target_exists "$BACKEND" "$T"; then
+      die "the replacement launch for $ID was delivered but its endpoint reads '$state'; reconcile before retrying"
+    fi
+  else
+    state=$(wait_agent_state "$LAUNCH_WAIT" alive) || {
+      die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
+    }
   fi
+  RELAUNCH_AGENT_CONFIRMED=1
+  rm -f "$(stop_marker_path)" || die "$KIND $ID relaunched but its stop marker could not be cleared"
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
@@ -1207,6 +1263,10 @@ case "$VERB" in
     state=$(agent_state)
     case "$state" in
       alive) ;;
+      ambiguous)
+        command -v "fm_backend_${BACKEND}_agent_state" >/dev/null 2>&1 \
+          && die "task $ID's endpoint is ambiguous; refusing lifecycle input"
+        ;;
       unverified)
         # No recovery-grade classifier on this backend. Interrupt is
         # non-destructive and its endpoint-existence postcondition is still

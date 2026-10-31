@@ -7,8 +7,8 @@
 #   1. Adapter contract: every verified harness gets its own verified exit
 #      command and interrupt key, delivered as bytes to the endpoint.
 #   2. Backend capability: a backend that cannot deliver the harness's
-#      interrupt key, and a backend with no recovery-grade agent-state
-#      classifier, both refuse instead of acting blind.
+#      interrupt key, and an endpoint that cannot prove an agent stopped, both
+#      refuse instead of acting blind.
 #   3. Exact-id scoping: a window label, an explicit endpoint, an unknown id,
 #      and a record bound to another task are all refused.
 #   4. Verb allowlist: no arbitrary text, no raw keys, no resume.
@@ -21,6 +21,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=/dev/null
+. "$ROOT/bin/fm-backend.sh"
 # shellcheck source=/dev/null
 . "$ROOT/bin/fm-control-lib.sh"
 # shellcheck source=/dev/null
@@ -582,13 +584,23 @@ test_orca_refuses_an_escape_harness_interrupt() {
     echo "orca_worktree_id=wt-1::/orca/wt-1"
   } > "$dir/home/state/t1.meta.new"
   sed 's|^window=.*|window=fm-t1|' "$dir/home/state/t1.meta.new" > "$dir/home/state/t1.meta"
+  # The terminal itself answers, so only the undeliverable key can refuse.
+  cat > "$dir/fakebin/orca" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  'status --json') echo '{"ok":true,"result":{"runtime":{"reachable":true,"state":"ready"}}}' ;;
+  'terminal read') echo '{"ok":true,"result":{"text":"shell"}}' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$dir/fakebin/orca"
   out=$(run_control "$dir" t1 interrupt); rc=$?
   expect_code 1 "$rc" "an Escape harness on orca should refuse"
   assert_contains "$out" "cannot deliver" "refusal should name the undeliverable key"
   pass "fm-control interrupt: a backend that cannot deliver the harness's key refuses instead of sending another"
 }
 
-test_unverified_state_backends_refuse_stop_verbs() {
+test_unreadable_generic_endpoints_refuse_stop_verbs() {
   local dir out rc backend
   for backend in zellij cmux; do
     dir=$(new_case "nostate-$backend")
@@ -608,26 +620,30 @@ test_unverified_state_backends_refuse_stop_verbs() {
     fi
     out=$(run_control "$dir" t1 exit); rc=$?
     expect_code 1 "$rc" "exit on $backend should refuse"$'\n'"$out"
-    assert_contains "$out" "no recovery-grade agent-state classifier" \
-      "the $backend refusal should name the missing stop proof"
+    assert_contains "$out" "reads 'unreadable'" \
+      "the $backend refusal should name the unproven endpoint"
     [ -z "$(literals "$dir")" ] || fail "$backend must receive no exit command"
     out=$(run_control "$dir" t1 relaunch --note x); rc=$?
     expect_code 1 "$rc" "relaunch on $backend should refuse"$'\n'"$out"
-    assert_contains "$out" "no recovery-grade agent-state classifier" \
-      "the $backend relaunch refusal should name the missing stop proof"
+    assert_contains "$out" "reads 'unreadable'" \
+      "the $backend relaunch refusal should name the unproven endpoint"
   done
-  pass "fm-control: a backend that cannot prove an agent stopped refuses exit and relaunch"
+  pass "fm-control: an endpoint that cannot prove an agent stopped refuses exit and relaunch"
 }
 
-test_state_verified_backends_are_exactly_tmux_and_herdr() {
-  fm_control_backend_state_verified tmux || fail "tmux has a recovery-grade classifier"
-  fm_control_backend_state_verified herdr || fail "herdr has a recovery-grade classifier"
+test_stop_proof_gate_is_per_task_kind() {
   local backend
-  for backend in zellij orca cmux; do
+  for backend in tmux herdr zellij orca cmux; do
     fm_control_backend_state_verified "$backend" \
-      && fail "$backend has no recovery-grade classifier and must not claim one"
+      || fail "$backend workers can prove an exit through the launch-file record"
   done
-  pass "fm-control-lib: stop-proving verbs are gated on the backends that really classify agent state"
+  fm_control_secondmate_state_verified tmux || fail "tmux secondmates have a recovery-grade classifier"
+  fm_control_secondmate_state_verified herdr || fail "herdr secondmates have a recovery-grade classifier"
+  for backend in zellij orca cmux; do
+    fm_control_secondmate_state_verified "$backend" \
+      && fail "$backend secondmates have no recovery-grade classifier and must not claim one"
+  done
+  pass "fm-control-lib: worker stop proof covers every backend while secondmates keep their narrower gate"
 }
 
 # --- 3. exact-id scoping ----------------------------------------------------
@@ -798,7 +814,11 @@ test_relaunch_only_flags_are_rejected_on_other_verbs() {
   out=$(run_control "$dir" t1 exit --harness codex); rc=$?
   expect_code 1 "$rc" "--harness should not apply to exit"
   assert_contains "$out" "apply to 'relaunch' only" "the refusal should scope the flags"
-  pass "fm-control: profile and note flags belong to relaunch only"
+  out=$(run_control "$dir" t1 exit --if-stopped); rc=$?
+  expect_code 1 "$rc" "--if-stopped should not apply to exit"
+  assert_contains "$out" "apply to 'relaunch' only" "the refusal should scope --if-stopped too"
+  [ -z "$(literals "$dir")" ] || fail "a refused flag must type nothing, got: $(literals "$dir")"
+  pass "fm-control: profile, note, and --if-stopped flags belong to relaunch only"
 }
 
 # --- 5. lifecycle states ----------------------------------------------------
@@ -1217,6 +1237,29 @@ test_secondmate_exit_send_failure_leaves_no_new_stop_marker() {
   pass "fm-control exit: an undelivered exit removes only the stop marker it created"
 }
 
+test_ship_and_scout_exit_persist_a_deliberate_stop_marker() {
+  local dir out rc kind
+  for kind in ship scout; do
+    dir=$(new_case "$kind-stop")
+    add_task "$dir" t1 claude "$kind"
+    alive_as "$dir" claude
+    out=$(run_control "$dir" t1 exit); rc=$?
+    expect_code 0 "$rc" "exiting a $kind's agent should succeed"$'\n'"$out"
+    [ -f "$dir/home/state/.worker-stopped-t1" ] \
+      || fail "a deliberate $kind exit must persist the worker stop marker"
+    [ ! -e "$dir/home/state/.secondmate-stopped-t1" ] \
+      || fail "a $kind exit must not write the secondmate stop marker"
+  done
+  dir=$(new_case ship-stop-send-fails)
+  add_task "$dir" t1 claude ship
+  alive_as "$dir" claude
+  out=$(FM_FAKE_SEND_FAILS=1 run_control "$dir" t1 exit); rc=$?
+  [ "$rc" -ne 0 ] || fail "an exit command that could not be sent must fail: $out"
+  [ ! -e "$dir/home/state/.worker-stopped-t1" ] \
+    || fail "an exit that was never delivered left a worker stop marker on a live agent"
+  pass "fm-control exit: a deliberate ship or scout stop is marked so automatic recovery leaves it alone"
+}
+
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed() {
   local dir out rc
   dir=$(new_case nosettle)
@@ -1343,8 +1386,8 @@ test_prefixed_recorded_harness_reaches_each_control_verb
 test_backend_key_capability_matrix
 test_harness_kind_capability
 test_orca_refuses_an_escape_harness_interrupt
-test_unverified_state_backends_refuse_stop_verbs
-test_state_verified_backends_are_exactly_tmux_and_herdr
+test_unreadable_generic_endpoints_refuse_stop_verbs
+test_stop_proof_gate_is_per_task_kind
 test_window_label_is_refused_with_the_exact_id
 test_explicit_endpoint_is_refused
 test_unknown_task_is_refused
@@ -1377,6 +1420,7 @@ test_exit_accepts_agent_stopped_by_busy_interrupt
 test_agent_that_does_not_stop_fails_closed
 test_secondmate_exit_timeout_preserves_deliberate_stop
 test_secondmate_exit_send_failure_leaves_no_new_stop_marker
+test_ship_and_scout_exit_persist_a_deliberate_stop_marker
 test_grok_interrupt_without_acknowledgement_reports_unconfirmed
 test_grok_idle_footer_does_not_confirm_cancellation
 test_secondmate_control_command_carries_no_marker
