@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# For URL-only ownership resolution across local homes, use fm-pr-land.sh.
 # Merge a task's PR or MR after recording pr= and any available pr_head= through
 # bin/fm-pr-check.sh, so teardown can verify landed work after squash merges.
 # The full canonical URL is parsed by bin/fm-pr-lib.sh. A GitHub pull request is
@@ -96,6 +97,11 @@
 # GitLab adds no method flag at all: its merge method is the project's own
 # setting, which the merge API applies, and imposing squash there would override
 # that convention rather than mirror the GitHub default.
+#
+# Both forges report when the live head differs from the saved pr_head before
+# registration refreshes it: that saved review/registration does not cover the
+# new head. Live checks and head binding remain authoritative; the notice does
+# not authorize or bypass a review or permission guard.
 #
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
@@ -533,10 +539,7 @@ EOF
 
 # The recorded head is read before bin/fm-pr-check.sh rewrites the metadata,
 # because that script re-records pr= and drops a pr_head= it cannot resolve.
-RECORDED_HEAD=
-if [ "$PROVIDER" = gitlab ]; then
-  RECORDED_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
-fi
+RECORDED_HEAD=$(grep '^pr_head=' "$META" | tail -1 | cut -d= -f2- || true)
 
 # Pre-merge conditions for a GitLab merge request, read from one live view of
 # the merge request. Sets FM_PR_MERGE_HEAD to the verified head on success and
@@ -609,7 +612,7 @@ FIELDS
   # A rebase moves the head and leaves the recorded value behind, so the
   # disagreement is reported and the live head is what gets verified and merged.
   if [ -n "$RECORDED_HEAD" ] && [ "$RECORDED_HEAD" != "$live_head" ]; then
-    printf 'notice: recorded head %s disagrees with the live head %s; verifying the live head\n' \
+    printf 'notice: PR head moved after the saved review/registration: recorded head %s disagrees with the live head %s; the saved review does not cover this head; verifying the live head\n' \
       "$RECORDED_HEAD" "$live_head" >&2
   fi
 
@@ -855,6 +858,10 @@ FIELDS
   if ! fm_pr_head_valid "$live_head"; then
     echo "error: could not read the GitHub pull request head commit before merging" >&2
     return 1
+  fi
+  if [ -n "$RECORDED_HEAD" ] && [ "$RECORDED_HEAD" != "$live_head" ]; then
+    printf 'notice: PR head moved after the saved review/registration: recorded head %s disagrees with the live head %s; the saved review does not cover this head; verifying live merge guards\n' \
+      "$RECORDED_HEAD" "$live_head" >&2
   fi
   github_refuse_mixed_refactor_commits "$live_head" || return 1
   if ! red=$(github_checks_not_green "$json"); then

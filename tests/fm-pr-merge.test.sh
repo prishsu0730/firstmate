@@ -2617,6 +2617,64 @@ test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
 test_github_conflicting_queue_rules_report_ambiguity
+
+# URL landing exercises the public resolver and the real guarded merge, with
+# only forge responses mocked as in the task-ID tests above.
+test_url_landing() {
+  local case_dir saved_merge=$PR_MERGE rc variant mate
+  for variant in secondmate unknown ambiguous moved red; do
+    case_dir=$(make_case "url-land-$variant")
+    add_gh_mocks "$case_dir" deadbeefcafefeed0000000000000000deadbeef
+    : > "$case_dir/gh-axi.log"
+    printf 'pr=https://github.com/example/repo/pull/9\n' >> "$case_dir/state/task-x1.meta"
+    if [ "$variant" = secondmate ] || [ "$variant" = ambiguous ]; then
+      mate="$case_dir/mate"
+      mkdir -p "$mate/state" "$mate/data" "$mate/config"
+      fm_test_tasks_toml "$mate/.tasks.toml"
+      printf '## In flight\n\n## Done\n' > "$mate/data/backlog.md"
+      cp "$case_dir/state/task-x1.meta" "$mate/state/task-x1.meta"
+      printf -- '- mate - Test mate (home: %s; scope: tests; projects: test; added 2026-10-31)\n' "$mate" > "$case_dir/home/data/secondmates.md"
+      if [ "$variant" = secondmate ]; then
+        printf 'pr=https://github.com/example/other/pull/9\n' >> "$case_dir/state/task-x1.meta"
+      fi
+    fi
+    if [ "$variant" = moved ]; then
+      printf 'pr_head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' >> "$case_dir/state/task-x1.meta"
+    fi
+    if [ "$variant" = red ]; then
+      write_github_red_json "$case_dir" deadbeefcafefeed0000000000000000deadbeef ci
+    fi
+    PR_MERGE="$ROOT/bin/fm-pr-land.sh"
+    rc=0
+    if [ "$variant" = unknown ]; then
+      run_pr_merge "$case_dir" https://github.com/example/repo/pull/99 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    else
+      run_pr_merge "$case_dir" https://github.com/example/repo/pull/9 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    fi
+    PR_MERGE=$saved_merge
+    case "$variant" in
+      secondmate)
+        expect_code 0 "$rc" 'URL landing should route to the owning secondmate home'
+        assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+        assert_grep 'pr_head=deadbeef' "$mate/state/task-x1.meta" 'owner metadata must be updated'
+        assert_no_grep 'pr_head=' "$case_dir/state/task-x1.meta" 'main metadata must stay untouched'
+        ;;
+      moved)
+        expect_code 0 "$rc" 'moved head retains the existing live guard semantics'
+        assert_grep 'head moved after the saved review' "$case_dir/stderr" 'moved head must be explicit'
+        assert_grep 'saved review does not cover this head' "$case_dir/stderr" 'saved review coverage must be explicit'
+        assert_logged_gh_merge "$case_dir" 9 example/repo --squash
+        ;;
+      unknown|ambiguous|red)
+        [ "$rc" -ne 0 ] || fail "$variant URL landing should refuse"
+        assert_no_grep '^pr merge ' "$case_dir/gh.log" "$variant must never attempt a merge"
+        ;;
+    esac
+  done
+  pass 'URL landing resolves secondmate ownership, refuses unknown/ambiguous/red PRs, and reports moved heads'
+}
+test_url_landing
+
 test_verified_merge_records_pr_and_head
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording
