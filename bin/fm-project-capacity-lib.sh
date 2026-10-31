@@ -85,20 +85,19 @@ FM_PROJECT_CAPACITY_DEFER_EXIT=75
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-busy-lib.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-task-inbox-lib.sh"
 FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Succeeds only when fm-crew-state.sh positively reads the record as not
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
-  local verdict activity
-  activity=$(fm_busy_record_read "$1" "$2" 2>/dev/null || true)
+  local verdict
+  fm_task_inbox_oldest_unhandled "$1" "$2" >/dev/null && return 1
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in
     'state: parked '* | 'state: paused '* | 'state: done '*)
-      case "$activity" in 'unknown fm-send '*) return 1 ;; esac
       return 0
       ;;
     'state: unknown · source: none · backend target gone'* | 'state: unknown · source: none · worktree gone'*) return 0 ;;
