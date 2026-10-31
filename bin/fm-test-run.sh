@@ -669,7 +669,9 @@ is_proven_isolated_script() {
 # and other unproven work stays here. Derived rather than enumerated so a newly added test
 # lands here by default instead of falling out of every lane.
 list_portable_serial() {
-  local s base fam
+  local s base fam tmp
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-serial.XXXXXX") || return 1
+  list_proven_isolated >"$tmp/proven"
   while IFS= read -r s; do
     [ -n "$s" ] || continue
     base=$(basename "$s")
@@ -677,11 +679,12 @@ list_portable_serial() {
     if [ "$fam" = "real-herdr-gated" ]; then
       continue
     fi
-    if is_proven_isolated_script "$s"; then
+    if grep -F -x -q -- "$s" "$tmp/proven"; then
       continue
     fi
     printf '%s\n' "$s"
   done < <(all_repo_tests)
+  rm -rf "$tmp"
 }
 
 # Measured portable-serial script durations in milliseconds, from the CI timing
