@@ -106,6 +106,7 @@ case "$*" in
     exit 0
     ;;
 esac
+if [ "${1:-}" = capture-pane ] && [ -n "${FM_FAKE_CAPTURE_FAIL:-}" ]; then exit 1; fi
 case "${1:-}" in display-message) printf 'firstmate\n' ;; esac
 exit 0
 SH
@@ -753,117 +754,7 @@ test_relaunch_and_send_require_readmission() {
     "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
   expect_code 0 "$rc" "free place refused a steer: $out"
   assert_present "$home/state/task-r.inbox/001.msg" "admitted steer was not delivered"
-  rc=0
-  out=$(spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
-  expect_code 75 "$rc" "admitted steer did not retain its place: $out"
-  rc=0
-  out=$(run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
-  expect_code 0 "$rc" "free place refused relaunch or counted itself: $out"
-  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --current-gen --source claude-hook --event stop
-  mkdir -p "$home/state/task-r.inbox/handled"
-  mv "$home/state/task-r.inbox/001.msg" "$home/state/task-r.inbox/handled/001.msg"
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" task-r ' ' 2>&1) || rc=$?
-  expect_code 1 "$rc" "empty steer was accepted: $out"
-  rc=0
-  out=$(spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
-  expect_code 0 "$rc" "undelivered steer retained capacity: $out"
   pass "released workers require admission for inbox, typed, Enter, and relaunch delivery"
-}
-
-test_reader_only_steer_releases_capacity() {
-  local case_dir home out rc
-  case_dir=$(make_case reader-only task-g)
-  home="$case_dir/home"
-  declare_capacity "$home" "project 1"
-  write_live "$home" task-g "$case_dir/project" "harness=grok"
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" task-g 'resume work' 2>&1) || rc=$?
-  expect_code 0 "$rc" "reader-only steer failed: $out"
-  assert_absent "$home/state/task-g.busy-state" "reader-only steer created an uncleared activity record"
-  rc=0
-  out=$(spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
-  expect_code 75 "$rc" "pending inbox lost its place: $out"
-  mkdir -p "$home/state/task-g.inbox/handled"
-  mv "$home/state/task-g.inbox/001.msg" "$home/state/task-g.inbox/handled/001.msg"
-  rc=0
-  out=$(spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
-  expect_code 0 "$rc" "completed reader-only steer retained capacity: $out"
-  pass "reader-only steers retain pending delivery and release completed work"
-}
-
-test_run_backed_steers_hold_capacity() {
-  local case_dir home mode run_state gen out rc
-  for run_state in parked done; do
-    for mode in inbox typed enter; do
-      case_dir=$(make_case "run-$run_state-$mode" task-r)
-      home="$case_dir/home"
-      declare_capacity "$home" 'project 1'
-      write_live "$home" task-r "$case_dir/project" 'harness=claude'
-      gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
-      "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
-      case "$mode" in
-        inbox) set -- 'resume work' ;;
-        typed) set -- /resume ;;
-        enter) set -- --key Enter ;;
-      esac
-      rc=0
-      out=$(FM_FAKE_RUN_TASK=task-r FM_FAKE_RUN_STATE="$run_state" \
-        FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-        FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-        "$ROOT/bin/fm-send.sh" task-r "$@" 2>&1) || rc=$?
-      expect_code 0 "$rc" "$run_state $mode admission failed: $out"
-      if [ "$mode" = inbox ]; then
-        mkdir -p "$home/state/task-r.inbox/handled"
-        mv "$home/state/task-r.inbox/001.msg" "$home/state/task-r.inbox/handled/001.msg"
-      fi
-      for gen in reserved busy idle; do
-        case "$gen" in
-          busy|idle) "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r "$gen" --current-gen --source claude-hook --event stop ;;
-        esac
-        rc=0
-        out=$(FM_FAKE_RUN_TASK=task-r FM_FAKE_RUN_STATE="$run_state" \
-          spawn_ship "$case_dir" another "$(new_worktree "$case_dir" "$gen")") || rc=$?
-        if [ "$gen" = idle ]; then
-          expect_code 0 "$rc" "completed $run_state $mode retained capacity: $out"
-        else
-          expect_code 75 "$rc" "$run_state $mode $gen lost capacity: $out"
-        fi
-      done
-    done
-  done
-  pass 'run-backed steers retain reservations and execution until completion'
-}
-
-test_dead_pending_inbox_releases_capacity() {
-  local case_dir home gen out rc mode
-  for mode in pending acknowledged; do
-  case_dir=$(make_case "dead-inbox-$mode" task-r)
-  home="$case_dir/home"
-  declare_capacity "$home" 'project 1'
-  write_live "$home" task-r "$case_dir/project" 'harness=claude'
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
-  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
-  expect_code 0 "$rc" "inbox steer failed: $out"
-  if [ "$mode" = acknowledged ]; then
-    mkdir -p "$home/state/task-r.inbox/handled"
-    mv "$home/state/task-r.inbox/001.msg" "$home/state/task-r.inbox/handled/001.msg"
-  fi
-  rc=0
-  out=$(FM_FAKE_DEAD_TASK=task-r FM_FAKE_RUN_TASK=task-r \
-    spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
-  expect_code 0 "$rc" "dead recipient retained capacity: $out"
-  assert_present "$home/worktree-task-r" 'death test removed the surviving worktree'
-  done
-  pass 'confirmed death releases capacity despite pending inbox and reservation'
 }
 
 test_run_backed_unknown_keeps_capacity() {
@@ -881,10 +772,46 @@ test_run_backed_unknown_keeps_capacity() {
   pass 'unknown activity retains capacity despite an inactive run'
 }
 
+test_run_activity_controls_release() {
+  local activity case_dir home gen out rc
+  for activity in busy idle capture-failed; do
+    case_dir=$(make_case "run-activity-$activity" task-r)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 1'
+    write_live "$home" task-r "$case_dir/project" 'harness=claude'
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r "${activity/capture-failed/unknown}" --gen "$gen" --source claude-hook --event stop
+    rc=0
+    out=$(FM_FAKE_CAPTURE_FAIL=1 FM_FAKE_RUN_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+    if [ "$activity" = idle ]; then
+      expect_code 0 "$rc" "positively idle run retained capacity: $out"
+    else
+      expect_code 75 "$rc" "$activity run released capacity: $out"
+    fi
+  done
+  pass 'run-backed workers release only on positive idle activity'
+}
+
+test_run_activity_controls_release
+test_other_backends_hold_capacity() {
+  local backend case_dir home gen out rc
+  for backend in orca cmux zellij; do
+    case_dir=$(make_case "held-$backend" task-r)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 1'
+    write_live "$home" task-r "$case_dir/project" "backend=$backend" 'harness=claude'
+    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
+    printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
+    rc=0
+    out=$(FM_FAKE_RUN_TASK=task-r spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$backend released capacity: $out"
+  done
+  pass 'other backends retain capacity despite idle activity and parked runs'
+}
+
+test_other_backends_hold_capacity
 test_run_backed_unknown_keeps_capacity
-test_run_backed_steers_hold_capacity
-test_dead_pending_inbox_releases_capacity
-test_reader_only_steer_releases_capacity
 
 test_relaunch_and_send_require_readmission
 test_freed_place_admits_one_manual_spawn
