@@ -107,6 +107,10 @@ SH
   # can answer; every other bash call runs the real shell.
   cat > "$fakebin/bash" <<SH
 #!$REAL_BASH
+if [ "\${1##*/}" = fm-crew-state.sh ] && [ "\${2:-}" = "\${FM_FAKE_RUN_TASK:-}" ]; then
+  printf 'state: %s · source: run-step · attributed run\n' "\${FM_FAKE_RUN_STATE:-parked}"
+  exit 0
+fi
 if [ "\${1##*/}" = fm-crew-state.sh ] && [ "\${2:-}" = "\${FM_FAKE_CREW_STATE_FAIL:-}" ]; then
   exit 9
 fi
@@ -781,6 +785,72 @@ test_reader_only_steer_releases_capacity() {
   pass "reader-only steers retain pending delivery and release completed work"
 }
 
+test_run_backed_steers_hold_capacity() {
+  local case_dir home mode run_state gen out rc
+  for run_state in parked done; do
+    for mode in inbox typed enter; do
+      case_dir=$(make_case "run-$run_state-$mode" task-r)
+      home="$case_dir/home"
+      declare_capacity "$home" 'project 1'
+      write_live "$home" task-r "$case_dir/project" 'harness=claude'
+      gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+      "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
+      case "$mode" in
+        inbox) set -- 'resume work' ;;
+        typed) set -- /resume ;;
+        enter) set -- --key Enter ;;
+      esac
+      rc=0
+      out=$(FM_FAKE_RUN_TASK=task-r FM_FAKE_RUN_STATE="$run_state" \
+        FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+        FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+        "$ROOT/bin/fm-send.sh" task-r "$@" 2>&1) || rc=$?
+      expect_code 0 "$rc" "$run_state $mode admission failed: $out"
+      if [ "$mode" = inbox ]; then
+        mkdir -p "$home/state/task-r.inbox/handled"
+        mv "$home/state/task-r.inbox/001.msg" "$home/state/task-r.inbox/handled/001.msg"
+      fi
+      for gen in reserved busy idle; do
+        case "$gen" in
+          busy|idle) "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r "$gen" --current-gen --source claude-hook --event stop ;;
+        esac
+        rc=0
+        out=$(FM_FAKE_RUN_TASK=task-r FM_FAKE_RUN_STATE="$run_state" \
+          spawn_ship "$case_dir" another "$(new_worktree "$case_dir" "$gen")") || rc=$?
+        if [ "$gen" = idle ]; then
+          expect_code 0 "$rc" "completed $run_state $mode retained capacity: $out"
+        else
+          expect_code 75 "$rc" "$run_state $mode $gen lost capacity: $out"
+        fi
+      done
+    done
+  done
+  pass 'run-backed steers retain reservations and execution until completion'
+}
+
+test_dead_pending_inbox_releases_capacity() {
+  local case_dir home gen out rc
+  case_dir=$(make_case dead-inbox task-r)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 1'
+  write_live "$home" task-r "$case_dir/project" 'harness=claude'
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
+  expect_code 0 "$rc" "inbox steer failed: $out"
+  rmdir "$home/worktree-task-r"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 0 "$rc" "dead recipient retained capacity: $out"
+  assert_present "$home/state/task-r.inbox/001.msg" 'abandoned inbox was not preserved'
+  pass 'confirmed death releases capacity despite pending inbox and reservation'
+}
+
+test_run_backed_steers_hold_capacity
+test_dead_pending_inbox_releases_capacity
 test_reader_only_steer_releases_capacity
 
 test_relaunch_and_send_require_readmission
