@@ -74,8 +74,9 @@
 # refuses, reporting the failed gh read and naming both failed reads when the
 # gh-axi view could not prove the outcome either.
 # If the pull request remains open and the base branch has an effective
-# merge_queue rule, an attended refusal names the queue's configured merge
-# method and exact --attended-override -- --auto --<method> retry flags. While
+# merge_queue rule and the review-tier gate permits queues, an attended refusal
+# names the queue's configured merge method and exact
+# --attended-override -- --auto --<method> retry flags. While
 # the away-posture record exists, asynchronous merge requests are refused and
 # queue retry flags are not offered because they would outlive away authority.
 # An attended caller that already passed the configured method with --auto is
@@ -145,7 +146,7 @@
 # is named. The list is a private task record that no CI job or no-mistakes step
 # can read, so this guarded merge path is the one place the boundary can bind a
 # merge. bin/fm-file-boundary.sh owns the list and the comparison; a task with
-# no list never reaches it, so its merge is exactly what it was. A list that
+# no list never reaches the file-boundary check. A list that
 # cannot be checked on this forge or read at this time refuses rather than
 # passing, as does a recorded list that has gone missing. The refusal fires only
 # when the task being merged, or the task recorded for this pull request, has a
