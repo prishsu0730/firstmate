@@ -171,8 +171,9 @@
 # The synthesizer may be firstmate or a reviewer, but not the shipping task.
 # Only a line naming this pull request and this exact head with that exact
 # verdict counts, so a new head voids every older review. A missing brief, a
-# missing, repeated, or unrecognised tier line, and an unreadable review record
-# all refuse, and the refusal names the line to fix. No flag skips this gate.
+# missing, repeated, or unrecognised tier line all refuse; an unreadable review
+# record also refuses when the tier requires reviews. The refusal names the
+# record or line to fix. No flag skips this gate.
 # Tier values are case-insensitive exact names or risk labels listed above,
 # including MEDIUM (Base), HIGH (Plus), and CRITICAL (Apex); the scaffold's
 # trailing ` (No Greptile / Base / Plus / Apex)` is also accepted.
