@@ -109,11 +109,6 @@ fm_merge_outcome_report() {  # <home> <state> <task-id> <pr-url> <origin> [autho
       "$provider" "$host" "$path" "$number" || status=1
   fi
   fm_lock_release "$lock"
-  # shellcheck source=bin/fm-queue-activity-lib.sh
-  . "$_FM_MERGE_OUTCOME_LIB_DIR/fm-queue-activity-lib.sh"
-  if [ "$status" -eq 0 ]; then
-    fm_queue_activity_record "$state" landing || status=1
-  fi
   # Opt-in fleet activity ledger (docs/fleet-ledger.md); off costs one file test.
   [ ! -e "${FM_CONFIG_OVERRIDE:-$home/config}/fleet-ledger" ] || [ "$status" -ne 0 ] || FM_HOME=$home FM_STATE_OVERRIDE=$state "$_FM_MERGE_OUTCOME_LIB_DIR/fm-fleet-ledger.sh" merged "$id" pr "$FM_PR_URL" || true
   return "$status"
