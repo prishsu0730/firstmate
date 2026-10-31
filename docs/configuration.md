@@ -1082,7 +1082,8 @@ A line that is only `#`, or that begins with `#` followed by whitespace, is a co
 A project name may begin with `#` when that `#` is written immediately against the rest of the name and the line ends with the project's capacity.
 A name that is `#`, or that begins with `#` and a space, cannot be declared, because that line is a comment.
 A place is held by every ship or scout on that project in the root home or any local secondmate home registered under it, including one working in a separate clone of the same origin, while its worker may still be executing.
-A place frees when its ready PR is recorded, when it is cleaned up, or when `bin/fm-crew-state.sh` reads the worker as parked, paused, done, or gone; an active, blocked, failed, or uncertain read, including a failed one, keeps the place.
+A place frees when its ready PR is recorded, when it is cleaned up, or when its worktree is positively gone, its tmux/herdr endpoint is positively missing or dead, or `bin/fm-crew-state.sh` reads a tmux/herdr worker as parked, paused, or done with positively idle current activity.
+Active, unknown, unverified, capture-failed, unreadable, and other-backend workers keep their places, including workers with attributed parked or completed validation runs whose current activity is not positively idle.
 A relaunch excludes its own record and must pass admission; steering a released worker also requires a free place, otherwise `bin/fm-send.sh` exits 75 before delivery.
 The declaration is matched by the spawning clone's directory name, so clones of the same origin share the cap only when they use that same directory name.
 A clone of that origin under a different directory name finds no declaration and is not capped, though its workers are still counted as holders for a same-origin clone that is capped.

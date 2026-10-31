@@ -46,13 +46,14 @@
 #     worker's PR is ready, after which the worker waits on review or merge and
 #     no longer uses local resources, and
 #   - may still be executing: bin/fm-crew-state.sh, the one reconciled source of
-#     a worker's current state, does not read it as parked, paused, or done, or
-#     as a record whose endpoint or worktree is positively gone. Active,
+#     a worker's current state, does not positively read a tmux or herdr worker
+#     as parked, paused, or done with positively idle current activity, or
+#     its tmux/herdr endpoint or worktree as positively gone. Active,
 #     blocked, failed, conflict, and every uncertain read (a timeout, an
 #     unreachable endpoint, an unknown verdict) keep the place, because a live
 #     worker must never be undercounted.
 # A place therefore frees when a PR-based ship records its ready PR, when a
-# worker parks, pauses, finishes, or dies, or when any task is cleaned up and its
+# tmux/herdr worker is positively idle or dead, or when any task is cleaned up and its
 # record removed. Relaunches and steers to released workers must pass admission
 # before resuming; a worker with a recorded PR handoff is not counted.
 # The declaration is matched by the spawning clone's directory name, so clones
@@ -85,14 +86,21 @@ FM_PROJECT_CAPACITY_DEFER_EXIT=75
 
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-task-inbox-lib.sh"
 FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 # Succeeds only when fm-crew-state.sh positively reads the record as not
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
-  local verdict activity endpoint
+  local verdict activity endpoint backend
+  [ -r "$1/$2.meta" ] || return 1
+  backend=$(fm_backend_of_meta "$1/$2.meta")
+  verdict=$(fm_meta_get "$1/$2.meta" worktree)
+  if [ -n "$verdict" ] && [ ! -d "$verdict" ] &&
+    [ -z "$(fm_meta_get "$1/$2.meta" remote_host)" ]; then
+    return 0
+  fi
+  case "$backend" in tmux|herdr) ;; *) return 1 ;; esac
   endpoint=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
     meta="$2/$3.meta"
@@ -104,18 +112,13 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in
-    'state: unknown · source: none · backend target gone'* | 'state: unknown · source: none · worktree gone'*) return 0 ;;
+    'state: unknown '*) return 1 ;;
   esac
-  fm_task_inbox_oldest_unhandled "$1" "$2" >/dev/null && return 1
   case "$verdict" in
     'state: parked '* | 'state: paused '* | 'state: done '*)
       activity=$(fm_run_timed 15 bash -c '
         . "$1/fm-backend.sh"
         . "$1/fm-busy-lib.sh"
-        record=$(fm_busy_record_read "$2" "$3" 2>/dev/null || true)
-        case "$record" in
-          "unknown fm-recovery capacity-submit "*) printf "unknown fm-recovery"; exit 0 ;;
-        esac
         fm_busy_classify_meta "$2/$3.meta" "$3" "$2"
       ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
       case "$activity" in
