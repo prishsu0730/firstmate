@@ -42,17 +42,15 @@
 #     shared project lock path (fm_treehouse_project_lock_path), which is keyed
 #     by the project's resolved origin, so workers in any clone of that origin
 #     are counted, and
-#   - has no recorded PR handoff: the pr= line bin/fm-pr-check.sh records when a
-#     worker's PR is ready, after which the worker waits on review or merge and
-#     no longer uses local resources, and
 #   - has not supplied positive idle proof for its current launch: its meta
 #     busy_gen must match .busy-gen and its trusted busy record must be idle.
 #     Unarmed workers hold their place until cleanup. Idle release additionally
 #     requires a parked, paused, or done crew state, a live tmux/herdr endpoint
 #     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
 #     Missing copies or endpoints with recovery-grade absence proof release.
-# A place frees on a recorded PR handoff, positive current-launch idle proof,
-# or cleanup removing the record. Relaunches and steers to released workers
+# A place frees only on a fresh admission-time check of current idle or absence
+# proof, or cleanup removing the record. Stored PR and status records alone
+# never release a place. Relaunches and steers to released workers
 # must pass admission before resuming.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
@@ -85,16 +83,11 @@ FM_PROJECT_CAPACITY_DEFER_EXIT=75
 FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 fm_project_capacity_publish() {
-  local action=$1 state=$2 id=$3 pr lock
+  local action=$1 state=$2 id=$3 lock
   case "$action" in
     reserve)
       lock=$(fm_meta_lock_path "$state/$id.meta") || return 1
       fm_lock_acquire_wait "$lock" || return 1
-      pr=$(fm_meta_get "$state/$id.meta" pr)
-      if [ -n "$pr" ] && ! printf 'capacity_resumed_pr=%s\n' "$pr" >> "$state/$id.meta"; then
-        fm_lock_release "$lock"
-        return 1
-      fi
       if [ "${4:-}" = busy ] && [ -n "$(fm_meta_get "$state/$id.meta" busy_gen)" ]; then
         "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-busy-event.sh" apply "$state" "$id" unknown \
           --current-gen --source fm-recovery --event send-admitted || {
@@ -103,10 +96,6 @@ fm_project_capacity_publish() {
           }
       fi
       fm_lock_release "$lock"
-      ;;
-    relaunch)
-      pr=$(fm_meta_get "$state/$id.meta" pr)
-      [ -z "$pr" ] || printf 'capacity_resumed_pr=%s\n' "$pr" >> "$4" || return 1
       ;;
     handoff)
       [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
@@ -117,7 +106,7 @@ fm_project_capacity_publish() {
       META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
       while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
-          pr=*|pr_head=*|capacity_resumed_pr=*) ;;
+          pr=*|pr_head=*) ;;
           *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
         esac
       done < "$META"
@@ -145,7 +134,7 @@ fm_project_capacity_publish() {
 # Succeeds only when fm-crew-state.sh positively reads the record as not
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
-fm_project_capacity_record_idle() {  # <state-dir> <task-id>
+fm_project_capacity_record_released() {  # <state-dir> <task-id>
   local verdict activity endpoint backend message
   [ -r "$1/$2.meta" ] || return 1
   if [ -e "$1/$2.inbox" ]; then
@@ -217,21 +206,6 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
       ;;
     *) return 1 ;;
   esac
-}
-
-fm_project_capacity_record_released() {  # <state-dir> <task-id>
-  local pr message
-  pr=$(fm_meta_get "$1/$2.meta" pr)
-  if [ -n "$pr" ] && [ "$(fm_meta_get "$1/$2.meta" capacity_resumed_pr)" != "$pr" ]; then
-    if [ -e "$1/$2.inbox" ]; then
-      [ -d "$1/$2.inbox" ] && [ -r "$1/$2.inbox" ] && [ -x "$1/$2.inbox" ] || return 1
-      for message in "$1/$2.inbox/"*.msg; do
-        [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
-      done
-    fi
-    return 0
-  fi
-  fm_project_capacity_record_idle "$1" "$2"
 }
 
 # The config directory holding this machine's declaration: the spawning home's
