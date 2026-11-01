@@ -42,13 +42,17 @@
 #     shared project lock path (fm_treehouse_project_lock_path), which is keyed
 #     by the project's resolved origin, so workers in any clone of that origin
 #     are counted, and
-#   - has no recorded PR handoff: the pr= line bin/fm-pr-check.sh records when a
-#     worker's PR is ready, after which the worker waits on review or merge and
-#     no longer uses local resources.
-# A place therefore frees when a PR-based ship records its ready PR, or when any
-# task is cleaned up and its record removed. A local-only ship and a scout have
-# no recorded handoff and hold their place until cleanup. A worker that is
-# steered back into work after its PR handoff is not counted again.
+#   - has not supplied positive idle proof for its current launch: its meta
+#     busy_gen must match .busy-gen and its trusted busy record must be idle.
+#     Unarmed workers cannot release on idle evidence alone.
+#     Idle release additionally
+#     requires a parked, paused, or done crew state, a live tmux/herdr endpoint
+#     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
+#     Missing copies or endpoints with recovery-grade absence proof release.
+# A place frees only on a fresh admission-time check of current idle or absence
+# proof, or cleanup removing the record. Stored PR and status records alone
+# never release a place. Relaunches and steers to released workers
+# must pass admission before resuming.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -63,9 +67,10 @@
 # two concurrent spawns for one project can never both publish from the same
 # count. A spawn on an uncapped project can still publish a holder for a capped
 # same-origin clone, so every backend takes that lock whenever the declaration
-# caps any project; Orca, which otherwise never takes it, is included. Freeing a
-# place needs no lock, because removing a record or adding pr= only ever lowers
-# the count.
+# caps any project; Orca, which otherwise never takes it, is included.
+# Admission reservations publish under that same project lock.
+# PR registration also takes it when the recorded project directory exists and
+# its lock path resolves; registration never changes occupancy.
 #
 # Requires bin/fm-wake-lib.sh (root home, local homes, project lock path),
 # bin/fm-secondmate-registry-lib.sh (which the local-homes walk reads), and
@@ -76,6 +81,142 @@
 # the task queued from an ordinary failure.
 # shellcheck disable=SC2034 # read by bin/fm-spawn.sh after sourcing.
 FM_PROJECT_CAPACITY_DEFER_EXIT=75
+
+# shellcheck source=bin/fm-timeout-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
+FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+fm_project_capacity_publish() {
+  local action=$1 state=$2 id=$3 lock
+  case "$action" in
+    reserve)
+      lock=$(fm_meta_lock_path "$state/$id.meta") || return 1
+      fm_lock_acquire_wait "$lock" || return 1
+      if [ "${4:-}" = busy ] && [ -n "$(fm_meta_get "$state/$id.meta" busy_gen)" ]; then
+        "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-busy-event.sh" apply "$state" "$id" unknown \
+          --current-gen --source fm-recovery --event send-admitted || {
+            fm_lock_release "$lock"
+            return 1
+          }
+      fi
+      fm_lock_release "$lock"
+      ;;
+    handoff)
+      # shellcheck disable=SC2153 # META is set by the caller.
+      [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
+        || { echo "error: task metadata is unavailable" >&2; exit 1; }
+      META_DEVICE=$(fm_pr_file_device "$META") || exit 1
+      # shellcheck disable=SC2153 # STATE is set by the caller.
+      STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
+      [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
+      META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          pr=*|pr_head=*) ;;
+          *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
+        esac
+      done < "$META"
+      printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
+      [ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
+      chmod 0600 "$META_TMP" || exit 1
+      fm_pr_private_file_valid "$META_TMP" 600 "$STATE_DEVICE" || exit 1
+      fm_pr_metadata_identity_parse "$META_TMP" || exit 1
+      [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
+        && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
+        && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
+      fm_pr_regular_destination_on_device_or_absent "$META" "$STATE_DEVICE" || exit 1
+      mv -f -- "$META_TMP" "$META" || exit 1
+      META_TMP=
+      fm_pr_private_file_valid "$META" 600 "$STATE_DEVICE" || exit 1
+      fm_pr_metadata_identity_parse "$META" || exit 1
+      [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
+        && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
+        && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# Succeeds only when fm-crew-state.sh positively reads the record as not
+# executing. Any failed, timed-out, or unrecognized read returns 1, so the
+# record keeps its place.
+fm_project_capacity_record_released() {  # <state-dir> <task-id>
+  local verdict activity endpoint backend message
+  [ -r "$1/$2.meta" ] || return 1
+  if [ -e "$1/$2.inbox" ]; then
+    [ -d "$1/$2.inbox" ] && [ -r "$1/$2.inbox" ] && [ -x "$1/$2.inbox" ] || return 1
+    for message in "$1/$2.inbox/"*.msg; do
+      [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
+    done
+  fi
+  local worktree target absence
+  worktree=$(fm_meta_get "$1/$2.meta" worktree)
+  [ -z "$worktree" ] || [ -d "$worktree" ] || return 0
+  backend=$(fm_backend_of_meta "$1/$2.meta")
+  target=$(fm_backend_target_of_meta "$1/$2.meta")
+  # Positional parameters expand in the child shell.
+  # shellcheck disable=SC2016
+  endpoint=$(fm_run_timed 15 bash -c '
+    . "$1/fm-backend.sh"
+    fm_backend_agent_state "$2" "$3"
+  ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$backend" "$target" 2>/dev/null) || endpoint=unknown
+  case "$endpoint" in
+    missing|dead)
+      # Positional parameters expand in the child shell.
+      # shellcheck disable=SC2016
+      absence=$(fm_run_timed 15 bash -c '
+        . "$1/fm-backend.sh"
+        . "$1/fm-control-lib.sh"
+        fm_control_endpoint_absence_verdict "$2" "$3" "$4"
+      ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$backend" "$target" "$1/$2.meta" 2>/dev/null) || return 1
+      case "$absence" in gone$'\t'*|dead$'\t'*) return 0 ;; *) return 1 ;; esac
+      ;;
+  esac
+  # shellcheck disable=SC2016
+  activity=$(fm_run_timed 15 bash -c '
+    . "$1/fm-backend.sh"
+    . "$1/fm-busy-lib.sh"
+    gen=$(fm_meta_get "$2/$3.meta" busy_gen)
+    [ -n "$gen" ] && [ "$gen" = "$(fm_busy_current_gen "$2" "$3")" ] || exit 1
+    record=$(fm_busy_record_read "$2" "$3") || exit 1
+    harness=$(fm_meta_get "$2/$3.meta" harness)
+    state=${record%% *}
+    source=${record#* }; source=${source%% *}
+    fm_busy_source_trusted "$harness" "$source" || exit 1
+    printf "%s" "$state"
+  ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
+  [ "$activity" = idle ] || return 1
+  backend=$(fm_backend_of_meta "$1/$2.meta")
+  case "$backend" in tmux|herdr) ;; *) return 1 ;; esac
+  # shellcheck disable=SC2016 # Expand positional parameters in the child shell.
+  endpoint=$(fm_run_timed 15 bash -c '
+    . "$1/fm-backend.sh"
+    meta="$2/$3.meta"
+    backend=$(fm_backend_of_meta "$meta")
+    target=$(fm_backend_target_of_meta "$meta")
+    endpoint=$(fm_backend_agent_state "$backend" "$target")
+    if [ "$endpoint" = alive ]; then
+      fm_backend_capture "$backend" "$target" 1 >/dev/null || exit 1
+    fi
+    printf "%s" "$endpoint"
+  ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2" 2>/dev/null) || endpoint=unknown
+  case "$endpoint" in
+    missing|dead) return 1 ;;
+    alive) ;;
+    *) return 1 ;;
+  esac
+  verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
+    fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
+  case "$verdict" in
+    'state: unknown '*) return 1 ;;
+  esac
+  case "$verdict" in
+    'state: parked '* | 'state: paused '* | 'state: done '*)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
 
 # The config directory holding this machine's declaration: the spawning home's
 # own <config-dir> when that home is the local root (so an override of it
@@ -166,8 +307,8 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
 # admitted, and <project-dir> is that project's own directory, which matches
 # without recomputing its identity. The local homes come from
 # fm_local_firstmate_state_dirs <first-state>. <own-id> is the task being
-# admitted; its own record in <first-state> is the one this spawn replaces, so
-# it is not counted.
+# admitted or resumed; its own record in <first-state> is excluded so it
+# cannot consume its own admission place.
 # Sets FM_PROJECT_CAPACITY_OCCUPANTS to the count and
 # FM_PROJECT_CAPACITY_OCCUPANT_IDS to a comma-separated list of the holders,
 # each outside <first-state> qualified with its home. Returns 1 with
@@ -200,7 +341,6 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       }
       kind=$(fm_meta_get "$meta" kind)
       [ "$kind" != secondmate ] || continue
-      [ -z "$(fm_meta_get "$meta" pr)" ] || continue
       project=$(fm_meta_get "$meta" project)
       [ -n "$project" ] || continue
       lock=
@@ -219,6 +359,9 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       fi
       [ -n "$lock" ] && [ "$lock" = "$want" ] || continue
       id=$(basename "$meta" .meta)
+      if fm_project_capacity_record_released "$state" "$id"; then
+        continue
+      fi
       label=$id
       [ "$state" = "$first" ] || label="$id in $(dirname "$state")"
       FM_PROJECT_CAPACITY_OCCUPANTS=$((FM_PROJECT_CAPACITY_OCCUPANTS + 1))

@@ -13,7 +13,7 @@
 set -u
 
 # shellcheck source=tests/lib.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 
 unset TASKS_AXI_BACKEND || :
 
@@ -22,6 +22,7 @@ TEARDOWN="$ROOT/bin/fm-teardown.sh"
 TMP_ROOT=$(fm_test_tmproot fm-project-capacity)
 DEFER_EXIT=75
 HAVE_TASKS_AXI=0
+REAL_BASH=$(command -v bash)
 command -v tasks-axi >/dev/null 2>&1 && HAVE_TASKS_AXI=1
 
 # --- fixture ----------------------------------------------------------------
@@ -77,7 +78,29 @@ make_case() {  # <name> [task-id...]
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_FAKE_CALL_LOG"
+if [ "${1:-}" = capture-pane ] && [ -n "${FM_FAKE_CAPTURE_FAIL:-}" ]; then exit 1; fi
+if [ "${FM_FAKE_EMPTY_COMPOSER:-typed}" != off ]; then
+  case "$*" in
+    display-message*'#{cursor_y}'*) printf '0\n'; exit 0 ;;
+    capture-pane*' -e '*) printf '❯ \n'; exit 0 ;;
+  esac
+fi
 case "$*" in
+  list-windows*)
+    for meta in "$FM_HOME/state/"*.meta ${FM_FAKE_EXTRA_STATE:+"$FM_FAKE_EXTRA_STATE/"*.meta}; do
+      [ -f "$meta" ] || continue
+      id=${meta##*/}
+      id=${id%.meta}
+      [ "$id" != "${FM_FAKE_DEAD_TASK:-}" ] || continue
+      printf 'fm-%s\n' "$id"
+    done
+    exit 0
+    ;;
+  *"#{pane_current_command}"*)
+    [ -z "${FM_FAKE_ENDPOINT_UNREADABLE:-}" ] || exit 1
+    printf 'claude\n'
+    exit 0
+    ;;
   *"#{pane_current_path}"*)
     # A spawn that is told to hold waits here, after its capacity check and
     # while it still holds the project lock, until the test releases it.
@@ -102,7 +125,20 @@ SH
 printf 'treehouse %s\n' "$*" >> "$FM_FAKE_CALL_LOG"
 exit 0
 SH
-  chmod +x "$fakebin/tmux" "$fakebin/treehouse"
+  # A state read for the task named in FM_FAKE_CREW_STATE_FAIL dies before it
+  # can answer; every other bash call runs the real shell.
+  cat > "$fakebin/bash" <<SH
+#!$REAL_BASH
+if [ "\${1##*/}" = fm-crew-state.sh ] && [ "\${2:-}" = "\${FM_FAKE_RUN_TASK:-}" ]; then
+  printf 'state: %s · source: run-step · attributed run\n' "\${FM_FAKE_RUN_STATE:-parked}"
+  exit 0
+fi
+if [ "\${1##*/}" = fm-crew-state.sh ] && [ "\${2:-}" = "\${FM_FAKE_CREW_STATE_FAIL:-}" ]; then
+  exit 9
+fi
+exec $REAL_BASH "\$@"
+SH
+  chmod +x "$fakebin/tmux" "$fakebin/treehouse" "$fakebin/bash"
   fm_fake_exit0 "$fakebin" gh gh-axi no-mistakes
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -133,10 +169,14 @@ declare_capacity() {  # <home> <line>...
 write_live() {  # <home> <id> <project-dir> [extra-line...]
   local home=$1 id=$2 project=$3
   shift 3
+  # A live worker's copy exists on disk; fm-crew-state.sh reads a record whose
+  # copy is gone as a dead worker. The fake terminal reports no pane state, so
+  # this record reads as uncertain and holds its place.
+  mkdir -p "$home/worktree-$id"
   fm_write_meta "$home/state/$id.meta" \
     "window=firstmate:fm-$id" \
     "endpoint_task_id=$id" \
-    "worktree=$home/absent-worktree-$id" \
+    "worktree=$home/worktree-$id" \
     "project=$project" \
     "harness=codex" \
     "kind=ship" \
@@ -148,6 +188,24 @@ write_live() {  # <home> <id> <project-dir> [extra-line...]
     add_item "$home" "$id"
     tasks-axi start "$id" --file "$home/data/backlog.md" >/dev/null
   fi
+}
+
+arm_worker() {
+  local gen
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$1" "$2") || return 1
+  local meta
+  meta=$(sed '/^busy_gen=/d' "$1/$2.meta")
+  printf '%s\n' "$meta" > "$1/$2.meta"
+  printf 'busy_gen=%s\n' "$gen" >> "$1/$2.meta"
+  printf '%s' "$gen"
+}
+
+idle_worker() {
+  local gen
+  printf 'harness=claude\n' >> "$1/state/$2.meta"
+  gen=$(arm_worker "$1/state" "$2") || return 1
+  "$ROOT/bin/fm-busy-event.sh" apply "$1/state" "$2" idle --gen "$gen" --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$1/state/$2.status"
 }
 
 # One isolated worktree per spawn, so every admitted launch has its own copy.
@@ -163,6 +221,7 @@ run_spawn() {  # <case-dir> <home> <pane-path> <args...>
     FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_PROJECTS_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" FM_BACKEND=tmux \
     FM_FAKE_PANE_PATH="$pane" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    FM_FAKE_CREW_STATE_FAIL="${FM_FAKE_CREW_STATE_FAIL:-}" \
     PATH="$case_dir/fakebin:$PATH" \
     "$SPAWN" "$@" 2>&1
 }
@@ -179,6 +238,7 @@ assert_nothing_created() {  # <case-dir> <home> <id> <calls-before> <worktrees-b
   local case_dir=$1 home=$2 id=$3 before=$4 worktrees=$5 after
   assert_absent "$home/state/$id.meta" "a deferred spawn published a task record for $id"
   assert_absent "$home/data/$id/launch-brief.md" "a deferred spawn rendered a launch brief for $id"
+  # State reads of other holders (display-message, capture-pane) change nothing.
   after=$(call_count "$case_dir")
   [ "$after" -eq "$before" ] ||
     fail "a deferred spawn touched the terminal or worktree pool for $id: $(tail -n +"$((before + 1))" "$case_dir/calls.log")"
@@ -189,11 +249,70 @@ assert_nothing_created() {  # <case-dir> <home> <id> <calls-before> <worktrees-b
   fi
 }
 
-call_count() { wc -l < "$1/calls.log" | tr -d ' '; }
+# Calls that could change something; the read-only probes fm-crew-state.sh makes
+# of other holders' terminals are not counted.
+call_count() { grep -cv -E '^(display-message|capture-pane|list-panes|list-windows|show-)' "$1/calls.log" | tr -d ' '; }
 
 worktree_list() { git -C "$1/project" worktree list --porcelain; }
 
 # --- cases ------------------------------------------------------------------
+
+# A record holds a place only while its worker may be executing, judged by
+# fm-crew-state.sh: a parked or dead worker frees its place, an active worker and
+# a worker whose state cannot be read keep theirs, and a spawn at the limit still
+# defers with the same refusal.
+test_freed_place_admits_one_manual_spawn() {
+  local case_dir home out rc=0 gen
+  case_dir=$(make_case idle-release task-c task-d task-e)
+  home="$case_dir/home"
+  declare_capacity "$home" "project 4"
+
+  # Parked: an idle pane whose worker declared a pause.
+  write_live "$home" parked "$case_dir/project" "harness=claude"
+  gen=$(arm_worker "$home/state" parked)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" parked idle --gen "$gen" \
+    --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting on an outside tool\n' "$(date +%s)" > "$home/state/parked.status"
+  # Dead: the worker's copy no longer exists.
+  write_live "$home" dead "$case_dir/project"
+  rmdir "$home/worktree-dead"
+  # Active: the pane is busy.
+  write_live "$home" active "$case_dir/project" "harness=claude"
+  gen=$(arm_worker "$home/state" active)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active busy --gen "$gen" \
+    --source claude-hook --event prompt
+  # Unreadable: a state read that dies before answering keeps the place.
+  write_live "$home" unread "$case_dir/project"
+  # Uncertain: the terminal gives no verdict, so the record keeps its place.
+  write_live "$home" plain "$case_dir/project"
+
+  write_live "$home" fourth "$case_dir/project"
+
+  # Four places: active, unread, plain, fourth hold; parked and dead are free.
+  rc=0
+  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "four holders did not fill a limit of four: $out"
+  assert_contains "$out" "4 already hold a place" "the count included a parked or dead worker"
+  case "$out" in
+    *parked*) fail "a parked or dead worker held a place: $out" ;;
+  esac
+  assert_contains "$out" "active" "the active worker did not hold a place"
+  assert_contains "$out" "unread" "the worker whose state read failed did not hold a place"
+  assert_contains "$out" "plain" "the uncertain worker did not hold a place"
+
+  # A holder that stops executing frees one place for exactly one worker.
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/active.status"
+  gen=$(arm_worker "$home/state" active)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active idle --gen "$gen" \
+    --source claude-hook --event stop
+  rc=0
+  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c) || rc=$?
+  expect_code 0 "$rc" "a worker that parked did not free a place: $out"
+  rc=0
+  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
+  pass "armed idle and missing copies release capacity; uncertain records retain capacity"
+}
 
 # The reported incident's shape before any declaration: the project is already
 # busy, and nothing caps a further launch. Absent a declaration that stays true.
@@ -332,8 +451,7 @@ test_restart_does_not_count_its_own_record() {
   pass "a restart of a task id does not count that task's own record"
 }
 
-# A place frees when a worker records its ready PR and when a task is cleaned
-# up; each release admits exactly one more worker.
+# Positive idle proof and cleanup each admit exactly one more worker.
 test_release_frees_a_place() {
   local case_dir home out rc=0
   case_dir=$(make_case release task-c task-d)
@@ -344,17 +462,20 @@ test_release_frees_a_place() {
   out=$(spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "the full project admitted a worker: $out"
 
-  # PR handoff: the line bin/fm-pr-check.sh records for a ready PR.
   printf 'pr=%s\n' "https://github.com/o/r/pull/7" >> "$home/state/live-a.meta"
+  idle_worker "$home" live-a
   rc=0
   out=$(spawn_ship "$case_dir" task-c) || rc=$?
-  expect_code 0 "$rc" "a recorded PR handoff did not free a place: $out"
+  expect_code 0 "$rc" "positive idle proof did not free a place: $out"
   rc=0
   out=$(spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
   assert_contains "$out" "2 already hold a place (live-b, task-c)" "the new worker did not take the freed place"
 
-  # Cleanup: the real teardown removes the record, which frees its place.
+  # Cleanup: the real teardown removes the record, which frees its place. The
+  # fixture copy is an empty directory, not a git worktree, so remove it first
+  # as the pool does when it reclaims a copy.
+  rmdir "$home/worktree-live-b"
   rc=0
   out=$(FM_ROOT_OVERRIDE='' FM_HOME="$home" FM_STATE_OVERRIDE='' FM_DATA_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
@@ -364,7 +485,7 @@ test_release_frees_a_place() {
   rc=0
   out=$(spawn_ship "$case_dir" task-d) || rc=$?
   expect_code 0 "$rc" "cleanup did not free a place: $out"
-  pass "a recorded PR handoff or a cleanup each frees exactly one place"
+  pass "positive idle proof or cleanup each frees exactly one place"
 }
 
 # Only workers on the same project identity hold places: a secondmate record, a
@@ -377,7 +498,8 @@ test_occupancy_counts_only_this_projects_workers() {
   declare_capacity "$home" "project 3"
   write_live "$home" scout-a "$case_dir/project"
   sed -i.bak 's/^kind=ship$/kind=scout/' "$home/state/scout-a.meta" && rm -f "$home/state/scout-a.meta.bak"
-  fm_write_meta "$home/state/legacy-b.meta" "window=firstmate:fm-legacy-b" "project=$case_dir/project"
+  mkdir -p "$home/worktree-legacy-b"
+  fm_write_meta "$home/state/legacy-b.meta" "window=firstmate:fm-legacy-b" "worktree=$home/worktree-legacy-b" "project=$case_dir/project"
   write_live "$home" other-c "$case_dir/other-project"
   fm_write_meta "$home/state/mate-d.meta" "window=remote:mate-d" "project=$case_dir/project" "kind=secondmate"
   out=$(spawn_ship "$case_dir" task-c) || rc=$?
@@ -413,12 +535,13 @@ test_capacity_is_shared_by_every_local_home() {
   declare_capacity "$root" "project 1"
   write_live "$root" live-a "$case_dir/project"
   git -C "$mate_project" worktree add --quiet -b wt-m "$case_dir/wt-m"
-  out=$(run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
+  out=$(FM_FAKE_EXTRA_STATE="$root/state" run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "a local secondmate launched past the machine's capacity: $out"
   assert_contains "$out" "admits 1 worker(s) at once on this machine ($root/config/project-capacity) and 1 already hold a place (live-a in $root)" \
     "the secondmate did not count the root home's worker against the root's declaration"
   assert_absent "$mate/state/task-m.meta" "the deferred secondmate spawn published a record"
   printf 'pr=%s\n' "https://github.com/o/r/pull/8" >> "$root/state/live-a.meta"
+  rmdir "$root/worktree-live-a"
   rc=0
   out=$(run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
   expect_code 0 "$rc" "the remote home's worker, or a handed-off one, took the machine's place: $out"
@@ -469,30 +592,49 @@ test_unreadable_holders_refuse_admission() {
 # Two spawns racing for the last place: the one holding the project lock
 # publishes, the other cannot publish while it waits and is deferred afterwards.
 test_concurrent_spawns_cannot_both_take_the_last_place() {
-  local case_dir home out rc=0 hold i wt
-  case_dir=$(make_case concurrent task-a task-b)
-  home="$case_dir/home"
-  declare_capacity "$home" "project 1"
-  hold="$case_dir/hold"
-  wt=$(new_worktree "$case_dir" task-a)
-  FM_FAKE_HOLD="$hold" spawn_ship "$case_dir" task-a "$wt" > "$case_dir/a.out" 2>&1 &
-  i=0
-  while [ ! -f "$hold.reached" ]; do
-    i=$((i + 1))
-    [ "$i" -lt 400 ] || fail "the first spawn never reached its launch: $(cat "$case_dir/a.out")"
-    sleep 0.05
+  local case_dir home out rc=0 hold i wt mode id
+  for mode in spawn relaunch; do
+    case_dir=$(make_case "concurrent-$mode" task-a task-b)
+    home="$case_dir/home"
+    declare_capacity "$home" "project 4"
+    for id in a b c; do
+      write_live "$home" "holder-$id" "$case_dir/project"
+    done
+    [ "$mode" != relaunch ] || fm_fake_exit0 "$case_dir/fakebin" cursor-agent
+    if [ "$mode" = relaunch ]; then
+      write_live "$home" task-b "$case_dir/project" 'harness=cursor' 'branch=wt-task-b' 'spawn_gen=s1.relaunch' 'pr=https://github.com/o/r/pull/9'
+      git -C "$case_dir/project" worktree add --quiet -b wt-task-b "$home/worktree-task-b"
+    fi
+    hold="$case_dir/hold"
+    wt=$(new_worktree "$case_dir" task-a)
+    FM_FAKE_DEAD_TASK="$([ "$mode" != relaunch ] || printf task-b)" FM_FAKE_HOLD="$hold" spawn_ship "$case_dir" task-a "$wt" > "$case_dir/a.out" 2>&1 &
+    i=0
+    while [ ! -f "$hold.reached" ]; do
+      i=$((i + 1))
+      [ "$i" -lt 400 ] || fail "the first spawn never reached its launch: $(cat "$case_dir/a.out")"
+      sleep 0.05
+    done
+    rc=0
+    if [ "$mode" = relaunch ]; then
+      out=$(FM_FAKE_DEAD_TASK=task-b run_spawn "$case_dir" "$home" "$home/worktree-task-b" task-b --relaunch --harness cursor) || rc=$?
+    else
+      out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
+    fi
+    [ "$rc" -ne 0 ] || fail "a concurrent spawn launched while the last place was being taken: $out"
+    [ "$mode" = relaunch ] || assert_absent "$home/state/task-b.meta" "a concurrent spawn published past the last place"
+    : > "$hold.release"
+    wait || true
+    assert_contains "$(cat "$case_dir/a.out")" "spawned task-a" "the lock-holding spawn did not finish"
+    rc=0
+    if [ "$mode" = relaunch ]; then
+      out=$(FM_FAKE_DEAD_TASK=task-b run_spawn "$case_dir" "$home" "$home/worktree-task-b" task-b --relaunch --harness cursor) || rc=$?
+    else
+      out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
+    fi
+    expect_code "$DEFER_EXIT" "$rc" "the retried spawn was not deferred once the place was taken: $out"
+    [ "$mode" = relaunch ] || assert_absent "$home/state/task-b.meta" "the retried spawn published past capacity"
   done
-  out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
-  [ "$rc" -ne 0 ] || fail "a concurrent spawn launched while the last place was being taken: $out"
-  assert_absent "$home/state/task-b.meta" "a concurrent spawn published past the last place"
-  : > "$hold.release"
-  wait || true
-  assert_contains "$(cat "$case_dir/a.out")" "spawned task-a" "the lock-holding spawn did not finish"
-  rc=0
-  out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
-  expect_code "$DEFER_EXIT" "$rc" "the retried spawn was not deferred once the place was taken: $out"
-  assert_absent "$home/state/task-b.meta" "the retried spawn published past capacity"
-  pass "concurrent spawns can never both take the last place"
+  pass "concurrent spawns and relaunches can never both take the last place"
 }
 
 # A spawn that fails after admission removes nothing it did not create and
@@ -624,6 +766,358 @@ SH
   pass "an Orca spawn takes the shared project lock whenever a same-origin clone is capped and defers before creating anything"
 }
 
+test_relaunch_and_send_require_readmission() {
+  local case_dir home out rc before gen mode wt
+  case_dir=$(make_case readmission task-r)
+  home="$case_dir/home"
+  declare_capacity "$home" "project 1"
+  write_live "$home" holder "$case_dir/project"
+  write_live "$home" task-r "$case_dir/project" "harness=claude" "branch=wt-task-r"
+  wt="$home/worktree-task-r"
+  git -C "$case_dir/project" worktree add --quiet -b wt-task-r "$wt"
+  gen=$(arm_worker "$home/state" task-r)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
+  for mode in inbox typed Enter enter C-m C-j; do
+    case "$mode" in
+      inbox) set -- 'resume work' ;;
+      typed) set -- /resume ;;
+      *) set -- --key "$mode" ;;
+    esac
+    before=$(call_count "$case_dir")
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-send.sh" task-r "$@" 2>&1) || rc=$?
+    expect_code 75 "$rc" "$mode resumed beyond capacity: $out"
+    assert_absent "$home/state/task-r.inbox" "$mode wrote an inbox before admission"
+    assert_equals "$before" "$(call_count "$case_dir")" "$mode rang before admission"
+  done
+  # A relaunch needs a positively agent-free endpoint before it reaches
+  # admission: the window is gone and the record predates this boot.
+  printf 'spawn_gen=s1.relaunch\n' >> "$home/state/task-r.meta"
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=task-r run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
+  expect_code 75 "$rc" "relaunch ignored capacity: $out"
+  printf 'pr=https://github.com/o/r/pull/9\n' >> "$home/state/holder.meta"
+  idle_worker "$home" holder
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" task-r 'resume work' 2>&1) || rc=$?
+  expect_code 0 "$rc" "free place refused a steer: $out"
+  assert_present "$home/state/task-r.inbox/001.msg" "admitted steer was not delivered"
+  rc=0
+  out=$(spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "unread steer released its admitted place: $out"
+  pass "released workers require admission for inbox, typed, Enter, and relaunch delivery"
+}
+
+test_run_backed_unknown_keeps_capacity() {
+  local case_dir home out rc run_state
+  for run_state in parked "done"; do
+    case_dir=$(make_case "unknown-$run_state" task-r)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 1'
+    write_live "$home" task-r "$case_dir/project"
+    rc=0
+    out=$(FM_FAKE_RUN_TASK=task-r FM_FAKE_RUN_STATE="$run_state" \
+      spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+    expect_code 75 "$rc" "unknown activity released $run_state worker: $out"
+  done
+  pass 'unknown activity retains capacity despite an inactive run'
+}
+
+test_run_activity_controls_release() {
+  local activity case_dir home gen out rc
+  for activity in busy idle capture-failed endpoint-unreadable; do
+    case_dir=$(make_case "run-activity-$activity" task-r another)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 1'
+    write_live "$home" task-r "$case_dir/project" 'harness=claude'
+    gen=$(arm_worker "$home/state" task-r)
+    case "$activity" in
+      busy) set -- busy ;;
+      *) set -- idle ;;
+    esac
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r "$1" --gen "$gen" --source claude-hook --event stop
+    rc=0
+    out=$(FM_FAKE_CAPTURE_FAIL="$([ "$activity" != capture-failed ] || printf 1)" \
+      FM_FAKE_ENDPOINT_UNREADABLE="$([ "$activity" != endpoint-unreadable ] || printf 1)" \
+      FM_FAKE_RUN_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+    if [ "$activity" = idle ]; then
+      expect_code 0 "$rc" "positively idle run retained capacity: $out"
+    else
+      expect_code 75 "$rc" "$activity run released capacity: $out"
+    fi
+  done
+  pass 'run-backed workers release only on positive idle activity'
+}
+
+test_unread_steer_holds_fourth_place() {
+  local case_dir home gen out rc id
+  case_dir=$(make_case unread-four task-new)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  for id in a b c sleeping; do
+    write_live "$home" "$id" "$case_dir/project" 'harness=claude'
+  done
+  gen=$(arm_worker "$home/state" sleeping)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+  rc=0
+  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping 'resume work' 2>&1) || rc=$?
+  expect_code 0 "$rc" "fourth place refused a steer: $out"
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "unread sleeping worker allowed a fifth worker: $out"
+  FM_TASK_INBOX="$home/state/sleeping.inbox" "$ROOT/bin/fm-inbox-ack.sh" 001 >/dev/null || fail 'could not acknowledge steer'
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new) || rc=$?
+  expect_code 0 "$rc" "idle worker with no unread steer retained its place: $out"
+  pass 'unread steer holds the fourth place until acknowledgement'
+}
+
+test_typed_send_reserves_released_place() {
+  local mode case_dir home gen out rc id
+  for mode in Enter typed; do
+    case_dir=$(make_case "typed-reservation-$mode" task-new)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 4'
+    for id in a b c sleeping; do
+      write_live "$home" "$id" "$case_dir/project" 'harness=claude'
+    done
+    gen=$(arm_worker "$home/state" sleeping)
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+    printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+    case "$mode" in
+      Enter) set -- --key Enter ;;
+      typed) set -- /resume ;;
+    esac
+    rc=0
+    out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+      PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode refused the available fourth place: $out"
+    assert_absent "$home/state/sleeping.inbox" "$mode unexpectedly used inbox delivery"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode reused old idle proof and admitted a fifth worker: $out"
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new) || rc=$?
+    expect_code 0 "$rc" "$mode retained capacity after fresh idle proof: $out"
+  done
+  pass 'key and typed sends reserve released capacity until fresh idle proof'
+}
+
+test_unarmed_sends_keep_their_place() {
+  local mode case_dir home out rc id
+  for mode in Enter typed; do
+    case_dir=$(make_case "unarmed-reservation-$mode" task-new)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 4'
+    for id in a b c sleeping; do
+      write_live "$home" "$id" "$case_dir/project" 'harness=cursor'
+    done
+    "$ROOT/bin/fm-busy-event.sh" arm "$home/state" sleeping >/dev/null
+    mkdir -p "$case_dir/cursor/project/agent-transcripts/conversation"
+    printf '{"workspacePath":"%s"}\n' "$home/worktree-sleeping" > "$case_dir/cursor/project/.workspace-trusted"
+    printf 'projects_root=%s\nworkspace_root=%s\n' "$case_dir/cursor" "$home/worktree-sleeping" > "$home/state/sleeping.cursor-session"
+    printf '%s\n' '{"role":"user"}' '{"type":"turn_ended"}' > "$case_dir/cursor/project/agent-transcripts/conversation/conversation.jsonl"
+    out=$(bash -c '. "$1/bin/fm-backend.sh"; . "$1/bin/fm-busy-lib.sh"; fm_busy_classify_meta "$2/state/sleeping.meta" sleeping "$2/state"' _ "$ROOT" "$home")
+    assert_contains "$out" 'idle cursor-transcript' 'the unarmed worker did not have positive idle proof'
+    printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+    case "$mode" in
+      Enter) set -- --key Enter ;;
+      typed) set -- /resume ;;
+    esac
+    rc=0
+    out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_EMPTY_COMPOSER="$mode" FM_FAKE_RUN_TASK=sleeping FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+      PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode failed to deliver to an unarmed worker: $out"
+    assert_grep 'send-keys' "$case_dir/calls.log" "$mode did not reach the terminal"
+    assert_present "$home/state/sleeping.busy-gen" "$mode removed the stale generation fixture"
+    rc=0
+    out=$(FM_FAKE_RUN_TASK=sleeping spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode released an unarmed worker and admitted a fifth: $out"
+  done
+  pass 'unarmed workers accept key and typed sends while holding capacity'
+}
+
+test_relaunch_cursor_retires_busy_proof() {
+  local case_dir home wt gen out rc id
+  case_dir=$(make_case cursor-relaunch sleeping task-new)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  for id in a b c; do write_live "$home" "$id" "$case_dir/project"; done
+  write_live "$home" sleeping "$case_dir/project" 'harness=claude' 'branch=wt-sleeping'
+  wt="$home/worktree-sleeping"
+  git -C "$case_dir/project" worktree add --quiet -b wt-sleeping "$wt"
+  gen=$(arm_worker "$home/state" sleeping)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+  printf 'spawn_gen=s1.relaunch\n' >> "$home/state/sleeping.meta"
+  fm_fake_exit0 "$case_dir/fakebin" cursor-agent
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=sleeping CURSOR_PROJECTS_ROOT_OVERRIDE="$case_dir/cursor" \
+    run_spawn "$case_dir" "$home" "$wt" sleeping --relaunch --harness cursor) || rc=$?
+  expect_code 0 "$rc" "Claude to Cursor relaunch failed: $out"
+  assert_absent "$home/state/sleeping.busy-gen" 'relaunch retained the old generation'
+  assert_absent "$home/state/sleeping.busy-state" 'relaunch retained the old activity'
+  mkdir -p "$case_dir/cursor/project/agent-transcripts/conversation"
+  printf '{"workspacePath":"%s"}\n' "$wt" > "$case_dir/cursor/project/.workspace-trusted"
+  printf '%s\n' '{"role":"user"}' '{"type":"turn_ended"}' > "$case_dir/cursor/project/agent-transcripts/conversation/conversation.jsonl"
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+  printf '%s\n' "$gen" > "$home/state/sleeping.busy-gen"
+  rc=0
+  out=$(FM_FAKE_RUN_TASK=sleeping spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "Cursor with stale generation released its place: $out"
+  pass 'Claude to Cursor relaunch retires busy proof and retains capacity despite stale evidence'
+}
+
+test_relaunch_cursor_retires_busy_proof
+test_unarmed_sends_keep_their_place
+test_typed_send_reserves_released_place
+test_run_activity_controls_release
+test_unread_steer_holds_fourth_place
+test_other_backends_hold_capacity() {
+  local backend case_dir home gen out rc
+  for backend in orca cmux zellij; do
+    case_dir=$(make_case "held-$backend" task-r)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 1'
+    write_live "$home" task-r "$case_dir/project" "backend=$backend" 'harness=claude'
+    gen=$(arm_worker "$home/state" task-r)
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
+    printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
+    rc=0
+    out=$(FM_FAKE_RUN_TASK=task-r spawn_ship "$case_dir" another "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$backend released capacity: $out"
+  done
+  pass 'other backends retain capacity despite idle activity and parked runs'
+}
+
+test_missing_window_needs_absence_proof_to_release() {
+  local case_dir home out rc
+  case_dir=$(make_case missing-window task-r another)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 1'
+  write_live "$home" task-r "$case_dir/project" 'harness=claude'
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 75 "$rc" "a window missing without absence proof released its place: $out"
+  # The same window, with a record that predates this boot, is proven gone.
+  printf 'spawn_gen=s1.proven\n' >> "$home/state/task-r.meta"
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
+  expect_code 0 "$rc" "a window proven gone did not release its place: $out"
+  assert_present "$home/state/another.meta" "queued worker did not start"
+  pass 'endpoint absence requires proof before queued work can start'
+}
+
+test_pr_worker_readmission() {
+  local mode case_dir home out rc before id
+  for mode in inbox typed key; do
+    case_dir=$(make_case "pr-readmission-$mode" task-new)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 4'
+    for id in a b c d; do
+      write_live "$home" "holder-$id" "$case_dir/project"
+    done
+    write_live "$home" reviewed "$case_dir/project" 'pr=https://github.com/o/r/pull/9'
+    idle_worker "$home" reviewed
+    case "$mode" in
+      inbox) set -- 'apply review fixes' ;;
+      typed) set -- /resume ;;
+      key) set -- --key Enter ;;
+    esac
+    before=$(call_count "$case_dir")
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-send.sh" reviewed "$@" 2>&1) || rc=$?
+    expect_code 75 "$rc" "$mode resumed a PR worker at capacity: $out"
+    assert_absent "$home/state/reviewed.inbox" "$mode delivered before admission"
+    assert_equals "$before" "$(call_count "$case_dir")" "$mode reached the terminal before admission"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "a fifth spawn started: $out"
+    printf 'pr=https://github.com/o/r/pull/10\n' >> "$home/state/holder-d.meta"
+    idle_worker "$home" holder-d
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-send.sh" reviewed "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode refused a PR worker below capacity: $out"
+    if [ "$mode" = inbox ]; then
+      assert_present "$home/state/reviewed.inbox/001.msg" 'PR steer was not delivered'
+    else
+      assert_grep 'send-keys' "$case_dir/calls.log" 'PR send did not reach terminal'
+    fi
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode did not restore PR worker occupancy: $out"
+  done
+  pass 'PR workers require admission and regain occupancy for every send path'
+}
+
+test_pr_completion_requires_fresh_idle_check() {
+  local case_dir home out rc id url head
+  case_dir=$(make_case pr-ready-readmission task-new)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  for id in a b c; do
+    write_live "$home" "holder-$id" "$case_dir/project"
+  done
+  url=https://github.com/o/r/pull/9
+  write_live "$home" reviewed "$case_dir/project" "pr=$url"
+  idle_worker "$home" reviewed
+  printf 'done: PR %s checks green\n' "$url" > "$home/state/reviewed.status"
+  rc=0
+  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  expect_code 0 "$rc" "resume failed: $out"
+  head=$(git -C "$case_dir/project" rev-parse HEAD)
+  cat > "$case_dir/fakebin/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *headRefOid*) printf '%s\n' '$head' ;;
+  *isDraft*) printf '%s\n' '{"isDraft":false}' ;;
+esac
+EOF
+  FM_HOME="$home" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
+    > "$case_dir/registration.out" 2>&1 || fail 'PR registration failed'
+  for id in stale fresh unarmed; do
+    [ "$id" != fresh ] || printf 'done: PR %s checks green\n' "$url" >> "$home/state/reviewed.status"
+    if [ "$id" = unarmed ]; then
+      printf 'busy_gen=\nharness=cursor\n' >> "$home/state/reviewed.meta"
+    fi
+    rc=0
+    # Positional parameters expand in the child shell.
+    # shellcheck disable=SC2016
+    out=$(FM_HOME="$home" FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$REAL_BASH" -c '. "$1/bin/fm-watch.sh"; record_done_pr reviewed.status' _ "$ROOT" 2>&1) || rc=$?
+    expect_code 0 "$rc" "watcher completion failed: $out"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$id completion released uncertain execution: $out"
+  done
+  idle_worker "$home" reviewed
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$(new_worktree "$case_dir" task-new)") || rc=$?
+  expect_code 0 "$rc" "fresh idle check did not admit queued work: $out"
+  assert_present "$home/state/task-new.meta" 'queued worker did not start'
+  pass 'stale and fresh watcher completions cannot release uncertain workers'
+}
+
+test_pr_completion_requires_fresh_idle_check
+test_pr_worker_readmission
+test_other_backends_hold_capacity
+test_run_backed_unknown_keeps_capacity
+test_missing_window_needs_absence_proof_to_release
+
+test_relaunch_and_send_require_readmission
+test_freed_place_admits_one_manual_spawn
 test_undeclared_capacity_keeps_dispatch_uncapped
 test_available_capacity_admits_the_worker
 test_exhausted_capacity_defers_without_leaving_anything_behind
