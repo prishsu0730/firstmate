@@ -49,8 +49,8 @@
 #     busy_gen must match .busy-gen and its trusted busy record must be idle.
 #     Unarmed workers hold their place until cleanup. Idle release additionally
 #     requires a parked, paused, or done crew state, a live tmux/herdr endpoint
-#     with successful capture, and no unread steering messages. Missing copies,
-#     dead endpoints, unknown activity, and uncertain reads retain occupancy.
+#     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
+#     Missing copies or endpoints with recovery-grade absence proof release.
 # A place frees on a recorded PR handoff, positive current-launch idle proof,
 # or cleanup removing the record. Relaunches and steers to released workers
 # must pass admission before resuming.
@@ -68,9 +68,7 @@
 # two concurrent spawns for one project can never both publish from the same
 # count. A spawn on an uncapped project can still publish a holder for a capped
 # same-origin clone, so every backend takes that lock whenever the declaration
-# caps any project; Orca, which otherwise never takes it, is included. Freeing a
-# place needs no lock, because removing a record or adding pr= only ever lowers
-# the count.
+# caps any project; Orca, which otherwise never takes it, is included. PR handoffs and admission reservations publish under that same project lock.
 #
 # Requires bin/fm-wake-lib.sh (root home, local homes, project lock path),
 # bin/fm-secondmate-registry-lib.sh (which the local-homes walk reads), and
@@ -86,12 +84,95 @@ FM_PROJECT_CAPACITY_DEFER_EXIT=75
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
 FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
+fm_project_capacity_publish() {
+  local action=$1 state=$2 id=$3 pr lock
+  case "$action" in
+    reserve)
+      lock=$(fm_meta_lock_path "$state/$id.meta") || return 1
+      fm_lock_acquire_wait "$lock" || return 1
+      pr=$(fm_meta_get "$state/$id.meta" pr)
+      if [ -n "$pr" ] && ! printf 'capacity_resumed_pr=%s\n' "$pr" >> "$state/$id.meta"; then
+        fm_lock_release "$lock"
+        return 1
+      fi
+      if [ "${4:-}" = busy ] && [ -n "$(fm_meta_get "$state/$id.meta" busy_gen)" ]; then
+        "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-busy-event.sh" apply "$state" "$id" unknown \
+          --current-gen --source fm-recovery --event send-admitted || {
+            fm_lock_release "$lock"
+            return 1
+          }
+      fi
+      fm_lock_release "$lock"
+      ;;
+    relaunch)
+      pr=$(fm_meta_get "$state/$id.meta" pr)
+      [ -z "$pr" ] || printf 'capacity_resumed_pr=%s\n' "$pr" >> "$4" || return 1
+      ;;
+    handoff)
+      [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
+        || { echo "error: task metadata is unavailable" >&2; exit 1; }
+      META_DEVICE=$(fm_pr_file_device "$META") || exit 1
+      STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
+      [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
+      META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          pr=*|pr_head=*|capacity_resumed_pr=*) ;;
+          *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
+        esac
+      done < "$META"
+      printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
+      [ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
+      chmod 0600 "$META_TMP" || exit 1
+      fm_pr_private_file_valid "$META_TMP" 600 "$STATE_DEVICE" || exit 1
+      fm_pr_metadata_identity_parse "$META_TMP" || exit 1
+      [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
+        && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
+        && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
+      fm_pr_regular_destination_on_device_or_absent "$META" "$STATE_DEVICE" || exit 1
+      mv -f -- "$META_TMP" "$META" || exit 1
+      META_TMP=
+      fm_pr_private_file_valid "$META" 600 "$STATE_DEVICE" || exit 1
+      fm_pr_metadata_identity_parse "$META" || exit 1
+      [ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
+        && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
+        && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 # Succeeds only when fm-crew-state.sh positively reads the record as not
 # executing. Any failed, timed-out, or unrecognized read returns 1, so the
 # record keeps its place.
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   local verdict activity endpoint backend message
   [ -r "$1/$2.meta" ] || return 1
+  if [ -e "$1/$2.inbox" ]; then
+    [ -d "$1/$2.inbox" ] && [ -r "$1/$2.inbox" ] && [ -x "$1/$2.inbox" ] || return 1
+    for message in "$1/$2.inbox/"*.msg; do
+      [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
+    done
+  fi
+  local worktree target absence
+  worktree=$(fm_meta_get "$1/$2.meta" worktree)
+  [ -z "$worktree" ] || [ -d "$worktree" ] || return 0
+  backend=$(fm_backend_of_meta "$1/$2.meta")
+  target=$(fm_backend_target_of_meta "$1/$2.meta")
+  endpoint=$(fm_run_timed 15 bash -c '
+    . "$1/fm-backend.sh"
+    fm_backend_agent_state "$2" "$3"
+  ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$backend" "$target" 2>/dev/null) || endpoint=unknown
+  case "$endpoint" in
+    missing|dead)
+      absence=$(fm_run_timed 15 bash -c '
+        . "$1/fm-backend.sh"
+        . "$1/fm-control-lib.sh"
+        fm_control_endpoint_absence_verdict "$2" "$3" "$4"
+      ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$backend" "$target" "$1/$2.meta" 2>/dev/null) || return 1
+      case "$absence" in gone$'\t'*|dead$'\t'*) return 0 ;; *) return 1 ;; esac
+      ;;
+  esac
   # shellcheck disable=SC2016
   activity=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
@@ -125,12 +206,6 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
     alive) ;;
     *) return 1 ;;
   esac
-  if [ -e "$1/$2.inbox" ]; then
-    [ -d "$1/$2.inbox" ] && [ -r "$1/$2.inbox" ] && [ -x "$1/$2.inbox" ] || return 1
-    for message in "$1/$2.inbox/"*.msg; do
-      [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
-    done
-  fi
   verdict=$(FM_STATE_OVERRIDE="$1" FM_CREW_STATE_NO_FORGE=1 \
     fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-crew-state.sh" "$2" 2>/dev/null) || return 1
   case "$verdict" in

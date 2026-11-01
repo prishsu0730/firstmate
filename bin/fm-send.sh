@@ -780,18 +780,15 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
             exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
           fi
         fi
-        SEND_PR=$(fm_meta_get "$TARGET_META" pr)
-        if [ -n "$SEND_PR" ]; then
-          printf 'capacity_resumed_pr=%s\n' "$SEND_PR" >> "$TARGET_META" || exit 1
-        fi
+        SEND_RESERVATION=
         if [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
           { [ "${1:-}" = --key ] ||
           { [ -z "$FIRE_AND_FORGET_ID" ] &&
             { [ -z "$TARGET_SELECTOR" ] || [[ "$*" = /* ]] ||
               { [ "$TARGET_HARNESS" = codex ] && [[ "$*" = \$* ]]; }; }; }; }; then
-          "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" unknown \
-            --current-gen --source fm-recovery --event send-admitted || exit 1
+          SEND_RESERVATION=busy
         fi
+        fm_project_capacity_publish reserve "$STATE" "$SEND_ID" "$SEND_RESERVATION" || exit 1
       fi
     fi
   fi

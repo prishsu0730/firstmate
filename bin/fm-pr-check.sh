@@ -35,6 +35,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-parent-channel-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-project-capacity-lib.sh
+. "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -150,12 +152,14 @@ if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
   exit 1
 fi
 
+CAPACITY_LOCK=
 META_TMP=
 META_LOCK=
 META_LOCK_HELD=0
 PR_POLL_PUBLISH_LOCK=
 PR_POLL_PUBLISH_LOCK_HELD=0
 pr_check_cleanup() {
+  [ -z "$CAPACITY_LOCK" ] || fm_lock_release "$CAPACITY_LOCK"
   fm_pr_poll_cleanup
   [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
   if [ "$PR_POLL_PUBLISH_LOCK_HELD" = 1 ]; then
@@ -172,39 +176,16 @@ trap 'exit 1' HUP INT TERM
 fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
+CAPACITY_LOCK=$(fm_treehouse_project_lock_path "$PROJECT") || exit 1
+fm_lock_acquire_wait "$CAPACITY_LOCK"
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
-[ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
-  || { echo "error: task metadata is unavailable" >&2; exit 1; }
-META_DEVICE=$(fm_pr_file_device "$META") || exit 1
-STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
-[ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
-META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
-while IFS= read -r line || [ -n "$line" ]; do
-  case "$line" in
-    pr=*|pr_head=*|capacity_resumed_pr=*) ;;
-    *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
-  esac
-done < "$META"
-printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
-[ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
-chmod 0600 "$META_TMP" || exit 1
-fm_pr_private_file_valid "$META_TMP" 600 "$STATE_DEVICE" || exit 1
-fm_pr_metadata_identity_parse "$META_TMP" || exit 1
-[ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
-  && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
-  && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
-fm_pr_regular_destination_on_device_or_absent "$META" "$STATE_DEVICE" || exit 1
-mv -f -- "$META_TMP" "$META" || exit 1
-META_TMP=
-fm_pr_private_file_valid "$META" 600 "$STATE_DEVICE" || exit 1
-fm_pr_metadata_identity_parse "$META" || exit 1
-[ "$FM_PR_META_PROVIDER" = "$PROVIDER" ] && [ "$FM_PR_META_URL" = "$URL" ] \
-  && [ "$FM_PR_META_HOST" = "$HOST" ] && [ "$FM_PR_META_PATH" = "$PROJECT_PATH" ] \
-  && [ "$FM_PR_META_NUMBER" = "$NUMBER" ] || exit 1
+fm_project_capacity_publish handoff "$STATE" "$ID" || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
+fm_lock_release "$CAPACITY_LOCK"
+CAPACITY_LOCK=
 
 PR_POLL_PUBLISH_LOCK="$STATE/.pr-poll-publish-$ID.lock"
 fm_lock_acquire_wait "$PR_POLL_PUBLISH_LOCK"
