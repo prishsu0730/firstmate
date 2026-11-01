@@ -61,6 +61,31 @@ if [ ! -f "$META" ] || [ -L "$META" ] || [ "$(fm_pr_file_link_count "$META")" !=
   exit 1
 fi
 
+CAPACITY_LOCK=
+META_TMP=
+META_LOCK=
+META_LOCK_HELD=0
+PR_POLL_PUBLISH_LOCK=
+PR_POLL_PUBLISH_LOCK_HELD=0
+pr_check_cleanup() {
+  [ -z "$CAPACITY_LOCK" ] || fm_lock_release "$CAPACITY_LOCK"
+  fm_pr_poll_cleanup
+  [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
+  if [ "$PR_POLL_PUBLISH_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$PR_POLL_PUBLISH_LOCK" || true
+    PR_POLL_PUBLISH_LOCK_HELD=0
+  fi
+  if [ "$META_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$META_LOCK" || true
+    META_LOCK_HELD=0
+  fi
+}
+trap pr_check_cleanup EXIT
+trap 'exit 1' HUP INT TERM
+PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
+CAPACITY_LOCK=$(fm_treehouse_project_lock_path "$PROJECT") || exit 1
+fm_lock_acquire_wait "$CAPACITY_LOCK"
+
 # A secondmate is a persistent worker, not a delivery lane: it never owns a
 # pull request of its own. A URL reported on its routed status channel belongs
 # to a task inside the mate's own home, which records and watches it there;
@@ -152,32 +177,9 @@ if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
   exit 1
 fi
 
-CAPACITY_LOCK=
-META_TMP=
-META_LOCK=
-META_LOCK_HELD=0
-PR_POLL_PUBLISH_LOCK=
-PR_POLL_PUBLISH_LOCK_HELD=0
-pr_check_cleanup() {
-  [ -z "$CAPACITY_LOCK" ] || fm_lock_release "$CAPACITY_LOCK"
-  fm_pr_poll_cleanup
-  [ -z "$META_TMP" ] || rm -f -- "$META_TMP"
-  if [ "$PR_POLL_PUBLISH_LOCK_HELD" = 1 ]; then
-    fm_lock_release "$PR_POLL_PUBLISH_LOCK" || true
-    PR_POLL_PUBLISH_LOCK_HELD=0
-  fi
-  if [ "$META_LOCK_HELD" = 1 ]; then
-    fm_lock_release "$META_LOCK" || true
-    META_LOCK_HELD=0
-  fi
-}
-trap pr_check_cleanup EXIT
-trap 'exit 1' HUP INT TERM
 fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
 
-CAPACITY_LOCK=$(fm_treehouse_project_lock_path "$PROJECT") || exit 1
-fm_lock_acquire_wait "$CAPACITY_LOCK"
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
