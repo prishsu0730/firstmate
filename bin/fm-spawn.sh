@@ -5300,8 +5300,6 @@ preserve_relaunch_meta() {
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
-    RELAUNCH_PR=$(fm_meta_get "$RELAUNCH_META" pr)
-    [ -z "$RELAUNCH_PR" ] || printf 'capacity_resumed_pr=%s\n' "$RELAUNCH_PR"
   fi
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
@@ -5310,6 +5308,10 @@ preserve_relaunch_meta() {
   echo "error: task record for $ID could not be prepared at $SPAWN_META_PATH" >&2
   exit 1
 }
+if [ "$RELAUNCH" -eq 1 ]; then
+  fm_project_capacity_publish relaunch "$STATE" "$ID" "$SPAWN_META_PATH" || exit 1
+fi
+
 if [ "$RELAUNCH" -eq 0 ]; then
   if ! fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "task record" "$STATE"; then
     echo "error: task record for $ID could not be published ($FM_BACKLOG_TRANSITION_ERROR)" >&2

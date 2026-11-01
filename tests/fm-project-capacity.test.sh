@@ -974,8 +974,9 @@ test_missing_window_needs_absence_proof_to_release() {
   printf 'spawn_gen=s1.proven\n' >> "$home/state/task-r.meta"
   rc=0
   out=$(FM_FAKE_DEAD_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
-  expect_code 75 "$rc" "a window proven gone without current idle proof released its place: $out"
-  pass 'a missing window without current idle proof retains its place'
+  expect_code 0 "$rc" "a window proven gone did not release its place: $out"
+  assert_present "$home/state/another.meta" "queued worker did not start"
+  pass 'endpoint absence requires proof before queued work can start'
 }
 
 test_pr_worker_readmission() {
@@ -1057,6 +1058,47 @@ EOF
   if grep -q '^capacity_resumed_pr=' "$home/state/reviewed.meta"; then
     fail 'ready PR retained the admission marker'
   fi
+  local real_mktemp poll_pid attempt
+  real_mktemp=$(command -v mktemp)
+  cat > "$case_dir/fakebin/mktemp" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *.fm-pr-meta.*)
+    touch '$case_dir/handoff-prepared'
+    while [ ! -f '$case_dir/handoff-release' ]; do sleep 0.05; done
+    ;;
+esac
+exec '$real_mktemp' "\$@"
+EOF
+  chmod +x "$case_dir/fakebin/mktemp"
+  FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
+    > "$case_dir/handoff.out" 2>&1 &
+  poll_pid=$!
+  for attempt in {1..200}; do
+    [ ! -f "$case_dir/handoff-prepared" ] || break
+    sleep 0.05
+  done
+  assert_present "$case_dir/handoff-prepared" 'handoff did not reach metadata preparation'
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail 'send bypassed the in-progress handoff project lock'
+  touch "$case_dir/handoff-release"
+  wait "$poll_pid" || fail 'concurrent handoff failed'
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  expect_code 0 "$rc" "send after handoff failed: $out"
+  assert_grep "^capacity_resumed_pr=$url$" "$home/state/reviewed.meta" 'handoff erased reservation'
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "reservation after concurrent handoff lost capacity: $out"
+  FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
+    > "$case_dir/handoff-final.out" 2>&1 || fail 'final ready registration failed'
   wt=$(new_worktree "$case_dir" task-new)
   rc=0
   out=$(spawn_ship "$case_dir" task-new "$wt") || rc=$?
