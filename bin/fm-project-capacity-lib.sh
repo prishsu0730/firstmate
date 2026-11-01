@@ -45,21 +45,15 @@
 #   - has no recorded PR handoff: the pr= line bin/fm-pr-check.sh records when a
 #     worker's PR is ready, after which the worker waits on review or merge and
 #     no longer uses local resources, and
-#   - may still be executing: bin/fm-crew-state.sh, the one reconciled source of
-#     a worker's current state, does not positively read a tmux or herdr worker
-#     as parked, paused, or done with positively idle current activity and no
-#     unread steering message, or its tmux/herdr endpoint as positively absent
-#     or dead, or its local worktree as gone. A missing window alone is not
-#     absence proof: bin/fm-control-lib.sh must confirm it gone or dead. An
-#     idle release also requires a live endpoint with a successful capture and
-#     a readable steering inbox, if present, containing no pending .msg files. Active,
-#     blocked, failed, conflict, and every uncertain read (a timeout, an
-#     unreachable endpoint, an unknown verdict) keep the place, because a live
-#     worker must never be undercounted.
-# A place therefore frees when a PR-based ship records its ready PR, when a
-# tmux/herdr worker is positively idle or dead, or when any task is cleaned up and its
-# record removed. Relaunches and steers to released workers must pass admission
-# before resuming; a worker with a recorded PR handoff is not counted.
+#   - has not supplied positive idle proof for its current launch: its meta
+#     busy_gen must match .busy-gen and its trusted busy record must be idle.
+#     Unarmed workers hold their place until cleanup. Idle release additionally
+#     requires a parked, paused, or done crew state, a live tmux/herdr endpoint
+#     with successful capture, and no unread steering messages. Missing copies,
+#     dead endpoints, unknown activity, and uncertain reads retain occupancy.
+# A place frees on a recorded PR handoff, positive current-launch idle proof,
+# or cleanup removing the record. Relaunches and steers to released workers
+# must pass admission before resuming.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -98,12 +92,21 @@ FM_PROJECT_CAPACITY_SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   local verdict activity endpoint backend message
   [ -r "$1/$2.meta" ] || return 1
+  # shellcheck disable=SC2016
+  activity=$(fm_run_timed 15 bash -c '
+    . "$1/fm-backend.sh"
+    . "$1/fm-busy-lib.sh"
+    gen=$(fm_meta_get "$2/$3.meta" busy_gen)
+    [ -n "$gen" ] && [ "$gen" = "$(fm_busy_current_gen "$2" "$3")" ] || exit 1
+    record=$(fm_busy_record_read "$2" "$3") || exit 1
+    harness=$(fm_meta_get "$2/$3.meta" harness)
+    state=${record%% *}
+    source=${record#* }; source=${source%% *}
+    fm_busy_source_trusted "$harness" "$source" || exit 1
+    printf "%s" "$state"
+  ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
+  [ "$activity" = idle ] || return 1
   backend=$(fm_backend_of_meta "$1/$2.meta")
-  verdict=$(fm_meta_get "$1/$2.meta" worktree)
-  if [ -n "$verdict" ] && [ ! -d "$verdict" ] &&
-    [ -z "$(fm_meta_get "$1/$2.meta" remote_host)" ]; then
-    return 0
-  fi
   case "$backend" in tmux|herdr) ;; *) return 1 ;; esac
   # shellcheck disable=SC2016 # Expand positional parameters in the child shell.
   endpoint=$(fm_run_timed 15 bash -c '
@@ -112,23 +115,13 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     endpoint=$(fm_backend_agent_state "$backend" "$target")
-    if [ "$endpoint" = missing ]; then
-      . "$1/fm-control-lib.sh"
-      verdict=$(fm_control_endpoint_absence_verdict "$backend" "$target" "$meta")
-      case "${verdict%%$(printf "\t")*}" in
-        gone) endpoint=missing ;;
-        dead) endpoint=dead ;;
-        alive) endpoint=alive ;;
-        *) endpoint=unknown ;;
-      esac
-    fi
     if [ "$endpoint" = alive ]; then
       fm_backend_capture "$backend" "$target" 1 >/dev/null || exit 1
     fi
     printf "%s" "$endpoint"
   ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2" 2>/dev/null) || endpoint=unknown
   case "$endpoint" in
-    missing|dead) return 0 ;;
+    missing|dead) return 1 ;;
     alive) ;;
     *) return 1 ;;
   esac
@@ -145,17 +138,7 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   esac
   case "$verdict" in
     'state: parked '* | 'state: paused '* | 'state: done '*)
-      # shellcheck disable=SC2016 # Expand positional parameters in the child shell.
-      activity=$(fm_run_timed 15 bash -c '
-        . "$1/fm-backend.sh"
-        . "$1/fm-busy-lib.sh"
-        fm_busy_current_gen "$2" "$3" >/dev/null || exit 1
-        fm_busy_classify_meta "$2/$3.meta" "$3" "$2"
-      ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$1" "$2") || return 1
-      case "$activity" in
-        idle\ *) return 0 ;;
-      esac
-      return 1
+      return 0
       ;;
     *) return 1 ;;
   esac

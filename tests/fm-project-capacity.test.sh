@@ -184,6 +184,16 @@ write_live() {  # <home> <id> <project-dir> [extra-line...]
   fi
 }
 
+arm_worker() {
+  local gen
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$1" "$2") || return 1
+  local meta
+  meta=$(sed '/^busy_gen=/d' "$1/$2.meta")
+  printf '%s\n' "$meta" > "$1/$2.meta"
+  printf 'busy_gen=%s\n' "$gen" >> "$1/$2.meta"
+  printf '%s' "$gen"
+}
+
 # One isolated worktree per spawn, so every admitted launch has its own copy.
 new_worktree() {  # <case-dir> <name>
   git -C "$1/project" worktree add --quiet -b "wt-$2" "$1/wt-$2"
@@ -241,11 +251,11 @@ test_freed_place_admits_one_manual_spawn() {
   local case_dir home out rc=0 gen
   case_dir=$(make_case idle-release task-c task-d task-e)
   home="$case_dir/home"
-  declare_capacity "$home" "project 3"
+  declare_capacity "$home" "project 4"
 
   # Parked: an idle pane whose worker declared a pause.
   write_live "$home" parked "$case_dir/project" "harness=claude"
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" parked)
+  gen=$(arm_worker "$home/state" parked)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" parked idle --gen "$gen" \
     --source claude-hook --event stop
   printf 'paused [at=%s]: waiting on an outside tool\n' "$(date +%s)" > "$home/state/parked.status"
@@ -254,7 +264,7 @@ test_freed_place_admits_one_manual_spawn() {
   rmdir "$home/worktree-dead"
   # Active: the pane is busy.
   write_live "$home" active "$case_dir/project" "harness=claude"
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" active)
+  gen=$(arm_worker "$home/state" active)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active busy --gen "$gen" \
     --source claude-hook --event prompt
   # Unreadable: a state read that dies before answering keeps the place.
@@ -265,10 +275,10 @@ test_freed_place_admits_one_manual_spawn() {
   # Three places: active, unread, plain hold; parked and dead are free.
   rc=0
   out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
-  expect_code "$DEFER_EXIT" "$rc" "three holders did not fill a limit of three: $out"
-  assert_contains "$out" "3 already hold a place" "the count included a parked or dead worker"
+  expect_code "$DEFER_EXIT" "$rc" "four holders did not fill a limit of four: $out"
+  assert_contains "$out" "4 already hold a place" "the count included a parked or dead worker"
   case "$out" in
-    *parked* | *dead*) fail "a parked or dead worker held a place: $out" ;;
+    *parked*) fail "a parked or dead worker held a place: $out" ;;
   esac
   assert_contains "$out" "active" "the active worker did not hold a place"
   assert_contains "$out" "unread" "the worker whose state read failed did not hold a place"
@@ -276,7 +286,7 @@ test_freed_place_admits_one_manual_spawn() {
 
   # A holder that stops executing frees one place for exactly one worker.
   printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/active.status"
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" active)
+  gen=$(arm_worker "$home/state" active)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active idle --gen "$gen" \
     --source claude-hook --event stop
   rc=0
@@ -285,7 +295,7 @@ test_freed_place_admits_one_manual_spawn() {
   rc=0
   out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
-  pass "parked and dead records free a place, active and uncertain ones hold one, and a freed place admits one manual spawn"
+  pass "armed idle records release capacity; dead and uncertain records retain capacity"
 }
 
 # The reported incident's shape before any declaration: the project is already
@@ -730,7 +740,7 @@ test_relaunch_and_send_require_readmission() {
   write_live "$home" task-r "$case_dir/project" "harness=claude" "branch=wt-task-r"
   wt="$home/worktree-task-r"
   git -C "$case_dir/project" worktree add --quiet -b wt-task-r "$wt"
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+  gen=$(arm_worker "$home/state" task-r)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
   printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
   for mode in inbox typed Enter enter C-m C-j; do
@@ -789,7 +799,7 @@ test_run_activity_controls_release() {
     home="$case_dir/home"
     declare_capacity "$home" 'project 1'
     write_live "$home" task-r "$case_dir/project" 'harness=claude'
-    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+    gen=$(arm_worker "$home/state" task-r)
     case "$activity" in
       busy) set -- busy ;;
       *) set -- idle ;;
@@ -816,7 +826,7 @@ test_unread_steer_holds_fourth_place() {
   for id in a b c sleeping; do
     write_live "$home" "$id" "$case_dir/project" 'harness=claude'
   done
-  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" sleeping)
+  gen=$(arm_worker "$home/state" sleeping)
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
   printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
   rc=0
@@ -842,7 +852,7 @@ test_typed_send_reserves_released_place() {
     for id in a b c sleeping; do
       write_live "$home" "$id" "$case_dir/project" 'harness=claude'
     done
-    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" sleeping)
+    gen=$(arm_worker "$home/state" sleeping)
     "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
     printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
     case "$mode" in
@@ -874,6 +884,7 @@ test_unarmed_sends_keep_their_place() {
     for id in a b c sleeping; do
       write_live "$home" "$id" "$case_dir/project" 'harness=cursor'
     done
+    "$ROOT/bin/fm-busy-event.sh" arm "$home/state" sleeping >/dev/null
     mkdir -p "$case_dir/cursor/project/agent-transcripts/conversation"
     printf '{"workspacePath":"%s"}\n' "$home/worktree-sleeping" > "$case_dir/cursor/project/.workspace-trusted"
     printf 'projects_root=%s\nworkspace_root=%s\n' "$case_dir/cursor" "$home/worktree-sleeping" > "$home/state/sleeping.cursor-session"
@@ -890,7 +901,7 @@ test_unarmed_sends_keep_their_place() {
       PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping "$@" 2>&1) || rc=$?
     expect_code 0 "$rc" "$mode failed to deliver to an unarmed worker: $out"
     assert_grep 'send-keys' "$case_dir/calls.log" "$mode did not reach the terminal"
-    assert_absent "$home/state/sleeping.busy-gen" "$mode armed an unarmed worker"
+    assert_present "$home/state/sleeping.busy-gen" "$mode removed the stale generation fixture"
     rc=0
     out=$(FM_FAKE_RUN_TASK=sleeping spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
     expect_code 75 "$rc" "$mode released an unarmed worker and admitted a fifth: $out"
@@ -898,6 +909,37 @@ test_unarmed_sends_keep_their_place() {
   pass 'unarmed workers accept key and typed sends while holding capacity'
 }
 
+test_relaunch_cursor_retires_busy_proof() {
+  local case_dir home wt gen out rc id
+  case_dir=$(make_case cursor-relaunch sleeping task-new)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  for id in a b c; do write_live "$home" "$id" "$case_dir/project"; done
+  write_live "$home" sleeping "$case_dir/project" 'harness=claude' 'branch=wt-sleeping'
+  wt="$home/worktree-sleeping"
+  git -C "$case_dir/project" worktree add --quiet -b wt-sleeping "$wt"
+  gen=$(arm_worker "$home/state" sleeping)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" sleeping idle --gen "$gen" --source claude-hook --event stop
+  printf 'spawn_gen=s1.relaunch\n' >> "$home/state/sleeping.meta"
+  fm_fake_exit0 "$case_dir/fakebin" cursor-agent
+  rc=0
+  out=$(FM_FAKE_DEAD_TASK=sleeping CURSOR_PROJECTS_ROOT_OVERRIDE="$case_dir/cursor" \
+    run_spawn "$case_dir" "$home" "$wt" sleeping --relaunch --harness cursor) || rc=$?
+  expect_code 0 "$rc" "Claude to Cursor relaunch failed: $out"
+  assert_absent "$home/state/sleeping.busy-gen" 'relaunch retained the old generation'
+  assert_absent "$home/state/sleeping.busy-state" 'relaunch retained the old activity'
+  mkdir -p "$case_dir/cursor/project/agent-transcripts/conversation"
+  printf '{"workspacePath":"%s"}\n' "$wt" > "$case_dir/cursor/project/.workspace-trusted"
+  printf '%s\n' '{"role":"user"}' '{"type":"turn_ended"}' > "$case_dir/cursor/project/agent-transcripts/conversation/conversation.jsonl"
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/sleeping.status"
+  printf '%s\n' "$gen" > "$home/state/sleeping.busy-gen"
+  rc=0
+  out=$(FM_FAKE_RUN_TASK=sleeping spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "Cursor with stale generation released its place: $out"
+  pass 'Claude to Cursor relaunch retires busy proof and retains capacity despite stale evidence'
+}
+
+test_relaunch_cursor_retires_busy_proof
 test_unarmed_sends_keep_their_place
 test_typed_send_reserves_released_place
 test_run_activity_controls_release
@@ -909,7 +951,7 @@ test_other_backends_hold_capacity() {
     home="$case_dir/home"
     declare_capacity "$home" 'project 1'
     write_live "$home" task-r "$case_dir/project" "backend=$backend" 'harness=claude'
-    gen=$("$ROOT/bin/fm-busy-event.sh" arm "$home/state" task-r)
+    gen=$(arm_worker "$home/state" task-r)
     "$ROOT/bin/fm-busy-event.sh" apply "$home/state" task-r idle --gen "$gen" --source claude-hook --event stop
     printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/task-r.status"
     rc=0
@@ -932,8 +974,8 @@ test_missing_window_needs_absence_proof_to_release() {
   printf 'spawn_gen=s1.proven\n' >> "$home/state/task-r.meta"
   rc=0
   out=$(FM_FAKE_DEAD_TASK=task-r spawn_ship "$case_dir" another "$(new_worktree "$case_dir" another)") || rc=$?
-  expect_code 0 "$rc" "a window proven gone kept its place: $out"
-  pass 'a missing window releases its place only with absence proof'
+  expect_code 75 "$rc" "a window proven gone without current idle proof released its place: $out"
+  pass 'a missing window without current idle proof retains its place'
 }
 
 test_other_backends_hold_capacity
