@@ -194,6 +194,14 @@ arm_worker() {
   printf '%s' "$gen"
 }
 
+idle_worker() {
+  local gen
+  printf 'harness=claude\n' >> "$1/state/$2.meta"
+  gen=$(arm_worker "$1/state" "$2") || return 1
+  "$ROOT/bin/fm-busy-event.sh" apply "$1/state" "$2" idle --gen "$gen" --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$1/state/$2.status"
+}
+
 # One isolated worktree per spawn, so every admitted launch has its own copy.
 new_worktree() {  # <case-dir> <name>
   git -C "$1/project" worktree add --quiet -b "wt-$2" "$1/wt-$2"
@@ -437,8 +445,7 @@ test_restart_does_not_count_its_own_record() {
   pass "a restart of a task id does not count that task's own record"
 }
 
-# A place frees when a worker records its ready PR and when a task is cleaned
-# up; each release admits exactly one more worker.
+# Positive idle proof and cleanup each admit exactly one more worker.
 test_release_frees_a_place() {
   local case_dir home out rc=0
   case_dir=$(make_case release task-c task-d)
@@ -449,11 +456,11 @@ test_release_frees_a_place() {
   out=$(spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "the full project admitted a worker: $out"
 
-  # PR handoff: the line bin/fm-pr-check.sh records for a ready PR.
   printf 'pr=%s\n' "https://github.com/o/r/pull/7" >> "$home/state/live-a.meta"
+  idle_worker "$home" live-a
   rc=0
   out=$(spawn_ship "$case_dir" task-c) || rc=$?
-  expect_code 0 "$rc" "a recorded PR handoff did not free a place: $out"
+  expect_code 0 "$rc" "positive idle proof did not free a place: $out"
   rc=0
   out=$(spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
@@ -472,7 +479,7 @@ test_release_frees_a_place() {
   rc=0
   out=$(spawn_ship "$case_dir" task-d) || rc=$?
   expect_code 0 "$rc" "cleanup did not free a place: $out"
-  pass "a recorded PR handoff or a cleanup each frees exactly one place"
+  pass "positive idle proof or cleanup each frees exactly one place"
 }
 
 # Only workers on the same project identity hold places: a secondmate record, a
@@ -528,6 +535,7 @@ test_capacity_is_shared_by_every_local_home() {
     "the secondmate did not count the root home's worker against the root's declaration"
   assert_absent "$mate/state/task-m.meta" "the deferred secondmate spawn published a record"
   printf 'pr=%s\n' "https://github.com/o/r/pull/8" >> "$root/state/live-a.meta"
+  rmdir "$root/worktree-live-a"
   rc=0
   out=$(run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
   expect_code 0 "$rc" "the remote home's worker, or a handed-off one, took the machine's place: $out"
@@ -592,7 +600,7 @@ test_concurrent_spawns_cannot_both_take_the_last_place() {
     fi
     hold="$case_dir/hold"
     wt=$(new_worktree "$case_dir" task-a)
-    FM_FAKE_HOLD="$hold" spawn_ship "$case_dir" task-a "$wt" > "$case_dir/a.out" 2>&1 &
+    FM_FAKE_DEAD_TASK="$([ "$mode" != relaunch ] || printf task-b)" FM_FAKE_HOLD="$hold" spawn_ship "$case_dir" task-a "$wt" > "$case_dir/a.out" 2>&1 &
     i=0
     while [ ! -f "$hold.reached" ]; do
       i=$((i + 1))
@@ -785,6 +793,7 @@ test_relaunch_and_send_require_readmission() {
   out=$(FM_FAKE_DEAD_TASK=task-r run_spawn "$case_dir" "$home" "$wt" task-r --relaunch) || rc=$?
   expect_code 75 "$rc" "relaunch ignored capacity: $out"
   printf 'pr=https://github.com/o/r/pull/9\n' >> "$home/state/holder.meta"
+  idle_worker "$home" holder
   rc=0
   out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
     FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
@@ -1008,7 +1017,8 @@ test_pr_worker_readmission() {
     for id in a b c d; do
       write_live "$home" "holder-$id" "$case_dir/project"
     done
-    write_live "$home" reviewed "$case_dir/project" 'harness=cursor' 'pr=https://github.com/o/r/pull/9'
+    write_live "$home" reviewed "$case_dir/project" 'pr=https://github.com/o/r/pull/9'
+    idle_worker "$home" reviewed
     case "$mode" in
       inbox) set -- 'apply review fixes' ;;
       typed) set -- /resume ;;
@@ -1026,6 +1036,7 @@ test_pr_worker_readmission() {
     out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
     expect_code 75 "$rc" "a fifth spawn started: $out"
     printf 'pr=https://github.com/o/r/pull/10\n' >> "$home/state/holder-d.meta"
+    idle_worker "$home" holder-d
     rc=0
     out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
       FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
@@ -1043,8 +1054,8 @@ test_pr_worker_readmission() {
   pass 'PR workers require admission and regain occupancy for every send path'
 }
 
-test_pr_ready_releases_readmitted_unarmed_worker() {
-  local case_dir home out rc=0 id url head wt
+test_pr_completion_requires_fresh_idle_check() {
+  local case_dir home out rc id url head
   case_dir=$(make_case pr-ready-readmission task-new)
   home="$case_dir/home"
   declare_capacity "$home" 'project 4'
@@ -1052,16 +1063,13 @@ test_pr_ready_releases_readmitted_unarmed_worker() {
     write_live "$home" "holder-$id" "$case_dir/project"
   done
   url=https://github.com/o/r/pull/9
-  write_live "$home" reviewed "$case_dir/project" 'harness=cursor' "pr=$url"
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
-  expect_code 0 "$rc" "PR worker send failed: $out"
-  assert_grep 'send-keys' "$case_dir/calls.log" 'PR worker key was not delivered'
-  assert_grep "^capacity_resumed_pr=$url$" "$home/state/reviewed.meta" 'send did not reserve PR worker'
+  write_live "$home" reviewed "$case_dir/project" "pr=$url"
+  idle_worker "$home" reviewed
+  printf 'done: PR %s checks green\n' "$url" > "$home/state/reviewed.status"
   rc=0
-  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
-  expect_code 75 "$rc" "readmitted worker did not hold capacity: $out"
+  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  expect_code 0 "$rc" "resume failed: $out"
   head=$(git -C "$case_dir/project" rev-parse HEAD)
   cat > "$case_dir/fakebin/gh" <<EOF
 #!/usr/bin/env bash
@@ -1070,113 +1078,30 @@ case "\$*" in
   *isDraft*) printf '%s\n' '{"isDraft":false}' ;;
 esac
 EOF
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" 2>&1) || rc=$?
-  expect_code 0 "$rc" "updated PR registration failed: $out"
-  assert_grep "^pr_head=$head$" "$home/state/reviewed.meta" 'updated PR head was not registered'
-  if grep -q '^capacity_resumed_pr=' "$home/state/reviewed.meta"; then
-    fail 'ready PR retained the admission marker'
-  fi
-  local real_mktemp poll_pid attempt
-  cat > "$case_dir/fakebin/gh" <<EOF
-#!/usr/bin/env bash
-case "\$*" in
-  *headRefOid*) printf '%s\n' '$head' ;;
-  *isDraft*)
-    touch '$case_dir/validation-started'
-    while [ ! -f '$case_dir/validation-release' ]; do sleep 0.05; done
-    printf '%s\n' '{"isDraft":false}'
-    ;;
-esac
-EOF
-  FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
-    > "$case_dir/validation.out" 2>&1 &
-  poll_pid=$!
-  for attempt in {1..200}; do
-    [ ! -f "$case_dir/validation-started" ] || break
-    sleep 0.05
+  FM_HOME="$home" PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
+    > "$case_dir/registration.out" 2>&1 || fail 'PR registration failed'
+  for id in stale fresh unarmed; do
+    [ "$id" != fresh ] || printf 'done: PR %s checks green\n' "$url" >> "$home/state/reviewed.status"
+    if [ "$id" = unarmed ]; then
+      printf 'busy_gen=\nharness=cursor\n' >> "$home/state/reviewed.meta"
+    fi
+    rc=0
+    out=$(FM_HOME="$home" FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$REAL_BASH" -c '. "$1/bin/fm-watch.sh"; record_done_pr reviewed.status' _ "$ROOT" 2>&1) || rc=$?
+    expect_code 0 "$rc" "watcher completion failed: $out"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$id completion released uncertain execution: $out"
   done
-  assert_present "$case_dir/validation-started" 'handoff did not reach validation'
+  idle_worker "$home" reviewed
   rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail 'send bypassed the validating handoff project lock'
-  touch "$case_dir/validation-release"
-  wait "$poll_pid" || fail 'validating handoff failed'
-  real_mktemp=$(command -v mktemp)
-  cat > "$case_dir/fakebin/mktemp" <<EOF
-#!/usr/bin/env bash
-case "\$*" in
-  *.fm-pr-meta.*)
-    touch '$case_dir/handoff-prepared'
-    while [ ! -f '$case_dir/handoff-release' ]; do sleep 0.05; done
-    ;;
-esac
-exec '$real_mktemp' "\$@"
-EOF
-  chmod +x "$case_dir/fakebin/mktemp"
-  FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
-    > "$case_dir/handoff.out" 2>&1 &
-  poll_pid=$!
-  for attempt in {1..200}; do
-    [ ! -f "$case_dir/handoff-prepared" ] || break
-    sleep 0.05
-  done
-  assert_present "$case_dir/handoff-prepared" 'handoff did not reach metadata preparation'
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
-  [ "$rc" -ne 0 ] || fail 'send bypassed the in-progress handoff project lock'
-  touch "$case_dir/handoff-release"
-  wait "$poll_pid" || fail 'concurrent handoff failed'
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
-  expect_code 0 "$rc" "send after handoff failed: $out"
-  assert_grep "^capacity_resumed_pr=$url$" "$home/state/reviewed.meta" 'handoff erased reservation'
-  rc=0
-  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
-  expect_code 75 "$rc" "reservation after concurrent handoff lost capacity: $out"
-  FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
-    > "$case_dir/handoff-final.out" 2>&1 || fail 'final ready registration failed'
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
-  expect_code 0 "$rc" "send before monitored completion failed: $out"
-  assert_grep "^capacity_resumed_pr=$url$" "$home/state/reviewed.meta" 'send did not reserve monitored worker'
-  rc=0
-  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
-  expect_code 75 "$rc" "monitored worker did not hold capacity: $out"
-  printf 'done: PR %s checks green\n' "$url" > "$home/state/reviewed.status"
-  rc=0
-  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
-    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
-    "$REAL_BASH" -c '
-      . "$1/bin/fm-watch.sh"
-      fm_pr_poll_artifacts_valid "$STATE" reviewed "$SCRIPT_DIR/fm-pr-poll.sh" || exit 1
-      record_done_pr reviewed.status
-    ' _ "$ROOT" 2>&1) || rc=$?
-  expect_code 0 "$rc" "monitored completion failed: $out"
-  if grep -q '^capacity_resumed_pr=' "$home/state/reviewed.meta"; then
-    fail 'monitored completion retained the admission marker'
-  fi
-  wt=$(new_worktree "$case_dir" task-new)
-  rc=0
-  out=$(spawn_ship "$case_dir" task-new "$wt") || rc=$?
-  expect_code 0 "$rc" "ready PR did not release capacity for queued spawn: $out"
-  assert_present "$home/state/task-new.meta" 'queued spawn did not start'
-  pass 'fresh ready PR releases a readmitted unarmed worker for queued work'
+  out=$(spawn_ship "$case_dir" task-new "$(new_worktree "$case_dir" task-new)") || rc=$?
+  expect_code 0 "$rc" "fresh idle check did not admit queued work: $out"
+  assert_present "$home/state/task-new.meta" 'queued worker did not start'
+  pass 'stale and fresh watcher completions cannot release uncertain workers'
 }
 
-test_pr_ready_releases_readmitted_unarmed_worker
+test_pr_completion_requires_fresh_idle_check
 test_pr_worker_readmission
 test_other_backends_hold_capacity
 test_run_backed_unknown_keeps_capacity
