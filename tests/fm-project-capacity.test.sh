@@ -1146,6 +1146,28 @@ EOF
   FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
     PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
     > "$case_dir/handoff-final.out" 2>&1 || fail 'final ready registration failed'
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  expect_code 0 "$rc" "send before monitored completion failed: $out"
+  assert_grep "^capacity_resumed_pr=$url$" "$home/state/reviewed.meta" 'send did not reserve monitored worker'
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "monitored worker did not hold capacity: $out"
+  printf 'done: PR %s checks green\n' "$url" > "$home/state/reviewed.status"
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$REAL_BASH" -c '
+      . "$1/bin/fm-watch.sh"
+      fm_pr_poll_artifacts_valid "$STATE" reviewed "$SCRIPT_DIR/fm-pr-poll.sh" || exit 1
+      record_done_pr reviewed.status
+    ' _ "$ROOT" 2>&1) || rc=$?
+  expect_code 0 "$rc" "monitored completion failed: $out"
+  if grep -q '^capacity_resumed_pr=' "$home/state/reviewed.meta"; then
+    fail 'monitored completion retained the admission marker'
+  fi
   wt=$(new_worktree "$case_dir" task-new)
   rc=0
   out=$(spawn_ship "$case_dir" task-new "$wt") || rc=$?

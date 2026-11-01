@@ -223,6 +223,7 @@ record_done_pr() {  # <task.status>
   url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") || return 0
   fm_pr_url_parse "$url" || return 0
   if [ "$(fm_dod_meta_value "$meta" pr)" = "$url" ] \
+    && [ "$(fm_dod_meta_value "$meta" capacity_resumed_pr)" != "$url" ] \
     && fm_pr_poll_artifacts_valid "$STATE" "$id" "$SCRIPT_DIR/fm-pr-poll.sh"; then
     return 0
   fi
