@@ -272,7 +272,9 @@ test_freed_place_admits_one_manual_spawn() {
   # Uncertain: the terminal gives no verdict, so the record keeps its place.
   write_live "$home" plain "$case_dir/project"
 
-  # Three places: active, unread, plain hold; parked and dead are free.
+  write_live "$home" fourth "$case_dir/project"
+
+  # Four places: active, unread, plain, fourth hold; parked and dead are free.
   rc=0
   out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "four holders did not fill a limit of four: $out"
@@ -295,7 +297,7 @@ test_freed_place_admits_one_manual_spawn() {
   rc=0
   out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
-  pass "armed idle records release capacity; dead and uncertain records retain capacity"
+  pass "armed idle and missing copies release capacity; uncertain records retain capacity"
 }
 
 # The reported incident's shape before any declaration: the project is already
@@ -576,30 +578,48 @@ test_unreadable_holders_refuse_admission() {
 # Two spawns racing for the last place: the one holding the project lock
 # publishes, the other cannot publish while it waits and is deferred afterwards.
 test_concurrent_spawns_cannot_both_take_the_last_place() {
-  local case_dir home out rc=0 hold i wt
-  case_dir=$(make_case concurrent task-a task-b)
-  home="$case_dir/home"
-  declare_capacity "$home" "project 1"
-  hold="$case_dir/hold"
-  wt=$(new_worktree "$case_dir" task-a)
-  FM_FAKE_HOLD="$hold" spawn_ship "$case_dir" task-a "$wt" > "$case_dir/a.out" 2>&1 &
-  i=0
-  while [ ! -f "$hold.reached" ]; do
-    i=$((i + 1))
-    [ "$i" -lt 400 ] || fail "the first spawn never reached its launch: $(cat "$case_dir/a.out")"
-    sleep 0.05
+  local case_dir home out rc=0 hold i wt mode id
+  for mode in spawn relaunch; do
+    case_dir=$(make_case "concurrent-$mode" task-a task-b)
+    home="$case_dir/home"
+    declare_capacity "$home" "project 4"
+    for id in a b c; do
+      write_live "$home" "holder-$id" "$case_dir/project"
+    done
+    if [ "$mode" = relaunch ]; then
+      write_live "$home" task-b "$case_dir/project" 'harness=cursor' 'branch=wt-task-b' 'spawn_gen=s1.relaunch' 'pr=https://github.com/o/r/pull/9'
+      git -C "$case_dir/project" worktree add --quiet -b wt-task-b "$home/worktree-task-b"
+    fi
+    hold="$case_dir/hold"
+    wt=$(new_worktree "$case_dir" task-a)
+    FM_FAKE_HOLD="$hold" spawn_ship "$case_dir" task-a "$wt" > "$case_dir/a.out" 2>&1 &
+    i=0
+    while [ ! -f "$hold.reached" ]; do
+      i=$((i + 1))
+      [ "$i" -lt 400 ] || fail "the first spawn never reached its launch: $(cat "$case_dir/a.out")"
+      sleep 0.05
+    done
+    rc=0
+    if [ "$mode" = relaunch ]; then
+      out=$(FM_FAKE_DEAD_TASK=task-b run_spawn "$case_dir" "$home" "$home/worktree-task-b" task-b --relaunch --harness cursor) || rc=$?
+    else
+      out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
+    fi
+    [ "$rc" -ne 0 ] || fail "a concurrent spawn launched while the last place was being taken: $out"
+    [ "$mode" = relaunch ] || assert_absent "$home/state/task-b.meta" "a concurrent spawn published past the last place"
+    : > "$hold.release"
+    wait || true
+    assert_contains "$(cat "$case_dir/a.out")" "spawned task-a" "the lock-holding spawn did not finish"
+    rc=0
+    if [ "$mode" = relaunch ]; then
+      out=$(FM_FAKE_DEAD_TASK=task-b run_spawn "$case_dir" "$home" "$home/worktree-task-b" task-b --relaunch --harness cursor) || rc=$?
+    else
+      out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
+    fi
+    expect_code "$DEFER_EXIT" "$rc" "the retried spawn was not deferred once the place was taken: $out"
+    [ "$mode" = relaunch ] || assert_absent "$home/state/task-b.meta" "the retried spawn published past capacity"
   done
-  out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
-  [ "$rc" -ne 0 ] || fail "a concurrent spawn launched while the last place was being taken: $out"
-  assert_absent "$home/state/task-b.meta" "a concurrent spawn published past the last place"
-  : > "$hold.release"
-  wait || true
-  assert_contains "$(cat "$case_dir/a.out")" "spawned task-a" "the lock-holding spawn did not finish"
-  rc=0
-  out=$(spawn_ship "$case_dir" task-b "$case_dir/unused") || rc=$?
-  expect_code "$DEFER_EXIT" "$rc" "the retried spawn was not deferred once the place was taken: $out"
-  assert_absent "$home/state/task-b.meta" "the retried spawn published past capacity"
-  pass "concurrent spawns can never both take the last place"
+  pass "concurrent spawns and relaunches can never both take the last place"
 }
 
 # A spawn that fails after admission removes nothing it did not create and
@@ -1059,6 +1079,33 @@ EOF
     fail 'ready PR retained the admission marker'
   fi
   local real_mktemp poll_pid attempt
+  cat > "$case_dir/fakebin/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *headRefOid*) printf '%s\n' '$head' ;;
+  *isDraft*)
+    touch '$case_dir/validation-started'
+    while [ ! -f '$case_dir/validation-release' ]; do sleep 0.05; done
+    printf '%s\n' '{"isDraft":false}'
+    ;;
+esac
+EOF
+  FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" \
+    > "$case_dir/validation.out" 2>&1 &
+  poll_pid=$!
+  for attempt in {1..200}; do
+    [ ! -f "$case_dir/validation-started" ] || break
+    sleep 0.05
+  done
+  assert_present "$case_dir/validation-started" 'handoff did not reach validation'
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  [ "$rc" -ne 0 ] || fail 'send bypassed the validating handoff project lock'
+  touch "$case_dir/validation-release"
+  wait "$poll_pid" || fail 'validating handoff failed'
   real_mktemp=$(command -v mktemp)
   cat > "$case_dir/fakebin/mktemp" <<EOF
 #!/usr/bin/env bash
