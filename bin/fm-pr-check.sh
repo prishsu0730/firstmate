@@ -82,8 +82,11 @@ pr_check_cleanup() {
 trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
-CAPACITY_LOCK=$(fm_treehouse_project_lock_path "$PROJECT") || exit 1
-fm_lock_acquire_wait "$CAPACITY_LOCK"
+if [ -n "$PROJECT" ] && [ -d "$PROJECT" ] && CAPACITY_LOCK=$(fm_treehouse_project_lock_path "$PROJECT"); then
+  fm_lock_acquire_wait "$CAPACITY_LOCK"
+else
+  CAPACITY_LOCK=
+fi
 
 # A secondmate is a persistent worker, not a delivery lane: it never owns a
 # pull request of its own. A URL reported on its routed status channel belongs
