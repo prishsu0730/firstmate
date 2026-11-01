@@ -78,10 +78,11 @@ make_case() {  # <name> [task-id...]
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_FAKE_CALL_LOG"
-if [ "${FM_FAKE_EMPTY_COMPOSER:-}" = typed ]; then
+if [ "${1:-}" = capture-pane ] && [ -n "${FM_FAKE_CAPTURE_FAIL:-}" ]; then exit 1; fi
+if [ "${FM_FAKE_EMPTY_COMPOSER:-typed}" != off ]; then
   case "$*" in
     display-message*'#{cursor_y}'*) printf '0\n'; exit 0 ;;
-    capture-pane*) printf '❯ \n'; exit 0 ;;
+    capture-pane*' -e '*) printf '❯ \n'; exit 0 ;;
   esac
 fi
 case "$*" in
@@ -116,7 +117,6 @@ case "$*" in
     exit 0
     ;;
 esac
-if [ "${1:-}" = capture-pane ] && [ -n "${FM_FAKE_CAPTURE_FAIL:-}" ]; then exit 1; fi
 case "${1:-}" in display-message) printf 'firstmate\n' ;; esac
 exit 0
 SH
@@ -600,6 +600,7 @@ test_concurrent_spawns_cannot_both_take_the_last_place() {
     for id in a b c; do
       write_live "$home" "holder-$id" "$case_dir/project"
     done
+    [ "$mode" != relaunch ] || fm_fake_exit0 "$case_dir/fakebin" cursor-agent
     if [ "$mode" = relaunch ]; then
       write_live "$home" task-b "$case_dir/project" 'harness=cursor' 'branch=wt-task-b' 'spawn_gen=s1.relaunch' 'pr=https://github.com/o/r/pull/9'
       git -C "$case_dir/project" worktree add --quiet -b wt-task-b "$home/worktree-task-b"
