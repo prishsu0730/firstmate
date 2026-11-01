@@ -1093,6 +1093,8 @@ EOF
       printf 'busy_gen=\nharness=cursor\n' >> "$home/state/reviewed.meta"
     fi
     rc=0
+    # Positional parameters expand in the child shell.
+    # shellcheck disable=SC2016
     out=$(FM_HOME="$home" FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
       "$REAL_BASH" -c '. "$1/bin/fm-watch.sh"; record_done_pr reviewed.status' _ "$ROOT" 2>&1) || rc=$?
     expect_code 0 "$rc" "watcher completion failed: $out"

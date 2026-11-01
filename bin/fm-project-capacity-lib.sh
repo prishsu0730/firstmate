@@ -152,12 +152,16 @@ fm_project_capacity_record_released() {  # <state-dir> <task-id>
   [ -z "$worktree" ] || [ -d "$worktree" ] || return 0
   backend=$(fm_backend_of_meta "$1/$2.meta")
   target=$(fm_backend_target_of_meta "$1/$2.meta")
+  # Positional parameters expand in the child shell.
+  # shellcheck disable=SC2016
   endpoint=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
     fm_backend_agent_state "$2" "$3"
   ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$backend" "$target" 2>/dev/null) || endpoint=unknown
   case "$endpoint" in
     missing|dead)
+      # Positional parameters expand in the child shell.
+      # shellcheck disable=SC2016
       absence=$(fm_run_timed 15 bash -c '
         . "$1/fm-backend.sh"
         . "$1/fm-control-lib.sh"
