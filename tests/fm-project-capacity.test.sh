@@ -1022,6 +1022,50 @@ test_pr_worker_readmission() {
   pass 'PR workers require admission and regain occupancy for every send path'
 }
 
+test_pr_ready_releases_readmitted_unarmed_worker() {
+  local case_dir home out rc=0 id url head wt
+  case_dir=$(make_case pr-ready-readmission task-new)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  for id in a b c; do
+    write_live "$home" "holder-$id" "$case_dir/project"
+  done
+  url=https://github.com/o/r/pull/9
+  write_live "$home" reviewed "$case_dir/project" 'harness=cursor' "pr=$url"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+    FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+    "$ROOT/bin/fm-send.sh" reviewed --key Enter 2>&1) || rc=$?
+  expect_code 0 "$rc" "PR worker send failed: $out"
+  assert_grep 'send-keys' "$case_dir/calls.log" 'PR worker key was not delivered'
+  assert_grep "^capacity_resumed_pr=$url$" "$home/state/reviewed.meta" 'send did not reserve PR worker'
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "readmitted worker did not hold capacity: $out"
+  head=$(git -C "$case_dir/project" rev-parse HEAD)
+  cat > "$case_dir/fakebin/gh" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *headRefOid*) printf '%s\n' '$head' ;;
+  *isDraft*) printf '%s\n' '{"isDraft":false}' ;;
+esac
+EOF
+  rc=0
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-pr-check.sh" reviewed "$url" 2>&1) || rc=$?
+  expect_code 0 "$rc" "updated PR registration failed: $out"
+  assert_grep "^pr_head=$head$" "$home/state/reviewed.meta" 'updated PR head was not registered'
+  if grep -q '^capacity_resumed_pr=' "$home/state/reviewed.meta"; then
+    fail 'ready PR retained the admission marker'
+  fi
+  wt=$(new_worktree "$case_dir" task-new)
+  rc=0
+  out=$(spawn_ship "$case_dir" task-new "$wt") || rc=$?
+  expect_code 0 "$rc" "ready PR did not release capacity for queued spawn: $out"
+  assert_present "$home/state/task-new.meta" 'queued spawn did not start'
+  pass 'fresh ready PR releases a readmitted unarmed worker for queued work'
+}
+
+test_pr_ready_releases_readmitted_unarmed_worker
 test_pr_worker_readmission
 test_other_backends_hold_capacity
 test_run_backed_unknown_keeps_capacity
