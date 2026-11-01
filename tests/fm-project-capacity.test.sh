@@ -978,6 +978,51 @@ test_missing_window_needs_absence_proof_to_release() {
   pass 'a missing window without current idle proof retains its place'
 }
 
+test_pr_worker_readmission() {
+  local mode case_dir home out rc before id
+  for mode in inbox typed key; do
+    case_dir=$(make_case "pr-readmission-$mode" task-new)
+    home="$case_dir/home"
+    declare_capacity "$home" 'project 4'
+    for id in a b c d; do
+      write_live "$home" "holder-$id" "$case_dir/project"
+    done
+    write_live "$home" reviewed "$case_dir/project" 'harness=cursor' 'pr=https://github.com/o/r/pull/9'
+    case "$mode" in
+      inbox) set -- 'apply review fixes' ;;
+      typed) set -- /resume ;;
+      key) set -- --key Enter ;;
+    esac
+    before=$(call_count "$case_dir")
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-send.sh" reviewed "$@" 2>&1) || rc=$?
+    expect_code 75 "$rc" "$mode resumed a PR worker at capacity: $out"
+    assert_absent "$home/state/reviewed.inbox" "$mode delivered before admission"
+    assert_equals "$before" "$(call_count "$case_dir")" "$mode reached the terminal before admission"
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "a fifth spawn started: $out"
+    printf 'pr=https://github.com/o/r/pull/10\n' >> "$home/state/holder-d.meta"
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CALL_LOG="$case_dir/calls.log" PATH="$case_dir/fakebin:$PATH" \
+      "$ROOT/bin/fm-send.sh" reviewed "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode refused a PR worker below capacity: $out"
+    if [ "$mode" = inbox ]; then
+      assert_present "$home/state/reviewed.inbox/001.msg" 'PR steer was not delivered'
+    else
+      assert_grep 'send-keys' "$case_dir/calls.log" 'PR send did not reach terminal'
+    fi
+    rc=0
+    out=$(spawn_ship "$case_dir" task-new "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode did not restore PR worker occupancy: $out"
+  done
+  pass 'PR workers require admission and regain occupancy for every send path'
+}
+
+test_pr_worker_readmission
 test_other_backends_hold_capacity
 test_run_backed_unknown_keeps_capacity
 test_missing_window_needs_absence_proof_to_release
