@@ -78,6 +78,12 @@ make_case() {  # <name> [task-id...]
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FM_FAKE_CALL_LOG"
+if [ "${FM_FAKE_EMPTY_COMPOSER:-}" = typed ]; then
+  case "$*" in
+    display-message*'#{cursor_y}'*) printf '0\n'; exit 0 ;;
+    capture-pane*) printf '❯ \n'; exit 0 ;;
+  esac
+fi
 case "$*" in
   list-windows*)
     for meta in "$FM_HOME/state/"*.meta ${FM_FAKE_EXTRA_STATE:+"$FM_FAKE_EXTRA_STATE/"*.meta}; do
@@ -926,7 +932,7 @@ test_unarmed_sends_keep_their_place() {
       typed) set -- /resume ;;
     esac
     rc=0
-    out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_RUN_TASK=sleeping FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_EMPTY_COMPOSER="$mode" FM_FAKE_RUN_TASK=sleeping FM_FAKE_CALL_LOG="$case_dir/calls.log" \
       PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" sleeping "$@" 2>&1) || rc=$?
     expect_code 0 "$rc" "$mode failed to deliver to an unarmed worker: $out"
     assert_grep 'send-keys' "$case_dir/calls.log" "$mode did not reach the terminal"
