@@ -144,6 +144,21 @@ fm_project_capacity_record_idle() {  # <state-dir> <task-id>
   esac
 }
 
+fm_project_capacity_record_released() {  # <state-dir> <task-id>
+  local pr message
+  pr=$(fm_meta_get "$1/$2.meta" pr)
+  if [ -n "$pr" ] && [ "$(fm_meta_get "$1/$2.meta" capacity_resumed_pr)" != "$pr" ]; then
+    if [ -e "$1/$2.inbox" ]; then
+      [ -d "$1/$2.inbox" ] && [ -r "$1/$2.inbox" ] && [ -x "$1/$2.inbox" ] || return 1
+      for message in "$1/$2.inbox/"*.msg; do
+        [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
+      done
+    fi
+    return 0
+  fi
+  fm_project_capacity_record_idle "$1" "$2"
+}
+
 # The config directory holding this machine's declaration: the spawning home's
 # own <config-dir> when that home is the local root (so an override of it
 # applies), otherwise the root home's config/.
@@ -267,7 +282,6 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       }
       kind=$(fm_meta_get "$meta" kind)
       [ "$kind" != secondmate ] || continue
-      [ -z "$(fm_meta_get "$meta" pr)" ] || continue
       project=$(fm_meta_get "$meta" project)
       [ -n "$project" ] || continue
       lock=
@@ -286,7 +300,7 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       fi
       [ -n "$lock" ] && [ "$lock" = "$want" ] || continue
       id=$(basename "$meta" .meta)
-      if fm_project_capacity_record_idle "$state" "$id"; then
+      if fm_project_capacity_record_released "$state" "$id"; then
         continue
       fi
       label=$id

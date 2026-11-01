@@ -764,7 +764,7 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
   [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ] &&
   { [ "${1:-}" != --key ] || [ "$(fm_send_normalize_key "${2:-}")" = Enter ]; }; then
   SEND_PROJECT=$(fm_meta_get "$TARGET_META" project)
-  if [ -d "$SEND_PROJECT" ] && [ -z "$(fm_meta_get "$TARGET_META" pr)" ]; then
+  if [ -d "$SEND_PROJECT" ]; then
     SEND_CONFIG=$(fm_project_capacity_config_dir "$FM_HOME" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}") || exit 1
     fm_project_capacity_lookup "$SEND_CONFIG" "$(basename "$SEND_PROJECT")" || exit 1
     if [ -n "$FM_PROJECT_CAPACITY_ANY" ]; then
@@ -772,7 +772,7 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
       fm_lock_try_acquire "$SEND_PROJECT_LOCK" || exit 1
       SEND_CAPACITY_LOCK=$SEND_PROJECT_LOCK
       SEND_ID=$(fm_send_id_from_meta "$TARGET_META")
-      if fm_project_capacity_record_idle "$STATE" "$SEND_ID"; then
+      if fm_project_capacity_record_released "$STATE" "$SEND_ID"; then
         if [ -n "$FM_PROJECT_CAPACITY" ]; then
           fm_project_capacity_occupants "$SEND_CAPACITY_LOCK" "$SEND_PROJECT" "$STATE" "$SEND_ID" || exit 1
           if [ "$FM_PROJECT_CAPACITY_OCCUPANTS" -ge "$FM_PROJECT_CAPACITY" ]; then
@@ -780,10 +780,15 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
             exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
           fi
         fi
-        if [ "${1:-}" = --key ] ||
+        SEND_PR=$(fm_meta_get "$TARGET_META" pr)
+        if [ -n "$SEND_PR" ]; then
+          printf 'capacity_resumed_pr=%s\n' "$SEND_PR" >> "$TARGET_META" || exit 1
+        fi
+        if [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
+          { [ "${1:-}" = --key ] ||
           { [ -z "$FIRE_AND_FORGET_ID" ] &&
             { [ -z "$TARGET_SELECTOR" ] || [[ "$*" = /* ]] ||
-              { [ "$TARGET_HARNESS" = codex ] && [[ "$*" = \$* ]]; }; }; }; then
+              { [ "$TARGET_HARNESS" = codex ] && [[ "$*" = \$* ]]; }; }; }; }; then
           "$SCRIPT_DIR/fm-busy-event.sh" apply "$STATE" "$SEND_ID" unknown \
             --current-gen --source fm-recovery --event send-admitted || exit 1
         fi

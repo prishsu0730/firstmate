@@ -5234,7 +5234,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx tmux_socket tmux_server_pid tmux_server_start", keys, " ")
+      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch model effort account account_provider capacity_resumed_pr busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx tmux_socket tmux_server_pid tmux_server_start", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5300,6 +5300,8 @@ preserve_relaunch_meta() {
   fi
   if [ "$RELAUNCH" -eq 1 ]; then
     preserve_relaunch_meta
+    RELAUNCH_PR=$(fm_meta_get "$RELAUNCH_META" pr)
+    [ -z "$RELAUNCH_PR" ] || printf 'capacity_resumed_pr=%s\n' "$RELAUNCH_PR"
   fi
   if [ "$SPAWN_CONTROL_PARENT" = 1 ] && [ -n "${FM_CONTROL_RELAUNCH_TX:-}" ]; then
     echo "control_relaunch_tx=$FM_CONTROL_RELAUNCH_TX"
