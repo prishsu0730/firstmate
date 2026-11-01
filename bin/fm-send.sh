@@ -789,6 +789,9 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
           SEND_RESERVATION=busy
         fi
         fm_project_capacity_publish reserve "$STATE" "$SEND_ID" "$SEND_RESERVATION" || exit 1
+      elif [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
+        { [ "${1:-}" = --key ] || [ -z "$FIRE_AND_FORGET_ID" ]; }; then
+        fm_project_capacity_publish reserve "$STATE" "$SEND_ID" busy || exit 1
       fi
     fi
   fi
