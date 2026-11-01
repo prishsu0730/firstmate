@@ -44,7 +44,8 @@
 #     are counted, and
 #   - has not supplied positive idle proof for its current launch: its meta
 #     busy_gen must match .busy-gen and its trusted busy record must be idle.
-#     Unarmed workers hold their place until cleanup. Idle release additionally
+#     Unarmed workers cannot release on idle evidence alone.
+#     Idle release additionally
 #     requires a parked, paused, or done crew state, a live tmux/herdr endpoint
 #     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
 #     Missing copies or endpoints with recovery-grade absence proof release.
@@ -66,7 +67,10 @@
 # two concurrent spawns for one project can never both publish from the same
 # count. A spawn on an uncapped project can still publish a holder for a capped
 # same-origin clone, so every backend takes that lock whenever the declaration
-# caps any project; Orca, which otherwise never takes it, is included. PR handoffs and admission reservations publish under that same project lock.
+# caps any project; Orca, which otherwise never takes it, is included.
+# Admission reservations publish under that same project lock.
+# PR registration also takes it when the recorded project directory exists and
+# its lock path resolves; registration never changes occupancy.
 #
 # Requires bin/fm-wake-lib.sh (root home, local homes, project lock path),
 # bin/fm-secondmate-registry-lib.sh (which the local-homes walk reads), and
