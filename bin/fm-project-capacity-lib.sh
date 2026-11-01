@@ -102,9 +102,11 @@ fm_project_capacity_publish() {
       fm_lock_release "$lock"
       ;;
     handoff)
+      # shellcheck disable=SC2153 # META is set by the caller.
       [ -f "$META" ] && [ ! -L "$META" ] && [ "$(fm_pr_file_link_count "$META")" = 1 ] \
         || { echo "error: task metadata is unavailable" >&2; exit 1; }
       META_DEVICE=$(fm_pr_file_device "$META") || exit 1
+      # shellcheck disable=SC2153 # STATE is set by the caller.
       STATE_DEVICE=$(fm_pr_file_device "$STATE") || exit 1
       [ "$META_DEVICE" = "$STATE_DEVICE" ] || { echo "error: task metadata is unavailable" >&2; exit 1; }
       META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
