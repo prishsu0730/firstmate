@@ -767,9 +767,8 @@ SH
 }
 
 # A steer that meets a held project lock must say it was not delivered and exit
-# with the deferral code, never a silent exit 1; and the lock must be released
-# once the reservation is published so one worker's delivery and settle sleep do
-# not hold off a steer to another worker of the same project.
+# with the deferral code, never a silent exit 1; a concurrent steer to another
+# worker must wait through delivery and settle, then acquire the lock and deliver.
 test_send_under_held_project_lock_defers_with_a_message() {
   local case_dir home out rc holder i
   case_dir=$(make_case send-lock-held)

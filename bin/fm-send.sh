@@ -15,6 +15,14 @@
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
 #
+# Project admission: local recorded ships and scouts check the capacity contract
+# in bin/fm-project-capacity-lib.sh before text delivery or --key Enter.
+# When any project capacity is declared, these sends wait for the shared project
+# lock for FM_SEND_LOCK_WAIT seconds (default 30; non-digit values use 30).
+# Exhausting that wait prints a deferred nondelivery message and exits 75.
+# The acquired lock stays held until process exit, including delivery and settle
+# sleep, so another admission cannot overtake an unpublished inbox steer.
+#
 # Two data planes:
 #
 # INBOX - the default for text to a task recorded in this home, local and
