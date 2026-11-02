@@ -53,10 +53,16 @@ start_watch() {
   watch_pid=$!
 }
 wait_report() {
-  local expected=$1 n
+  local expected=$1 rearm=${2:-no} n
   for ((n=0; n<300; n++)); do
     if [ -f "$FM_HOME/state/.queue-pull-report" ] &&
        grep -F "$expected" "$FM_HOME/state/.queue-pull-report" >/dev/null; then return 0; fi
+    if [ "$rearm" = yes ] && ! kill -0 "$watch_pid" 2>/dev/null; then
+      wait "$watch_pid" || fail 'watcher notification failed'
+      watch_pid=
+      [ -s "$TMP_ROOT/watcher.out" ] || fail 'watcher exited without a notification'
+      start_watch
+    fi
     sleep 0.1
   done
   fail "watcher did not report $expected: $(cat "$FM_HOME/state/.queue-pull-errors" "$TMP_ROOT/watcher.err" 2>/dev/null)"
@@ -129,9 +135,9 @@ for queued in nextone nexttwo; do
   "$ROOT/bin/fm-queue-pull.sh" prepare "$queued" "$TMP_ROOT/project" --mode no-mistakes --yolo off --harness codex || fail 'four-place prepare'
 done
 
-# Keep one watcher running across the release and the following timer pass.
+# Re-arm notification exits as the supervisor does across timer passes.
 start_watch
-wait_report 'caps concurrent workers at 4'
+wait_report 'caps concurrent workers at 4' yes
 [ ! -e "$FM_HOME/state/nextone.meta" ] && [ ! -e "$FM_HOME/state/nexttwo.meta" ] || fail 'launched at full capacity'
 [ ! -s "$FM_FAKE_LAUNCH_LOG" ] || fail 'backend launched at full capacity'
 "$ROOT/bin/fm-busy-event.sh" arm "$FM_HOME/state" releasing --state idle --source claude-hook --event stop >/dev/null || fail 'release hook'
@@ -139,7 +145,7 @@ printf 'paused [at=%s]: waiting for an external condition\n' "$(date +%s)" > "$F
 assert_contains "$("$ROOT/bin/fm-crew-state.sh" releasing)" 'state: paused' 'release was not reconciled'
 printf '0\n' > "$FM_HOME/state/.queue-pull-last"
 fm_touch_epoch 0 "$FM_HOME/state/.queue-pull-last"
-wait_report 'started through fm-spawn'
+wait_report 'started through fm-spawn' yes
 
 if [ -f "$FM_HOME/state/nextone.meta" ] && [ ! -f "$FM_HOME/state/nexttwo.meta" ]; then
   launched=nextone remaining=nexttwo
@@ -159,7 +165,7 @@ assert_contains "$("$ROOT/bin/fm-tasks-axi.sh" show "$remaining")" 'state: queue
 # The next timer must actually try it and record the capacity refusal.
 printf '0\n' > "$FM_HOME/state/.queue-pull-last"
 fm_touch_epoch 0 "$FM_HOME/state/.queue-pull-last"
-wait_report "$remaining: spawn refused"
+wait_report "$remaining: spawn refused" yes
 assert_contains "$(cat "$FM_HOME/state/.queue-pull-report")" 'caps concurrent workers at 4 and 4 ordinary task(s)' 'second pass did not preserve the four-worker cap'
 [ ! -f "$FM_HOME/state/$remaining.meta" ] || fail 'second queued job started'
 [ "$(cksum < "$FM_FAKE_LAUNCH_LOG")" = "$launch_bytes" ] || fail 'duplicate backend launch on second timer pass'
