@@ -48,7 +48,8 @@
 #     Idle release additionally
 #     requires a parked, paused, or done crew state, a live tmux/herdr endpoint
 #     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
-#     Missing copies or endpoints with recovery-grade absence proof release.
+#     Missing or unreadable worktree folders retain occupancy unless
+#     fm_control_endpoint_absence_verdict proves the endpoint gone or dead.
 # A place frees only on a fresh admission-time check of current idle or absence
 # proof, or cleanup removing the record. Stored PR and status records alone
 # never release a place. Relaunches and steers to released workers
