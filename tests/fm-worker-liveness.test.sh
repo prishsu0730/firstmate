@@ -615,6 +615,39 @@ SH
   pass "generic classifier worker rearms after manual relaunch and recovers a later exit"
 }
 
+test_released_attempt_crossing_window_preserves_recent_restarts() {
+  local dir
+  dir=$(new_case hour-edge)
+  case_env "$dir" bash -c '
+    . "$1/bin/fm-worker-liveness-lib.sh"
+    STATE=$FM_HOME/state
+    date() { printf "%s\n" "$now"; }
+    now=1000
+    fm_worker_liveness_ledger_add edge attempt
+    now=1001
+    fm_worker_liveness_ledger_add edge released
+    for now in 4420 4480 4540; do
+      fm_worker_liveness_ledger_add edge attempt
+      fm_worker_liveness_ledger_add edge relaunched
+    done
+    for now in 4600 4601 4602; do
+      [ "$(fm_worker_liveness_recent_attempts edge 3600)" = 3 ] || exit 1
+    done
+    fm_worker_liveness_ledger_add edge attempt
+    fm_worker_liveness_ledger_add edge released
+    [ "$(fm_worker_liveness_recent_attempts edge 3600)" = 3 ] || exit 1
+    now=8021
+    [ "$(fm_worker_liveness_recent_attempts edge 3600)" = 2 ] || exit 1
+    fm_worker_liveness_ledger_add edge rearmed
+    [ "$(fm_worker_liveness_recent_attempts edge 3600)" = 0 ] || exit 1
+    fm_worker_liveness_ledger_add edge attempt
+    fm_worker_liveness_ledger_add edge failed
+    [ "$(fm_worker_liveness_recent_attempts edge 3600)" = 1 ] || exit 1
+  ' _ "$ROOT" || fail "released attempt crossing the window changed unrelated restart counts"
+  pass "worker liveness: releases cancel their own attempts across the hour edge"
+}
+
+test_released_attempt_crossing_window_preserves_recent_restarts
 test_generic_parked_worker_rearms_after_manual_relaunch
 test_stale_failed_run_is_not_named
 test_other_branch_run_is_not_named

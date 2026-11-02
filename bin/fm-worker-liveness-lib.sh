@@ -83,8 +83,6 @@ fm_worker_liveness_ledger_add() {  # <id> <attempt|released|relaunched|failed|re
   printf '%s\t%s\n' "$(date +%s)" "$2" >> "$STATE/.worker-relaunch-$1" 2>/dev/null
 }
 
-# Attempt rows no older than <window-secs>, less the `released` rows in the
-# same window. An absent ledger counts zero; an unreadable one fails.
 fm_worker_liveness_recent_attempts() {  # <id> <window-secs>
   local id=$1 window=$2 ledger cutoff
   ledger="$STATE/.worker-relaunch-$id"
@@ -95,10 +93,17 @@ fm_worker_liveness_recent_attempts() {  # <id> <window-secs>
   [ -f "$ledger" ] && [ -r "$ledger" ] || return 1
   cutoff=$(( $(date +%s) - window ))
   awk -F '\t' -v cutoff="$cutoff" '
-    $1 ~ /^[0-9]+$/ && $1 >= cutoff && $2 == "attempt" { n++ }
-    $1 ~ /^[0-9]+$/ && $1 >= cutoff && $2 == "released" { n-- }
-    $2 == "rearmed" { n = 0 }
-    END { if (n < 0) n = 0; print n + 0 }' "$ledger" 2>/dev/null
+    $1 ~ /^[0-9]+$/ && $2 == "attempt" { attempts[++n] = $1; pending = n }
+    $1 ~ /^[0-9]+$/ && $2 == "released" {
+      if (pending) delete attempts[pending]
+      pending = 0
+    }
+    $2 == "relaunched" || $2 == "failed" { pending = 0 }
+    $2 == "rearmed" { for (i in attempts) delete attempts[i]; n = 0; pending = 0 }
+    END {
+      for (i in attempts) if (attempts[i] >= cutoff) count++
+      print count + 0
+    }' "$ledger" 2>/dev/null
 }
 
 # fm_worker_liveness_probe <meta> <id>
