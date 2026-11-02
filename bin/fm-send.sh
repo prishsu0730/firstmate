@@ -798,9 +798,6 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
         { [ "${1:-}" = --key ] || [ -z "$FIRE_AND_FORGET_ID" ]; }; then
         fm_project_capacity_publish reserve "$STATE" "$SEND_ID" busy || exit 1
       fi
-      # The reservation is published; delivery and the settle sleep must not hold the project lock.
-      fm_lock_release "$SEND_CAPACITY_LOCK"
-      SEND_CAPACITY_LOCK=
     fi
   fi
 fi
