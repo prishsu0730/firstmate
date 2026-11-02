@@ -766,6 +766,72 @@ SH
   pass "an Orca spawn takes the shared project lock whenever a same-origin clone is capped and defers before creating anything"
 }
 
+# A steer that meets a held project lock must say it was not delivered and exit
+# with the deferral code, never a silent exit 1; and the lock must be released
+# once the reservation is published so one worker's delivery and settle sleep do
+# not hold off a steer to another worker of the same project.
+test_send_under_held_project_lock_defers_with_a_message() {
+  local case_dir home out rc holder i
+  case_dir=$(make_case send-lock-held)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  write_live "$home" w1 "$case_dir/project" 'harness=claude'
+  # shellcheck disable=SC2016 # expanded by the holder's own shell
+  FM_HOME="$home" FM_STATE_OVERRIDE='' bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    lock=$(fm_treehouse_project_lock_path "$2") || exit 1
+    fm_lock_try_acquire "$lock" || exit 1
+    : > "$3.held"
+    while [ ! -f "$3.release" ]; do sleep 0.05; done
+    fm_lock_release "$lock"
+  ' _ "$ROOT" "$case_dir/project" "$case_dir/holder" &
+  holder=$!
+  i=0
+  while [ ! -f "$case_dir/holder.held" ]; do
+    i=$((i + 1))
+    [ "$i" -lt 200 ] || fail "the lock holder never took the project lock"
+    sleep 0.05
+  done
+  rc=0
+  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" w1 --key Enter 2>&1) || rc=$?
+  : > "$case_dir/holder.release"
+  wait "$holder" || true
+  expect_code "$DEFER_EXIT" "$rc" "a send under a held project lock did not defer: $out"
+  assert_contains "$out" "was not delivered" "the deferred send did not say it was not delivered"
+  assert_no_grep "send-keys" "$case_dir/calls.log" "the deferred send still reached the terminal"
+  pass 'a steer under a held project lock exits 75 with a message and delivers nothing'
+}
+
+test_sends_to_two_workers_of_one_project_both_deliver() {
+  local case_dir home out1 out2 rc1 rc2 first i
+  case_dir=$(make_case send-two-workers)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  write_live "$home" w1 "$case_dir/project" 'harness=claude'
+  write_live "$home" w2 "$case_dir/project" 'harness=claude'
+  # The first send is still inside its settle sleep when the second starts, so
+  # the second only delivers if the first has already let go of the project lock.
+  (FM_HOME="$home" FM_SEND_SETTLE=3 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" w1 'first steer' >"$case_dir/first.out" 2>&1; echo $? >"$case_dir/first.rc") &
+  first=$!
+  i=0
+  while ! grep -q 'send-keys' "$case_dir/calls.log"; do
+    i=$((i + 1))
+    [ "$i" -lt 200 ] || fail "the first send never reached the terminal"
+    sleep 0.05
+  done
+  rc2=0
+  out2=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+    PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" w2 'second steer' 2>&1) || rc2=$?
+  wait "$first" || true
+  rc1=$(cat "$case_dir/first.rc")
+  out1=$(cat "$case_dir/first.out")
+  expect_code 0 "$rc1" "the first send failed: $out1"
+  expect_code 0 "$rc2" "a send to a second worker was held off by the first send: $out2"
+  pass 'two sends to different workers of one project both deliver'
+}
+
 test_relaunch_and_send_require_readmission() {
   local case_dir home out rc before gen mode wt
   case_dir=$(make_case readmission task-r)
@@ -1134,3 +1200,5 @@ test_failed_spawn_after_admission_holds_no_place
 test_unreadable_declaration_refuses_every_spawn
 test_batch_reports_a_deferred_pair
 test_orca_spawn_is_admitted_under_the_shared_project_lock
+test_send_under_held_project_lock_defers_with_a_message
+test_sends_to_two_workers_of_one_project_both_deliver
