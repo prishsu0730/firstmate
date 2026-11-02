@@ -15,6 +15,14 @@
 # Key support is backend-specific: tmux/herdr support Escape, Enter, and C-c;
 # Orca currently supports Enter and C-c only, and rejects Escape.
 #
+# Project admission: local recorded ships and scouts check the capacity contract
+# in bin/fm-project-capacity-lib.sh before text delivery or --key Enter.
+# When any project capacity is declared, these sends wait for the shared project
+# lock for FM_SEND_LOCK_WAIT seconds (default 30; non-digit values use 30).
+# Exhausting that wait prints a deferred nondelivery message and exits 75.
+# The acquired lock stays held until process exit, including delivery and settle
+# sleep, so another admission cannot overtake an unpublished inbox steer.
+#
 # Two data planes:
 #
 # INBOX - the default for text to a task recorded in this home, local and
@@ -256,6 +264,10 @@ fi
 . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-secondmate-registry-lib.sh
+. "$SCRIPT_DIR/fm-secondmate-registry-lib.sh"
+# shellcheck source=bin/fm-project-capacity-lib.sh
+. "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -291,6 +303,7 @@ fm_send_clear_after_interrupt() { # <key>
 
 fm_send_normalize_key() { # <key>
   case "$1" in
+  Enter | enter | ENTER | Return | return | C-m | C-M | C-j | C-J | ^M | ^J | $'\r' | $'\n') printf '%s' Enter ;;
   Escape | escape | Esc | esc) printf '%s' Escape ;;
   *) printf '%s' "$1" ;;
   esac
@@ -449,11 +462,13 @@ shift
 # untouched (contract: bin/fm-lease-lib.sh).
 # shellcheck source=bin/fm-lease-lib.sh
 . "$SCRIPT_DIR/fm-lease-lib.sh"
+SEND_CAPACITY_LOCK=
+
 if [ -n "$TARGET_META" ]; then
   LEASE_GUARD_TASK=$(fm_send_id_from_meta "$TARGET_META")
   if [ -n "$LEASE_GUARD_TASK" ]; then
     fm_lease_guard "$LEASE_GUARD_TASK" "steer (fm-send)"
-    trap 'fm_lease_guard_release' EXIT
+    trap 'fm_lease_guard_release; [ -z "${SEND_CAPACITY_LOCK:-}" ] || fm_lock_release "$SEND_CAPACITY_LOCK"' EXIT
   fi
 fi
 
@@ -754,6 +769,55 @@ fm_send_feed_resolved_holds() { # <answer-text>
 # target_ready path before sending, while zellij verifies pane labels in its
 # send implementation. A failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
+
+if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
+  [ "$(fm_meta_get "$TARGET_META" kind)" != secondmate ] &&
+  { [ "${1:-}" != --key ] || [ "$(fm_send_normalize_key "${2:-}")" = Enter ]; }; then
+  SEND_PROJECT=$(fm_meta_get "$TARGET_META" project)
+  if [ -d "$SEND_PROJECT" ]; then
+    SEND_CONFIG=$(fm_project_capacity_config_dir "$FM_HOME" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}") || exit 1
+    fm_project_capacity_lookup "$SEND_CONFIG" "$(basename "$SEND_PROJECT")" || exit 1
+    if [ -n "$FM_PROJECT_CAPACITY_ANY" ]; then
+      SEND_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$SEND_PROJECT") || exit 1
+      SEND_LOCK_WAIT=${FM_SEND_LOCK_WAIT:-30}
+      case "$SEND_LOCK_WAIT" in
+        *[!0-9]*) SEND_LOCK_WAIT=30 ;;
+      esac
+      SEND_LOCK_TRIES=$((SEND_LOCK_WAIT * 10))
+      until fm_lock_try_acquire "$SEND_PROJECT_LOCK"; do
+        if [ "$SEND_LOCK_TRIES" -eq 0 ]; then
+          echo "deferred: project $(basename "$SEND_PROJECT") is busy with another spawn or send; steer to $(fm_send_id_from_meta "$TARGET_META") was not delivered - try again" >&2
+          exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
+        fi
+        SEND_LOCK_TRIES=$((SEND_LOCK_TRIES - 1))
+        sleep 0.1
+      done
+      SEND_CAPACITY_LOCK=$SEND_PROJECT_LOCK
+      SEND_ID=$(fm_send_id_from_meta "$TARGET_META")
+      if fm_project_capacity_record_released "$STATE" "$SEND_ID"; then
+        if [ -n "$FM_PROJECT_CAPACITY" ]; then
+          fm_project_capacity_occupants "$SEND_CAPACITY_LOCK" "$SEND_PROJECT" "$STATE" "$SEND_ID" || exit 1
+          if [ "$FM_PROJECT_CAPACITY_OCCUPANTS" -ge "$FM_PROJECT_CAPACITY" ]; then
+            echo "deferred: project $(basename "$SEND_PROJECT") is at capacity; steer to $SEND_ID was not delivered" >&2
+            exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
+          fi
+        fi
+        SEND_RESERVATION=
+        if [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
+          { [ "${1:-}" = --key ] ||
+          { [ -z "$FIRE_AND_FORGET_ID" ] &&
+            { [ -z "$TARGET_SELECTOR" ] || [[ "$*" = /* ]] ||
+              { [ "$TARGET_HARNESS" = codex ] && [[ "$*" = \$* ]]; }; }; }; }; then
+          SEND_RESERVATION=busy
+        fi
+        fm_project_capacity_publish reserve "$STATE" "$SEND_ID" "$SEND_RESERVATION" || exit 1
+      elif [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
+        { [ "${1:-}" = --key ] || [ -z "$FIRE_AND_FORGET_ID" ]; }; then
+        fm_project_capacity_publish reserve "$STATE" "$SEND_ID" busy || exit 1
+      fi
+    fi
+  fi
+fi
 
 if [ "${1:-}" = "--key" ]; then
   [ -z "$FIRE_AND_FORGET_ID" ] ||

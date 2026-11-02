@@ -153,6 +153,12 @@ SH
 run_pr_merge() {  # <home> <id> <url>
   local home=$1
   shift
+  # The merge entrypoint refuses a task whose brief carries no review tier.
+  if [ ! -e "$home/data/$1/brief.md" ]; then
+    mkdir -p "$home/data/$1"
+    printf '%s\n' '# Task' '## Risk and review' \
+      'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$home/data/$1/brief.md"
+  fi
   PATH="$home/fakebin:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_CONFIG_OVERRIDE="$home/config" FM_TEST_GH_LOG="$home/gh.log" \

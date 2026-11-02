@@ -3058,6 +3058,39 @@ EOF
   pass "session start rejects Pi loaded markers from previous sessions"
 }
 
+test_local_commit_warnings() {
+  local rec root home fakebin out old task
+  rec=$(new_world local-commits)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  git -C "$root" update-ref refs/remotes/origin/main HEAD
+  git -C "$root" commit -q --allow-empty -m unpublished-main
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_contains "$out" "WARNING: primary main has 1 commit(s) ahead of origin/main" "main-only commit was silent"
+  git -C "$root" update-ref refs/remotes/origin/main HEAD
+  task="$TMP_ROOT/task copy"
+  git init -q -b task "$task"
+  old=$(($(date +%s) - 90000))
+  GIT_AUTHOR_DATE="@$old +0000" GIT_COMMITTER_DATE="@$old +0000" \
+    git -C "$task" commit -q --allow-empty -m old-unpublished
+  git -C "$task" commit -q --allow-empty -m recent-unpublished
+  printf 'worktree=%s\n' "$task" > "$home/state/old-task.meta"
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" 'WARNING: primary main' "published main still warned"
+  assert_contains "$out" 'WARNING: task old-task has commits on no remote older than 24 hours' "old unpublished ancestor was silent"
+  git -C "$task" update-ref refs/remotes/backup/task HEAD
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" 'WARNING: task old-task' "a commit on another remote still warned"
+  git -C "$task" commit -q --allow-empty -m recent-only
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  assert_not_contains "$out" 'WARNING: task old-task' "recent-only unpublished work warned"
+  pass "startup warns about main ahead and old task commits on no remote"
+}
+
+test_local_commit_warnings
 test_context_digest_absent_empty_present
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path

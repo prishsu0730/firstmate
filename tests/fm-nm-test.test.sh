@@ -32,7 +32,31 @@ make_fixture() {
   local repo f
   repo=$(fm_test_tmproot nm-test) || fail "could not create a fixture root"
   fm_git_init_commit "$repo"
-  mkdir -p "$repo/bin/backends" "$repo/tests"
+  mkdir -p "$repo/bin/backends" "$repo/tests" "$repo/.git/host-tools"
+  cat >"$repo/.git/host-tools/ps" <<'PROBE'
+#!/usr/bin/env bash
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+printf 'ps %s\n' "$*" >>"$repo/.git/probes"
+if [ -f "$repo/.git/deny-ps" ]; then
+  echo 'bash: /bin/ps: Operation not permitted' >&2
+  exit 126
+fi
+printf '%s\n' "$$"
+PROBE
+  cat >"$repo/.git/host-tools/tmux" <<'PROBE'
+#!/usr/bin/env bash
+repo="$(cd "$(dirname "$0")/../.." && pwd)"
+printf 'tmux %s\n' "$*" >>"$repo/.git/probes"
+if [ -f "$repo/.git/deny-tmux" ]; then
+  echo "error connecting to $2 (Operation not permitted)" >&2
+  exit 1
+fi
+if [ -f "$repo/.git/broken-tmux" ]; then
+  echo 'tmux: protocol version mismatch' >&2
+  exit 1
+fi
+PROBE
+  chmod +x "$repo/.git/host-tools/ps" "$repo/.git/host-tools/tmux"
   cp "$WRAPPER" "$repo/bin/fm-nm-test.sh"
   cat >"$repo/bin/fm-test-run.sh" <<'RUNNER'
 #!/usr/bin/env bash
@@ -43,7 +67,7 @@ fm_keys=$(env | sed -n 's/^\(FM_[^=]*\)=.*/\1/p' | LC_ALL=C paste -sd, -)
 printf 'ARGS=%s|FM_KEYS=%s|LIMIT=%s\n' "$*" "${fm_keys:-unset}" "$(ulimit -n)" >>"$ROOT/runner.log"
 printf 'HOST=%s|PATH=%s|HOME=%s|LC_ALL=%s\n' "${NM_HOST_SETTING-unset}" "$PATH" "$HOME" "${LC_ALL-unset}" >>"$ROOT/host.log"
 if [ -f "$ROOT/.git/fm-fail-on" ] && grep -Fxq "$script" "$ROOT/.git/fm-fail-on"; then
-  echo "stand-in runner: $script failed"
+  echo "stand-in runner: $script failed (${NM_FAILURE_TEXT:-assertion})"
   exit 1
 fi
 exit 0
@@ -78,7 +102,7 @@ touch_and_commit() {  # <repo> <paths...>
 run_wrapper() {  # <repo> <args...>; leaks FM_* values on purpose
   local repo=$1
   shift
-  FIXTURE_OUT=$(cd "$repo" && FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
+  FIXTURE_OUT=$(cd "$repo" && PATH="$repo/.git/host-tools:$PATH" FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
     FM_CONFIG_OVERRIDE=/leak/config FM_DATA_OVERRIDE=/leak/data \
     FM_PROJECTS_OVERRIDE=/leak/projects FM_BACKEND=leak-backend FM_FUTURE_LEAK=leak \
     "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr")
@@ -89,7 +113,7 @@ run_wrapper() {  # <repo> <args...>; leaks FM_* values on purpose
 run_wrapper_with_low_fd_limit() {  # <repo> <args...>
   local repo=$1
   shift
-  FIXTURE_OUT=$(cd "$repo" && (ulimit -S -n 256; FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
+  FIXTURE_OUT=$(cd "$repo" && (ulimit -S -n 256; PATH="$repo/.git/host-tools:$PATH" FM_HOME=/leak/home FM_STATE_OVERRIDE=/leak/state \
     FM_CONFIG_OVERRIDE=/leak/config FM_DATA_OVERRIDE=/leak/data \
     FM_PROJECTS_OVERRIDE=/leak/projects FM_BACKEND=leak-backend FM_FUTURE_LEAK=leak \
     "$repo/bin/fm-nm-test.sh" "$@" 2>"$repo/.git/fm-stderr"))
@@ -245,6 +269,13 @@ test_runs_each_script_separately_with_clean_env() {
   assert_not_contains "$log" "/leak/" "inherited FM paths must not reach a test"
   assert_contains "$log" "FM_KEYS=unset" "every inherited FM_* variable is stripped"
   assert_contains "$log" "--per-script-timeout-secs" "each script is time-bounded"
+  local probes socket
+  probes=$(cat "$repo/.git/probes")
+  socket=$(printf '%s\n' "$probes" | awk '$1 == "tmux" {print $5; exit}')
+  assert_contains "$socket" "/fm-nm-host." "probe uses a fresh private socket"
+  assert_contains "$probes" "-f /dev/null -S $socket new-session" "probe ignores operator tmux configuration"
+  assert_contains "$probes" "-S $socket kill-server" "probe cleans up only its private server"
+  [ ! -d "${socket%/*}" ] || fail "private probe directory was left behind"
   pass "each script runs separately with inherited FM_* variables stripped"
 }
 
@@ -266,7 +297,7 @@ test_preserves_non_fm_environment() {
   NM_HOST_SETTING=$'host value\nFM_EMBEDDED=preserved' LC_ALL=C run_wrapper "$repo" --base main
   expect_code 0 "$FIXTURE_CODE" "run with unrelated host settings"
   log=$(cat "$repo/host.log")
-  assert_equals "$(printf 'HOST=host value\nFM_EMBEDDED=preserved|PATH=%s|HOME=%s|LC_ALL=C\n' "$PATH" "$HOME" "$PATH" "$HOME")" "$log" "every runner preserves unrelated host settings"
+  assert_equals "$(printf 'HOST=host value\nFM_EMBEDDED=preserved|PATH=%s|HOME=%s|LC_ALL=C\n' "$repo/.git/host-tools:$PATH" "$HOME" "$repo/.git/host-tools:$PATH" "$HOME")" "$log" "every runner preserves unrelated host settings"
   pass "unrelated host settings survive FM environment cleanup"
 }
 
@@ -343,6 +374,58 @@ test_reference_consumers_are_bounded() {
   done
   pass "reference consumers are bounded for scripts, helpers, and other files"
 }
+
+test_sandbox_denial_blocks_before_tests() {
+  local repo tool
+  for tool in ps tmux; do
+    repo=$(make_fixture)
+    touch_and_commit "$repo" bin/fm-foo.sh
+    touch "$repo/.git/deny-$tool"
+    run_wrapper "$repo" --list --base main
+    expect_code 0 "$FIXTURE_CODE" "selection does not need $tool"
+    [ ! -f "$repo/.git/probes" ] || fail "--list probed host capabilities"
+    run_wrapper "$repo" --base main
+    expect_code 77 "$FIXTURE_CODE" "$tool sandbox denial"
+    assert_contains "$FIXTURE_ERR" "BLOCKED by sandbox: $tool" "denied capability is named"
+    assert_contains "$FIXTURE_ERR" "Operation not permitted" "original denial survives"
+    assert_contains "$FIXTURE_ERR" "daemon host outside the agent sandbox" "outside-sandbox rerun is required"
+    [ ! -f "$repo/runner.log" ] || fail "tests ran despite $tool being blocked"
+    assert_not_contains "$FIXTURE_ERR" "FAILED" "sandbox denial is not a test failure"
+    pass "$tool sandbox denial is blocked with a host rerun, never a test verdict"
+  done
+}
+
+test_non_sandbox_probe_error_fails() {
+  local repo
+  repo=$(make_fixture)
+  touch_and_commit "$repo" bin/fm-foo.sh
+  touch "$repo/.git/broken-tmux"
+  run_wrapper "$repo" --base main
+  expect_code 1 "$FIXTURE_CODE" "real host probe error"
+  assert_contains "$FIXTURE_ERR" "protocol version mismatch" "real tool error survives"
+  assert_not_contains "$FIXTURE_ERR" "BLOCKED by sandbox" "other tool failures are not sandbox denials"
+  [ ! -f "$repo/runner.log" ] || fail "tests ran after a failed capability probe"
+  pass "non-sandbox host failure fails closed"
+}
+
+test_test_failure_with_permission_words_still_fails() {
+  local repo
+  repo=$(make_fixture)
+  touch_and_commit "$repo" bin/fm-foo.sh
+  printf 'tests/fm-foo.test.sh\n' >"$repo/.git/fm-fail-on"
+  # The runner's failure text mentions a denial; only capability probes classify
+  # sandbox blocks, so assertion text cannot turn a real failure into exit 77.
+  NM_FAILURE_TEXT="ps tmux Operation not permitted" run_wrapper "$repo" --base main
+  expect_code 1 "$FIXTURE_CODE" "real test failure"
+  assert_contains "$FIXTURE_OUT" "ps tmux Operation not permitted" "failing assertion really includes the denial words"
+  assert_contains "$FIXTURE_ERR" "FAILED 1 of 1" "real tests still fail"
+  assert_not_contains "$FIXTURE_ERR" "BLOCKED by sandbox" "test output cannot reclassify failure"
+  pass "real test failure remains a failure"
+}
+
+test_sandbox_denial_blocks_before_tests
+test_non_sandbox_probe_error_fails
+test_test_failure_with_permission_words_still_fails
 
 test_reference_consumers_are_bounded
 

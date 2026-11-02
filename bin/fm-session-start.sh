@@ -57,6 +57,9 @@
 #                       ceiling is tasks x the per-read bound
 #                       (FM_SESSION_START_ENDPOINT_TIMEOUT, default 10s) and
 #                       can itself reach the digest's runtime bound.
+#                       Warns when main is ahead of origin/main or a recorded
+#                       task has commits on no remote older than 24 hours,
+#                       using local remote-tracking refs without fetching.
 #                       Includes RECORD PROBLEMS from fm-captain-hold.sh
 #                       check-records (docs/captain-hold-lifecycle.md),
 #                       bounded by FM_RECORD_CHECK_TIMEOUT (default 20s).
@@ -922,11 +925,33 @@ Go to a source directly only when:
     which case that stage's sources were never emitted and must be reconciled.
 EOF
 
+# Read-only local Git evidence: remote-tracking refs are used as recorded,
+# without network access. Main is a shared ref even when FM_ROOT is a worktree.
+# Task checks use only this home's recorded worktree paths, never pool inventory.
+print_local_commit_warnings() {
+  local ahead meta task worktree old cutoff
+  ahead=$(git -C "$FM_ROOT" rev-list --count refs/remotes/origin/main..refs/heads/main 2>/dev/null) || ahead=0
+  if [ "$ahead" -gt 0 ]; then
+    printf 'WARNING: primary main has %s commit(s) ahead of origin/main (%s).\n' "$ahead" "$FM_ROOT"
+  fi
+  cutoff=$(($(date +%s) - 86400))
+  for meta in "$STATE"/*.meta; do
+    [ -f "$meta" ] || continue
+    worktree=$(fm_meta_get "$meta" worktree)
+    [ -d "$worktree" ] || continue
+    old=$(git -C "$worktree" log -1 --format=%H --before="@$cutoff" HEAD --not --remotes -- 2>/dev/null) || continue
+    [ -n "$old" ] || continue
+    task=$(basename "$meta" .meta)
+    printf 'WARNING: task %s has commits on no remote older than 24 hours (%s).\n' "$task" "$worktree"
+  done
+}
+
 # --- 6. fleet-state digest ---------------------------------------------
 # Before CONTEXT: see this file's ORDERING note. Live fleet identity is what a
 # truncated tail must never take.
 stage fleet-state
 section "FLEET STATE"
+print_local_commit_warnings
 print_backlog_compact "$DATA/backlog.md" "data/backlog.md"
 
 subsection "Work under way (state/*.meta)"
