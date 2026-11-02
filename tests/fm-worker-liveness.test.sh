@@ -618,6 +618,7 @@ SH
 test_released_attempt_crossing_window_preserves_recent_restarts() {
   local dir
   dir=$(new_case hour-edge)
+  # shellcheck disable=SC2016 # Expanded by the inner shell.
   case_env "$dir" bash -c '
     . "$1/bin/fm-worker-liveness-lib.sh"
     STATE=$FM_HOME/state
