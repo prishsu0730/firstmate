@@ -455,6 +455,9 @@ An unproven running agent on those backends also refuses lifecycle exit; an exit
 
 ### Liveness classification
 
+The watcher automatically recovers eligible local ship and scout workers through guarded relaunch, preserving their worktree and adding a progress note from durable task records.
+[`bin/fm-worker-liveness-lib.sh`](../bin/fm-worker-liveness-lib.sh) owns eligibility, progress-note contents, and attempt accounting; [`bin/fm-watch.sh`](../bin/fm-watch.sh)'s `worker_liveness_tick` owns cadence, parking, and recovery wakes.
+
 The session-start secondmate liveness sweep and the watcher's secondmate liveness tick use the recovery-grade `fm_backend_agent_state` classifier where verified.
 The comment above that function in `bin/fm-backend.sh` is the single owner of its detailed state contract and recovery authorization.
 
@@ -2487,6 +2490,11 @@ FM_SECONDMATE_LIVENESS_SECS=60   # seconds between watcher probes of each regist
 FM_SECONDMATE_LIVENESS_TIMEOUT=120   # seconds bounding each step of one watcher-driven relaunch (the wait for the home-wide relaunch lock, then the spawn), so a held lock or wedged spawn cannot stall the poll; a lock wait that hits the bound skips the relaunch without spending an attempt; zero or invalid values use 120
 FM_SECONDMATE_LIVENESS_MAX_ATTEMPTS=3   # automatic relaunch attempts allowed per mate inside the window before the watcher parks auto-relaunch behind state/.secondmate-relaunch-bound-<id> and escalates once; a later live probe clears the marker, but all attempts still count until they age out of the window; zero or invalid values use 3
 FM_SECONDMATE_LIVENESS_WINDOW_SECS=3600   # window the relaunch bound counts state/.secondmate-relaunch-<id> attempt lines over; the file is also the durable per-mate relaunch record; zero or invalid values use 3600
+FM_WORKER_LIVENESS_SECS=60   # ordinary-worker probe cadence in seconds; zero or invalid values use 60
+FM_WORKER_LIVENESS_TIMEOUT=180   # wall-clock bound in seconds for one guarded worker relaunch; zero or invalid values use 180
+FM_WORKER_LIVENESS_GRACE_SECS=120   # startup grace since task metadata changed; zero disables grace, invalid values use 120
+FM_WORKER_LIVENESS_MAX_ATTEMPTS=3   # worker relaunch budget; worker_liveness_tick in bin/fm-watch.sh owns parking and rearming; zero or invalid values use 3
+FM_WORKER_LIVENESS_WINDOW_SECS=3600   # attempt-accounting window in seconds; bin/fm-worker-liveness-lib.sh owns accounting; zero or invalid values use 3600
 FM_WEDGE_DEMAND_INSPECT_COUNT=3    # consecutive provably-working stale escalations on the same unchanged pane before demand-deep-inspection is added
 FM_WORKTREE_WRITE_PRUNE='.git node_modules .venv venv __pycache__ .mypy_cache .pytest_cache .ruff_cache .tox target dist build .next .cache vendor'   # directory names the wedge detector's task-worktree write probe skips; the default keeps .git out so a supervisor's own read-only git command can never look like crew progress; set it to the empty string to prune nothing, which widens the probe to the whole depth-bounded tree rather than disabling it
 FM_WORKTREE_WRITE_MAXDEPTH=6       # depth that same probe walks below the recorded worktree; it runs only at the moment a wedge escalation would otherwise fire, never on every poll; no probe knob applies to a secondmate, whose recorded worktree is a provisioned home the probe skips entirely

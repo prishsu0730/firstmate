@@ -34,7 +34,11 @@
 # relaunch bound. An `attempt` row is written only when fm-control is actually
 # invoked; a refusal because another lifecycle action holds the task, or because
 # the agent was found running, appends a `released` row that hands the attempt
-# back. Teardown removes the ledger, the park marker
+# back. Each release cancels its pending attempt before the time window is
+# applied, so a release cannot subtract a different, still-recent attempt.
+# Successful relaunches and failed attempts both count until their attempt
+# timestamps leave the window; `rearmed` resets the prior attempt history.
+# Teardown removes the ledger, the park marker
 # (state/.worker-relaunch-bound-<id>), and the stop marker.
 
 set -u
