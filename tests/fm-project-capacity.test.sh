@@ -793,7 +793,7 @@ test_send_under_held_project_lock_defers_with_a_message() {
     sleep 0.05
   done
   rc=0
-  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+  out=$(FM_HOME="$home" FM_SEND_SETTLE=0 FM_SEND_LOCK_WAIT=1 FM_FAKE_CALL_LOG="$case_dir/calls.log" \
     PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" w1 --key Enter 2>&1) || rc=$?
   : > "$case_dir/holder.release"
   wait "$holder" || true

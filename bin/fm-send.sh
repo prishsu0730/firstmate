@@ -771,10 +771,19 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
     fm_project_capacity_lookup "$SEND_CONFIG" "$(basename "$SEND_PROJECT")" || exit 1
     if [ -n "$FM_PROJECT_CAPACITY_ANY" ]; then
       SEND_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$SEND_PROJECT") || exit 1
-      if ! fm_lock_try_acquire "$SEND_PROJECT_LOCK"; then
-        echo "deferred: project $(basename "$SEND_PROJECT") is busy with another spawn or send; steer to $(fm_send_id_from_meta "$TARGET_META") was not delivered - try again" >&2
-        exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
-      fi
+      SEND_LOCK_WAIT=${FM_SEND_LOCK_WAIT:-30}
+      case "$SEND_LOCK_WAIT" in
+        *[!0-9]*) SEND_LOCK_WAIT=30 ;;
+      esac
+      SEND_LOCK_TRIES=$((SEND_LOCK_WAIT * 10))
+      until fm_lock_try_acquire "$SEND_PROJECT_LOCK"; do
+        if [ "$SEND_LOCK_TRIES" -eq 0 ]; then
+          echo "deferred: project $(basename "$SEND_PROJECT") is busy with another spawn or send; steer to $(fm_send_id_from_meta "$TARGET_META") was not delivered - try again" >&2
+          exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
+        fi
+        SEND_LOCK_TRIES=$((SEND_LOCK_TRIES - 1))
+        sleep 0.1
+      done
       SEND_CAPACITY_LOCK=$SEND_PROJECT_LOCK
       SEND_ID=$(fm_send_id_from_meta "$TARGET_META")
       if fm_project_capacity_record_released "$STATE" "$SEND_ID"; then
