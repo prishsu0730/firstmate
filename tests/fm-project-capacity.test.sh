@@ -276,6 +276,7 @@ test_freed_place_admits_one_manual_spawn() {
   # Dead: the worker's copy no longer exists.
   write_live "$home" dead "$case_dir/project"
   rmdir "$home/worktree-dead"
+  printf 'spawn_gen=s1.proven\n' >> "$home/state/dead.meta"
   # Active: the pane is busy.
   write_live "$home" active "$case_dir/project" "harness=claude"
   gen=$(arm_worker "$home/state" active)
@@ -290,7 +291,7 @@ test_freed_place_admits_one_manual_spawn() {
 
   # Four places: active, unread, plain, fourth hold; parked and dead are free.
   rc=0
-  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
+  out=$(FM_FAKE_DEAD_TASK=dead FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "four holders did not fill a limit of four: $out"
   assert_contains "$out" "4 already hold a place" "the count included a parked or dead worker"
   case "$out" in
@@ -306,10 +307,10 @@ test_freed_place_admits_one_manual_spawn() {
   "$ROOT/bin/fm-busy-event.sh" apply "$home/state" active idle --gen "$gen" \
     --source claude-hook --event stop
   rc=0
-  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c) || rc=$?
+  out=$(FM_FAKE_DEAD_TASK=dead FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-c) || rc=$?
   expect_code 0 "$rc" "a worker that parked did not free a place: $out"
   rc=0
-  out=$(FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
+  out=$(FM_FAKE_DEAD_TASK=dead FM_FAKE_CREW_STATE_FAIL=unread spawn_ship "$case_dir" task-d "$case_dir/unused") || rc=$?
   expect_code "$DEFER_EXIT" "$rc" "one freed place admitted two workers: $out"
   pass "armed idle and missing copies release capacity; uncertain records retain capacity"
 }
@@ -542,6 +543,7 @@ test_capacity_is_shared_by_every_local_home() {
   assert_absent "$mate/state/task-m.meta" "the deferred secondmate spawn published a record"
   printf 'pr=%s\n' "https://github.com/o/r/pull/8" >> "$root/state/live-a.meta"
   rmdir "$root/worktree-live-a"
+  printf 'spawn_gen=s1.proven\n' >> "$root/state/live-a.meta"
   rc=0
   out=$(run_spawn "$case_dir" "$mate" "$case_dir/wt-m" task-m "$mate_project" --mode no-mistakes --yolo off) || rc=$?
   expect_code 0 "$rc" "the remote home's worker, or a handed-off one, took the machine's place: $out"
@@ -1062,6 +1064,32 @@ test_other_backends_hold_capacity() {
   pass 'other backends retain capacity despite idle activity and parked runs'
 }
 
+test_missing_worktree_folder_keeps_its_place() {
+  local case_dir home out rc gen id
+  case_dir=$(make_case missing-folder task-e)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 4'
+  # Four running workers. The first is idle and armed, but its folder is gone
+  # while its window is still alive, so nothing proves it stopped.
+  for id in w1 w2 w3 w4; do
+    write_live "$home" "$id" "$case_dir/project" 'harness=claude'
+    gen=$(arm_worker "$home/state" "$id")
+    "$ROOT/bin/fm-busy-event.sh" apply "$home/state" "$id" busy --gen "$gen" \
+      --source claude-hook --event prompt
+  done
+  gen=$(arm_worker "$home/state" w1)
+  "$ROOT/bin/fm-busy-event.sh" apply "$home/state" w1 idle --gen "$gen" \
+    --source claude-hook --event stop
+  printf 'paused [at=%s]: waiting\n' "$(date +%s)" > "$home/state/w1.status"
+  rmdir "$home/worktree-w1"
+  rc=0
+  out=$(spawn_ship "$case_dir" task-e "$case_dir/unused") || rc=$?
+  expect_code "$DEFER_EXIT" "$rc" "a running endpoint with a missing worktree folder freed its place: $out"
+  assert_contains "$out" "4 already hold a place" "the worker with a missing folder was not counted"
+  assert_contains "$out" "w1" "the worker with a missing folder did not hold a place"
+  pass 'a running endpoint whose worktree folder is missing stays counted and a fifth spawn is deferred'
+}
+
 test_missing_window_needs_absence_proof_to_release() {
   local case_dir home out rc
   case_dir=$(make_case missing-window task-r another)
@@ -1180,6 +1208,7 @@ test_pr_worker_readmission
 test_other_backends_hold_capacity
 test_run_backed_unknown_keeps_capacity
 test_missing_window_needs_absence_proof_to_release
+test_missing_worktree_folder_keeps_its_place
 
 test_relaunch_and_send_require_readmission
 test_freed_place_admits_one_manual_spawn

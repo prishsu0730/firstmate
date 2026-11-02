@@ -149,9 +149,12 @@ fm_project_capacity_record_released() {  # <state-dir> <task-id>
       [ ! -e "$message" ] && [ ! -L "$message" ] || return 1
     done
   fi
-  local worktree target absence
+  local worktree target absence worktree_unknown
   worktree=$(fm_meta_get "$1/$2.meta" worktree)
-  [ -z "$worktree" ] || [ -d "$worktree" ] || return 0
+  # A missing or unreadable worktree folder is unknown state, not release proof.
+  # Only the endpoint absence verdict below may free the place in that case.
+  worktree_unknown=0
+  [ -z "$worktree" ] || { [ -d "$worktree" ] && [ -r "$worktree" ] && [ -x "$worktree" ]; } || worktree_unknown=1
   backend=$(fm_backend_of_meta "$1/$2.meta")
   target=$(fm_backend_target_of_meta "$1/$2.meta")
   # Positional parameters expand in the child shell.
@@ -172,6 +175,7 @@ fm_project_capacity_record_released() {  # <state-dir> <task-id>
       case "$absence" in gone$'\t'*|dead$'\t'*) return 0 ;; *) return 1 ;; esac
       ;;
   esac
+  [ "$worktree_unknown" = 0 ] || return 1
   # shellcheck disable=SC2016
   activity=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
