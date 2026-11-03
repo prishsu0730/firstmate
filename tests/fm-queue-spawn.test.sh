@@ -19,6 +19,9 @@ cp "$fakebin/tmux" "$fakebin/tmux-fixture"
 cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
+  *list-windows*) [ "${FM_QUEUE_UNREADABLE:-0}" != 1 ] || exit 1 ;;
+esac
+case "$*" in
   *pane_current_command*) printf 'claude\n'; exit 0 ;;
 esac
 if [ "${1:-}" = new-window ] && [ -n "${FM_QUEUE_WINDOW_LOG:-}" ]; then
@@ -85,6 +88,11 @@ pass 'idle watcher attempts prepared work and preserves the cap for uncertain wo
 "$ROOT/bin/fm-busy-event.sh" arm "$FM_HOME/state" parked --state idle --source claude-hook --event stop >/dev/null || fail 'parked hook'
 printf 'paused [at=%s]: waiting for an external condition\n' "$(date +%s)" > "$FM_HOME/state/parked.status"
 assert_contains "$("$ROOT/bin/fm-crew-state.sh" parked)" 'state: paused' 'real crew-state did not reconcile the parked endpoint'
+if FM_QUEUE_UNREADABLE=1 "$ROOT/bin/fm-spawn.sh" clear "$TMP_ROOT/project" --mode no-mistakes --yolo off --harness codex > "$TMP_ROOT/unreadable.out" 2>&1; then
+  fail 'paused worker with unreadable endpoint released spend capacity'
+fi
+assert_contains "$(cat "$TMP_ROOT/unreadable.out")" 'caps concurrent workers at 1' 'unreadable endpoint refusal was not the spend cap'
+[ ! -f "$FM_HOME/state/clear.meta" ] || fail 'unreadable paused worker allowed a spawn'
 # Advance only the persisted timer deadline, keeping the queued plan unchanged.
 printf '0\n' > "$FM_HOME/state/.queue-pull-last"
 fm_touch_epoch 0 "$FM_HOME/state/.queue-pull-last"

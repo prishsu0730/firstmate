@@ -1713,7 +1713,7 @@ spawn_refuse_if_away_spend_cap() {
       verdict=$(fm_backend_agent_state "$FM_BACKEND_VALIDATED_BACKEND" "$FM_BACKEND_VALIDATED_TARGET")
     fi
     case "$verdict" in dead|missing) continue ;; esac
-    if [ -z "$remote_host" ] && fm_worker_spend_parked "$SCRIPT_DIR" "$STATE" "$task_id"; then
+    if [ "$verdict" = live ] && fm_worker_spend_parked "$SCRIPT_DIR" "$STATE" "$task_id" "$verdict"; then
       continue
     fi
     live=$((live + 1))
