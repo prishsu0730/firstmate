@@ -1727,8 +1727,9 @@ spawn_refuse_if_away_spend_cap() {
 # away record exists (never a quiet-mode one, whose captain is present and
 # spends as attended: bin/fm-afk-contract.sh mode), a fresh ordinary spawn
 # refuses for BOTH actors once this home holds that many ordinary workers
-# whose endpoints are live or whose liveness cannot be proven absent, excluding
-# reconciled parked, paused, and done workers. A relaunch replaces a
+# whose endpoints are live or whose liveness cannot be proven absent. Only an
+# alive endpoint with reconciled parked, paused, or done state releases capacity;
+# uncertain endpoint verdicts still count regardless of semantic state. A relaunch replaces a
 # worker that already counts, and a secondmate is a persistent home rather than
 # spend, so both are exempt. Checked before any endpoint, worktree, or record
 # exists, so a refusal costs nothing to unwind; rechecked after the task-set

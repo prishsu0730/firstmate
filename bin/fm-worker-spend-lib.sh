@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Away spawn spend accounting using the existing reconciled crew-state owner.
 # Usage: fm_worker_spend_parked <script-dir> <state-dir> <task-id> <endpoint-state>
-# Only a reconciled parked, paused, or done verdict releases spend capacity.
+# bin/fm-spawn.sh's away spend-cap contract owns accounting and exemptions.
 # A live pipeline overrides an old pause in fm-crew-state.sh; failed reads,
 # conflicts, blocked work, and unknown liveness continue to count.
 # shellcheck source=bin/fm-timeout-lib.sh
