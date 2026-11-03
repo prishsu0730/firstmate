@@ -16,8 +16,8 @@ exit "${SPEND_EXIT:-0}"
 SH
 chmod +x "$TMP_ROOT/bin/fm-crew-state.sh"
 for verdict in parked paused 'done'; do
-  SPEND_VERDICT=$verdict fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker live || fail "$verdict consumed spend capacity"
-  for endpoint in unreadable unknown dead missing ''; do
+  SPEND_VERDICT=$verdict fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker alive || fail "$verdict consumed spend capacity"
+  for endpoint in unreadable unknown live dead missing ''; do
     if SPEND_VERDICT=$verdict fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker "$endpoint"; then
       fail "$verdict released spend capacity with endpoint $endpoint"
     fi
@@ -27,11 +27,11 @@ for verdict in parked paused 'done'; do
   fi
 done
 for verdict in working unknown conflict blocked failed; do
-  if SPEND_VERDICT=$verdict fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker live; then
+  if SPEND_VERDICT=$verdict fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker alive; then
     fail "$verdict incorrectly released spend capacity"
   fi
 done
-if SPEND_VERDICT=parked SPEND_EXIT=1 fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker live; then
+if SPEND_VERDICT=parked SPEND_EXIT=1 fm_worker_spend_parked "$TMP_ROOT/bin" "$TMP_ROOT/state" test-worker alive; then
   fail 'failed current-state read released spend capacity'
 fi
 pass 'parked, paused, and done release spend; active and uncertain workers count'

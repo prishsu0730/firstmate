@@ -8,7 +8,7 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-timeout-lib.sh"
 fm_worker_spend_parked() {
   local verdict
-  [ "${4:-unknown}" = live ] || return 1
+  [ "${4:-unknown}" = alive ] || return 1
   verdict=$(FM_STATE_OVERRIDE="$2" FM_CREW_STATE_NO_FORGE=1 fm_run_timed 15 "$1/fm-crew-state.sh" "$3" 2>/dev/null) || return 1
   case "$verdict" in
     'state: parked '*|'state: paused '*|'state: done '*) return 0 ;;
