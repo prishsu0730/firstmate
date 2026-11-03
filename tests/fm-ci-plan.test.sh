@@ -405,7 +405,7 @@ real_clone() {
   cp "$ROOT/bin/fm-ci-plan.sh" "$ROOT/bin/fm-test-run.sh" "$dir/repo/bin/"
   cp "$ROOT/tests/fm-ci-plan.test.sh" "$dir/repo/tests/"
   git_fx "$dir/repo" add -A
-  git_fx "$dir/repo" commit -qm "sync working tree" 2>/dev/null || true
+  git_fx "$dir/repo" commit -qm "sync working tree" >/dev/null 2>&1 || true
   git_fx "$dir/repo" branch -f plan-base HEAD
   printf '%s\n' "$dir/repo"
 }
