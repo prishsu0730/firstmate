@@ -53,9 +53,9 @@ ulimit -n 4096 2>/dev/null || true
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNNER="$ROOT/bin/fm-test-run.sh"
-# Same bound bin/fm-test-run.sh applies to --changed; see its header for the
-# measurement it is derived from.
-PER_SCRIPT_TIMEOUT_SECS=1500
+# Per-script bound for the gate. tests/fm-watch-triage.test.sh runs 1564-1673s on
+# unchanged main, so 1500s timed out a passing suite; 2100s leaves headroom above it.
+PER_SCRIPT_TIMEOUT_SECS=2100
 FALLBACK_TESTS=(tests/fm-nm-test-contract.test.sh tests/fm-test-run.test.sh)
 
 usage() {
