@@ -150,6 +150,8 @@ queue_tick() {
   if [ "$needs_intake" -eq 1 ] && [ "$fingerprint" != "$old" ]; then
     fm_wake_append check queue-intake "check: queue intake needed; read $STATE/.queue-pull-report, complete normal intake and dispatch through bin/fm-spawn.sh (save deferred argv with bin/fm-queue-pull.sh prepare)" || return 1
     printf '%s\n' "$fingerprint" > "$STATE/.queue-pull-intake"
+  elif [ "$needs_intake" -eq 0 ]; then
+    : > "$STATE/.queue-pull-intake"
   fi
 }
 

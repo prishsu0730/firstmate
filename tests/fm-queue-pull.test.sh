@@ -89,6 +89,18 @@ wait_for_exit "$watch_pid" 200 || fail "watcher did not surface queue intake: $(
 assert_contains "$(cat "$TMP_ROOT/watcher.out")" 'check: queue intake needed' 'timer result did not wake supervision'
 pass 'real watcher surfaces timer intake without any worker event'
 
+rows=$(wc -l < "$FM_HOME/state/.wake-queue")
+axi hold unprepared --reason 'temporary intake hold' --kind captain >/dev/null || fail 'intake hold'
+due; tick
+assert_contains "$(cat "$FM_HOME/state/.queue-pull-report")" 'unprepared: blocked, held, date-gated' 'intake hold not reported'
+[ "$(wc -l < "$FM_HOME/state/.wake-queue")" = "$rows" ] || fail 'held intake emitted a wake'
+axi unhold unprepared >/dev/null || fail 'intake unhold'
+due; tick
+[ "$(wc -l < "$FM_HOME/state/.wake-queue")" -eq "$((rows + 1))" ] || fail 'renewed intake did not wake supervision'
+due; tick
+[ "$(wc -l < "$FM_HOME/state/.wake-queue")" -eq "$((rows + 1))" ] || fail 'renewed unchanged intake repeated'
+pass 'intake re-arms after a temporary hold without repeating unchanged wakes'
+
 add retry
 touch "$FM_HOME/refuse"
 due; tick
