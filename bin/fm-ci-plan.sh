@@ -171,7 +171,7 @@ load_lanes() {
   LANES+=("$HERDR_LANE")
 }
 
-# emit <mode> <reason> <macos> <lane>=<selection>...
+# emit <mode> <reason> <macos_parse> <macos_tests_json> <lane>=<selection>...
 # Selections are newline-free strings; jq builds the JSON so none is spliced in.
 emit() {
   local mode=$1 reason=$2 macos_parse=$3 macos_tests=$4 macos=false any=false lane sel pair json='{}'

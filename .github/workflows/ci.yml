@@ -492,7 +492,7 @@ jobs:
     name: Stock macOS Bash snapshot compatibility
     needs: plan
     # macOS minutes cost about ten times a Linux minute, so this runs only when
-    # the plan says shell files or its own suites changed (docs and drafts skip).
+    # the planner selects parsing or a stock-Bash suite (see its header).
     if: needs.plan.outputs.macos == 'true'
     runs-on: macos-latest
     # Normal tier (see the timeout policy above).
