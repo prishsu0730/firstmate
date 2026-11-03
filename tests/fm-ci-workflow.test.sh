@@ -73,7 +73,7 @@ puts YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("timeout-minutes
 # Tier membership is the executable inventory of the timeout policy: a new job
 # must join a tier, and a job-level value outside these tiers is exactly the
 # one-off number the policy removed.
-FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate'
+FAST_TIER_JOBS='plan test-coverage invariants tests-timing-aggregate'
 NORMAL_TIER_JOBS='lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash'
 HEAVY_TIER_JOBS='tests-herdr'
 
@@ -249,7 +249,46 @@ RUBY
   pass "CI matrices cover every executable serial lane and canonical lint root exactly once"
 }
 
+# Run-only-what-changed contract (bin/fm-ci-plan.sh owns the plan itself, and
+# tests/fm-ci-plan.test.sh holds its behavior): every lane job must be keyed by
+# a name the plan emits, so a lane can be skipped by the plan but never lost by
+# a naming drift, and a skipped lane must still report a check.
+test_plan_keys_every_ci_lane_and_triggers_cover_ready_and_nightly() {
+  local planned
+  planned=$(cd "$ROOT" && env -u FM_HOME bin/fm-ci-plan.sh --event push --base HEAD 2>/dev/null \
+    | sed -n 's/^lanes=//p') || fail "could not run the CI planner"
+  ruby -ryaml -rjson - "$CI_WORKFLOW" "$planned" <<'RUBY' || fail "CI plan contract"
+doc = YAML.load_file(ARGV[0])
+jobs = doc.fetch("jobs")
+plan = JSON.parse(ARGV[1])
+shards = jobs.fetch("tests-portable-serial").fetch("strategy").fetch("matrix").fetch("shard")
+expected = ["portable-parallel-1", "portable-parallel-2", "real-herdr-gated"] +
+           shards.map { |s| "portable-serial-#{s}of#{shards.length}" }
+raise "plan lanes #{plan.keys.sort} differ from CI lanes #{expected.sort}" unless plan.keys.sort == expected.sort
+empty = plan.select { |_, v| v.to_s.empty? }.keys
+raise "a full run must schedule every lane, but #{empty} are empty" unless empty.empty?
+
+# A matrix job skipped at job level reports an unexpanded check name, so the
+# serial shards gate their steps instead and always report a result.
+raise "the serial matrix must not be skipped at job level" if jobs.fetch("tests-portable-serial").key?("if")
+plan_gated = %w[tests-portable-parallel-1 tests-portable-parallel-2 tests-herdr macos-stock-bash]
+plan_gated.each do |name|
+  raise "#{name} must wait for the plan" unless Array(jobs.fetch(name).fetch("needs")).include?("plan")
+end
+%w[lint test-coverage invariants].each do |name|
+  raise "#{name} must run on every event" if jobs.fetch(name).key?("if")
+end
+
+on = doc.fetch(true) { doc.fetch("on") }
+types = on.fetch("pull_request").fetch("types")
+raise "pull_request must include ready_for_review so a draft's heavy lanes start when it is ready" unless types.include?("ready_for_review")
+raise "a nightly schedule is required" unless on.fetch("schedule").first.key?("cron")
+RUBY
+  pass "the plan keys every CI lane, and the triggers cover ready-for-review and the nightly run"
+}
+
 test_ci_matrices_match_executable_partitions
+test_plan_keys_every_ci_lane_and_triggers_cover_ready_and_nightly
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled

@@ -111,13 +111,33 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, per-root execution contract, and memory fallback.
 Its `--list-files` interface exposes partition membership; `tests/fm-lint.test.sh` verifies complete/disjoint executed roots, initial analysis flags, and fallback reporting.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
-No fast mode, path skips, or paid runner provisioning is part of this layout.
+Lint never skips by path, and no fast mode or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the current watch-triage floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
 The layout uses fourteen long-lived Linux jobs (nine serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
+
+## Selective pull request runs
+
+A pull request runs only the behavior tests its changed files can affect, so checks finish sooner and fewer Actions minutes are spent.
+The `plan` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs `bin/fm-ci-plan.sh`, which owns the decision and its modes in its header.
+The planner reuses the runner's own changed-file map (`bin/fm-test-run.sh --list --changed`) and keeps each selected test in the lane that already owns it, so the per-lane packing and timeout tiers above are unchanged.
+Every doubt resolves to the full suite, never to a skipped test.
+
+| Run | What executes |
+|---|---|
+| Push to `main`, the nightly schedule, a manual run | Every lane, exactly as before. |
+| Pull request that changes a shared core file, a deleted or moved script, or anything the runner cannot map | Every lane. |
+| Pull request that changes mapped files | Only the selected tests, in their lanes. The large lanes (the serial shards and real Herdr) run only when a selected test belongs to them; a lane with nothing to run reports success without running. |
+| Pull request whose files no test covers, such as documentation | No behavior lane; lint, the coverage guard, and the invariants still run. |
+| Draft pull request | No behavior lane and no macOS job until it is marked ready for review, which starts a fresh run. |
+
+The shared core files are listed in the planner, and a change to the planner, the runner, or the workflow is always a full run.
+The macOS job runs for a full run, a changed shell file, or one of its own suites, because its minutes cost about ten times a Linux minute.
+Every lane keeps its check name: single-name jobs are skipped at job level, and the serial matrix gates its steps so each shard still reports.
+`tests/fm-ci-plan.test.sh` holds the planner's behavior and `tests/fm-ci-workflow.test.sh` holds the workflow wiring.
 
 ## Local entry points
 
@@ -132,7 +152,7 @@ A lane that reaches its tier bound needs investigation and a distribution or run
 
 | Tier | Jobs | Bound | Rationale |
 |---|---|---|---|
-| Fast | coverage guard, repo invariants, timing aggregate | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
+| Fast | plan, coverage guard, repo invariants, timing aggregate | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
 | Normal | lint partitions, portable parallel shards, portable serial shards, macOS stock Bash | 30 minutes, one value shared by every job in the tier | One shared hang tripwire keeps every ordinary test and lint lane on the same policy instead of allowing per-lane packing estimates or one-off caps to set the bound. |
 | Heavy | Herdr | family-run step 20 minutes under a 75-minute job-level last-resort backstop | Healthy runs finish in about 7-10 minutes, so the step tripwire fails a wedged suite while the `always()` cleanup and timing upload still run, and the job cap only catches a hang outside that step. |
 
