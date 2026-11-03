@@ -12,7 +12,6 @@ on:
   # affect, so this is the backstop that exercises the whole suite.
   schedule:
     - cron: '17 19 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: read

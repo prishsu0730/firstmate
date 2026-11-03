@@ -130,7 +130,7 @@ test_non_pull_request_events_run_the_full_suite() {
   local repo event
   repo=$(make_fixture)
   change "$repo" docs/notes.md
-  for event in push schedule workflow_dispatch; do
+  for event in push schedule; do
     plan "$repo" --event "$event" --base main
     expect_code 0 "$PLAN_CODE" "$event plan"
     assert_equals full "$(key mode)" "$event runs the full suite"
@@ -140,7 +140,7 @@ test_non_pull_request_events_run_the_full_suite() {
     assert_equals true "$(key macos)" "$event runs the macOS job"
     assert_equals true "$(key tests)" "$event runs behavior tests"
   done
-  pass "a push, the nightly schedule, and a manual run keep the full suite"
+  pass "a push and the nightly schedule keep the full suite"
 }
 
 test_lane_inventory_excludes_the_unsharded_serial_lane() {

@@ -280,6 +280,7 @@ end
 end
 
 on = doc.fetch(true) { doc.fetch("on") }
+raise "CI must expose only push, pull request, and nightly triggers" unless on.keys.sort == %w[pull_request push schedule]
 types = on.fetch("pull_request").fetch("types")
 raise "pull_request must include ready_for_review so a draft's heavy lanes start when it is ready" unless types.include?("ready_for_review")
 raise "a nightly schedule is required" unless on.fetch("schedule").first.key?("cron")
