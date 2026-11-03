@@ -135,7 +135,9 @@ Every doubt resolves to the full suite, never to a skipped test.
 | Draft pull request | No behavior lane and no macOS job until it is marked ready for review, which starts a fresh run. |
 
 The shared core files are listed in the planner, and a change to the planner, the runner, or the workflow is always a full run.
-The macOS job runs for a full run, a changed shell file, or one of its own suites, because its minutes cost about ten times a Linux minute.
+The macOS job runs when either its stock-Bash parse sweep or a behavior suite is needed.
+The parse sweep runs for any changed shell file; each behavior suite runs only when selected by the changed-file map.
+Full runs execute both the parse sweep and every macOS suite.
 Every lane keeps its check name: single-name jobs are skipped at job level, and the serial matrix gates its steps so each shard still reports.
 `tests/fm-ci-plan.test.sh` holds the planner's behavior and `tests/fm-ci-workflow.test.sh` holds the workflow wiring.
 

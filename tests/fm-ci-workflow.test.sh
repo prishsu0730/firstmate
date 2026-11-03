@@ -288,6 +288,36 @@ RUBY
   pass "the plan keys every CI lane, and the triggers cover ready-for-review and the nightly run"
 }
 
+test_macos_steps_follow_independent_selections() {
+  ruby -ryaml -rjson - "$CI_WORKFLOW" <<'RUBY' || fail "macOS selection contract"
+job = YAML.load_file(ARGV[0]).fetch("jobs").fetch("macos-stock-bash")
+evaluate = lambda do |condition, parse, suites|
+  case condition
+  when "needs.plan.outputs.macos == 'true'" then parse || !suites.empty?
+  when "needs.plan.outputs.macos_parse == 'true'" then parse
+  when "needs.plan.outputs.macos_tests != '[]'" then !suites.empty?
+  when /\Acontains\(fromJSON\(needs.plan.outputs.macos_tests\), '([^']+)'\)\z/
+    suites.include?(Regexp.last_match(1))
+  else raise "unexpected condition: #{condition}"
+  end
+end
+paths = %w[fm-fleet-snapshot-view fm-bearings-snapshot fm-public-followup fm-watch-triage fm-fork-free-helpers fm-backend]
+suites = paths.map { |p| "tests/#{p}.test.sh" }
+cases = [[false, []], [true, []], [true, suites]] + suites.map { |t| [false, [t]] }
+cases.each do |parse, selected|
+  active = job.fetch("steps").select { |step| !step.key?("if") || evaluate.call(step["if"], parse, selected) }.map { |step| step["name"] }
+  raise "job selection disagrees" unless evaluate.call(job.fetch("if"), parse, selected) == (parse || !selected.empty?)
+  raise "parse selection disagrees" unless active.include?("Parse shell files with stock Bash") == parse
+  raise "dependency selection disagrees" unless active.include?("Install stock Bash test dependencies") == !selected.empty?
+  paths.each_with_index do |path, i|
+    raise "suite selection disagrees: #{path}" unless active.include?("Run #{path} with stock Bash") == selected.include?(suites[i])
+  end
+end
+RUBY
+  pass "macOS parsing and each behavior suite follow independent selections"
+}
+
+test_macos_steps_follow_independent_selections
 test_ci_matrices_match_executable_partitions
 test_plan_keys_every_ci_lane_and_triggers_cover_ready_and_nightly
 test_pr_pushes_supersede_within_one_pr

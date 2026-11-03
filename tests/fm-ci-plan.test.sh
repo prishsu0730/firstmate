@@ -56,7 +56,7 @@ case "$*" in
       portable-serial-1of2 portable-serial-2of2 real-herdr-gated
     ;;
   "--list --lane portable-parallel-1") echo tests/a.test.sh ;;
-  "--list --lane portable-parallel-2") echo tests/b.test.sh ;;
+  "--list --lane portable-parallel-2") printf '%s\n' tests/b.test.sh tests/fm-backend.test.sh ;;
   "--list --lane portable-serial-1of2") echo tests/c.test.sh ;;
   "--list --lane portable-serial-2of2") echo tests/d.test.sh ;;
   "--list --family real-herdr-gated") echo tests/h.test.sh ;;
@@ -69,7 +69,7 @@ case "$*" in
 esac
 RUNNER
   chmod +x "$repo/bin/fm-test-run.sh" "$repo/bin/fm-ci-plan.sh"
-  for t in a b c d h z; do
+  for t in a b c d h z fm-backend; do
     printf '#!/usr/bin/env bash\n' >"$repo/tests/$t.test.sh"
   done
   printf 'base\n' >"$repo/docs/notes.md"
@@ -138,6 +138,8 @@ test_non_pull_request_events_run_the_full_suite() {
     assert_equals "--lane portable-serial-2of2" "$(lane portable-serial-2of2)" "$event keeps every serial shard"
     assert_equals "--family real-herdr-gated" "$(lane real-herdr-gated)" "$event keeps the Herdr family"
     assert_equals true "$(key macos)" "$event runs the macOS job"
+    assert_equals true "$(key macos_parse)" "$event parses shell files"
+    assert_equals 6 "$(key macos_tests | jq length)" "$event runs all macOS suites"
     assert_equals true "$(key tests)" "$event runs behavior tests"
   done
   pass "a push and the nightly schedule keep the full suite"
@@ -336,6 +338,8 @@ test_macos_job_follows_shell_changes_and_its_own_suites() {
   select_tests "$repo" tests/a.test.sh
   pr "$repo"
   assert_equals true "$(key macos)" "a changed shell file runs the stock-Bash parse sweep"
+  assert_equals true "$(key macos_parse)" "shell changes enable parsing"
+  assert_equals '[]' "$(key macos_tests)" "unrelated shell changes run no macOS behavior suites"
 
   repo=$(make_fixture)
   change "$repo" docs/notes.md
@@ -348,8 +352,10 @@ test_macos_job_follows_shell_changes_and_its_own_suites() {
   printf '#!/usr/bin/env bash\n' >"$repo/tests/fm-backend.test.sh"
   select_tests "$repo" tests/fm-backend.test.sh
   pr "$repo"
-  assert_equals full "$(key mode)" "a selected test no lane owns runs full"
-  assert_equals true "$(key macos)" "and macOS runs with it"
+  assert_equals changed "$(key mode)" "an owned macOS test keeps a narrow plan"
+  assert_equals false "$(key macos_parse)" "a selected suite alone does not enable parsing"
+  assert_equals '["tests/fm-backend.test.sh"]' "$(key macos_tests)" "only the selected macOS suite runs"
+  assert_equals true "$(key macos)" "a selected suite enables the job"
   pass "the macOS job runs for shell changes and for its own suites only"
 }
 
@@ -361,14 +367,14 @@ test_output_is_github_output_shaped() {
   pr "$repo"
   while IFS= read -r line; do
     case "$line" in
-      mode=*|reason=*|lanes=*|macos=*|tests=*) ;;
+      mode=*|reason=*|lanes=*|macos=*|macos_parse=*|macos_tests=*|tests=*) ;;
       *) fail "stdout carries a line GITHUB_OUTPUT would reject: $line" ;;
     esac
   done <<<"$PLAN_OUT"
   printf '%s\n' "$(key lanes)" | jq -e . >/dev/null || fail "lanes is not valid JSON"
-  [ "$(printf '%s\n' "$PLAN_OUT" | wc -l | tr -d ' ')" = 5 ] || fail "stdout must be exactly five key=value lines"
+  [ "$(printf '%s\n' "$PLAN_OUT" | wc -l | tr -d ' ')" = 7 ] || fail "stdout must be exactly seven key=value lines"
   assert_contains "$PLAN_ERR" "mode=changed" "the human summary goes to stderr"
-  pass "stdout is five GITHUB_OUTPUT lines and the summary goes to stderr"
+  pass "stdout is seven GITHUB_OUTPUT lines and the summary goes to stderr"
 }
 
 test_usage_errors() {

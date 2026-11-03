@@ -51,6 +51,8 @@ jobs:
       mode: ${{ steps.plan.outputs.mode }}
       lanes: ${{ steps.plan.outputs.lanes }}
       macos: ${{ steps.plan.outputs.macos }}
+      macos_parse: ${{ steps.plan.outputs.macos_parse }}
+      macos_tests: ${{ steps.plan.outputs.macos_tests }}
       tests: ${{ steps.plan.outputs.tests }}
     steps:
       - uses: actions/checkout@v6
@@ -497,7 +499,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Run snapshot consumers with stock Bash
+      - name: Parse shell files with stock Bash
+        if: needs.plan.outputs.macos_parse == 'true'
         shell: /bin/bash {0}
         env:
           PATH: /bin:/usr/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin
@@ -518,12 +521,21 @@ jobs:
           done < "$shell_inventory"
           [ "$parse_fail" -eq 0 ] || { echo "::error::stock macOS Bash 3.2 parse sweep failed"; exit 1; }
 
+      - name: Install stock Bash test dependencies
+        if: needs.plan.outputs.macos_tests != '[]'
+        run: |
+          set -eu
           command -v npm >/dev/null || { echo "::error::npm is required to install tasks-axi"; exit 1; }
           npm install -g tasks-axi@0.2.6 >/dev/null
           PATH="$(npm prefix -g)/bin:$PATH"
-          export PATH
+          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
           command -v tasks-axi >/dev/null || { echo "::error::tasks-axi is required for the stock Bash regressions"; exit 1; }
 
+      - name: Run fm-fleet-snapshot-view with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-fleet-snapshot-view.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           snapshot_output=$(/bin/bash tests/fm-fleet-snapshot-view.test.sh)
           printf '%s\n' "$snapshot_output"
           snapshot_count=$(printf '%s\n' "$snapshot_output" | grep -c '^ok - ')
@@ -532,6 +544,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-bearings-snapshot with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-bearings-snapshot.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           bearings_output=$(/bin/bash tests/fm-bearings-snapshot.test.sh)
           printf '%s\n' "$bearings_output"
           bearings_count=$(printf '%s\n' "$bearings_output" | grep -c '^ok - ')
@@ -540,6 +557,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-public-followup with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-public-followup.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           # The full public-followup suite is not a stock-bash snapshot; run only
           # the empty-lock register regression under real /bin/bash 3.2.
           pf_output=$(FM_TEST_ONLY=test_first_register_succeeds_with_empty_lock_list_under_bash32 \
@@ -551,6 +573,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-watch-triage with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-watch-triage.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           # Same shape for the watcher's churn-deferral regression: an already-
           # marked churn window expands an empty array that only stock Bash
           # treats as an unbound variable under set -u.
@@ -563,6 +590,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-fork-free-helpers with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-fork-free-helpers.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           # The fork-free hot-path helpers must stay byte-identical to the
           # commands they replace under stock Bash 3.2, which lacks the
           # printf %(...)T clock and falls back to date.
@@ -574,6 +606,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-backend with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-backend.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           backend_output=$(FM_TEST_ONLY=test_backend_source_requires_adapter_file \
             FM_TEST_BASH=/bin/bash \
             /bin/bash tests/fm-backend.test.sh)

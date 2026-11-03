@@ -13,6 +13,8 @@
 #   reason=<one line>
 #   lanes=<one-line JSON object: lane name -> selection>
 #   macos=true|false     whether the stock-Bash macOS job runs
+#   macos_parse=true|false   whether to run the stock-Bash parse sweep
+#   macos_tests=<JSON array>  selected stock-Bash behavior suites
 #   tests=true|false     whether any behavior lane runs (gates the timing job)
 #
 # A lane selection is "" (skip the lane), "--lane <name>" or
@@ -44,9 +46,9 @@
 # Lint, the test-coverage guard, and the repository invariants are not planned
 # here: they are cheap and run in every mode.
 #
-# The macOS job parses every shell file under stock Bash 3.2 and runs a few
-# named suites, so it runs for full, for any changed shell file, and when the
-# selection names one of MACOS_TESTS. docs and draft skip it.
+# The macOS parse sweep runs for full or any changed shell file. Named
+# behavior suites run for full or when selected in MACOS_TESTS. The job runs
+# when either is needed. Draft skips both.
 #
 # --base defaults to origin/main. Exit status: 0 on any plan (including full
 # reached by fallback), 2 on a usage error.
@@ -172,8 +174,11 @@ load_lanes() {
 # emit <mode> <reason> <macos> <lane>=<selection>...
 # Selections are newline-free strings; jq builds the JSON so none is spliced in.
 emit() {
-  local mode=$1 reason=$2 macos=$3 any=false lane sel pair json='{}'
-  shift 3
+  local mode=$1 reason=$2 macos_parse=$3 macos_tests=$4 macos=false any=false lane sel pair json='{}'
+  shift 4
+  if [ "$macos_parse" = true ] || [ "$macos_tests" != '[]' ]; then
+    macos=true
+  fi
   for pair in "$@"; do
     lane=${pair%%=*}
     sel=${pair#*=}
@@ -181,12 +186,15 @@ emit() {
     json=$(printf '%s' "$json" | jq -c --arg k "$lane" --arg v "$sel" '. + {($k): $v}') || exit 2
   done
   log "mode=$mode: $reason"
-  printf 'mode=%s\nreason=%s\nlanes=%s\nmacos=%s\ntests=%s\n' "$mode" "$reason" "$json" "$macos" "$any"
+  printf 'mode=%s\nreason=%s\nlanes=%s\nmacos=%s\nmacos_parse=%s\nmacos_tests=%s\ntests=%s\n' "$mode" "$reason" "$json" "$macos" "$macos_parse" "$macos_tests" "$any"
 }
 
 # emit_uniform <mode> <reason> <macos> <full|none>
 emit_uniform() {
-  local mode=$1 reason=$2 macos=$3 kind=$4 lane pairs=()
+  local mode=$1 reason=$2 macos=$3 kind=$4 lane suites='[]' pairs=()
+  if [ "$kind" = full ]; then
+    suites=$(printf '%s\n' "${MACOS_TESTS[@]}" | jq -Rsc 'split("\n")[:-1]')
+  fi
   for lane in "${LANES[@]}"; do
     if [ "$kind" = full ]; then
       pairs+=("$lane=$(lane_args "$lane")")
@@ -194,7 +202,7 @@ emit_uniform() {
       pairs+=("$lane=")
     fi
   done
-  emit "$mode" "$reason" "$macos" "${pairs[@]}"
+  emit "$mode" "$reason" "$macos" "$suites" "${pairs[@]}"
 }
 
 full_plan() {
@@ -286,6 +294,11 @@ if [ "$selected_ok" -ne 1 ]; then
   exit 0
 fi
 
+macos_parse=false
+if printf '%s\n' "$CHANGED" | grep -q '\.sh$'; then
+  macos_parse=true
+fi
+
 if [ -z "$SELECTED" ]; then
   # The runner exits cleanly with nothing only for files no test covers. For
   # source it dies instead, so an empty answer about bin/ or tests/ is a
@@ -298,7 +311,7 @@ if [ -z "$SELECTED" ]; then
         ;;
     esac
   done <<<"$CHANGED"
-  emit_uniform docs "no test covers the changed files; no behavior lane runs" false none
+  emit_uniform docs "no test covers the changed files; no behavior lane runs" "$macos_parse" none
   exit 0
 fi
 
@@ -323,17 +336,12 @@ if [ -n "$unowned" ]; then
   exit 0
 fi
 
-macos=false
-if printf '%s\n' "$CHANGED" | grep -q '\.sh$'; then
-  macos=true
-else
-  for t in "${MACOS_TESTS[@]}"; do
-    if printf '%s\n' "$SELECTED" | grep -Fxq "$t"; then
-      macos=true
-      break
-    fi
-  done
-fi
+macos_tests='[]'
+for t in "${MACOS_TESTS[@]}"; do
+  if printf '%s\n' "$SELECTED" | grep -Fxq "$t"; then
+    macos_tests=$(printf '%s' "$macos_tests" | jq -c --arg t "$t" '. + [$t]')
+  fi
+done
 
 count=$(printf '%s\n' "$SELECTED" | awk 'NF { n++ } END { print n+0 }')
-emit changed "$count test(s) selected from the changed files" "$macos" "${pairs[@]}"
+emit changed "$count test(s) selected from the changed files" "$macos_parse" "$macos_tests" "${pairs[@]}"
