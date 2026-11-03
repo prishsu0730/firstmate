@@ -24,6 +24,12 @@ esac
 if [ "${1:-}" = new-window ] && [ -n "${FM_QUEUE_WINDOW_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$FM_QUEUE_WINDOW_LOG"
 fi
+# A launched worker's window stays listed, as in a real session.
+if [ "${1:-}" = list-windows ] && [ -f "${FM_QUEUE_WINDOW_LOG:-}" ]; then
+  "${0%/*}/tmux-fixture" "$@"
+  sed -n 's/.* -n \([^ ]*\) .*/\1/p' "$FM_QUEUE_WINDOW_LOG"
+  exit 0
+fi
 exec "${0%/*}/tmux-fixture" "$@"
 SH
 chmod +x "$fakebin/tmux"
@@ -48,7 +54,7 @@ cleanup() {
 }
 trap cleanup EXIT
 start_watch() {
-  FM_POLL=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+  FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
     "$ROOT/bin/fm-watch.sh" > "$TMP_ROOT/watcher.out" 2> "$TMP_ROOT/watcher.err" &
   watch_pid=$!
 }
