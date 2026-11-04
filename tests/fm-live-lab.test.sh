@@ -230,6 +230,64 @@ lab_tmux "$C" respawn-pane -k -t firstmate:=main -c "$CH" "printf 'LABREADY-$NON
 lab_tmux "$C" display-message -p -t firstmate:=main '#{pane_pid}' > "$CH/state/.lock"
 pass "post-probe modal refuses readiness and submission without sending Enter"
 
+# A real raw-mode PTY consumer records submitted user messages, without a
+# vendor process. The fixture requires bracketed framing and preserves LF.
+cat > "$TMP_ROOT/paste-receiver.py" <<'PYTHON'
+import json, os, sys, termios, tty
+path, mode, ready = sys.argv[1:]
+tty.setraw(0)
+sys.stdout.write("\x1b[?2004h❯ "); sys.stdout.flush()
+open(ready, "w").close()
+data = b""
+while not data.endswith(b"\x1b[201~"):
+    data += os.read(0, 1)
+assert data.startswith(b"\x1b[200~"), repr(data[:30])
+text = data[6:-6].decode()
+assert os.read(0, 1) == b"\r"
+if mode == "truncated":
+    text = text[-100:]
+elif mode == "wrapped":
+    text = '\n\n<pasted_content id="09fa">\n' + text + '\n</pasted_content id="09fa">\n'
+with open(path, "a") as stream:
+    stream.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+sys.stdout.write("\r\n❯ "); sys.stdout.flush()
+import time
+time.sleep(60)
+PYTHON
+TRANSCRIPTS="$HOME/.claude/projects/$(printf '%s' "$CH" | LC_ALL=C sed 's/[^a-zA-Z0-9]/-/g')"
+mkdir -p "$TRANSCRIPTS"
+LONG_PROMPT=$(python3 - <<'PYTHON'
+print("FIRST launch identifiers\n" + "line with spaces and 台灣 text\n" * 150 + "LAST acceptance")
+PYTHON
+)
+for delivery in whole wrapped truncated; do
+  # An identical old entry must never turn a truncated new delivery green.
+  PROMPT="$LONG_PROMPT" python3 - "$TRANSCRIPTS/session.jsonl" <<'PYTHON'
+import json, os, sys
+with open(sys.argv[1], "w") as stream:
+    stream.write(json.dumps({"message": {"role": "user", "content": os.environ["PROMPT"]}}) + "\n")
+PYTHON
+  lab_tmux "$C" respawn-pane -k -t firstmate:=main -c "$CH" \
+    "python3 '$TMP_ROOT/paste-receiver.py' '$TRANSCRIPTS/session.jsonl' '$delivery' '$TMP_ROOT/$delivery.ready'"
+  for ((attempt=0; attempt<100; attempt++)); do
+    [ -f "$TMP_ROOT/$delivery.ready" ] && break
+    sleep 0.1
+  done
+  assert_present "$TMP_ROOT/$delivery.ready" "paste receiver is ready"
+  out=$("$LIVE_LAB" say "$C" "$LONG_PROMPT" 2>&1)
+  rc=$?
+  if [ "$delivery" = truncated ]; then
+    expect_code 1 "$rc" "truncated delivery cannot pass: $out"
+    assert_contains "$out" 'submission unverified' "failed delivery explains uncertainty"
+  else
+    expect_code 0 "$rc" "full multiline delivery: $out"
+    assert_contains "$out" 'full prompt verified' "complete transcript confirmed"
+  fi
+done
+lab_tmux "$C" respawn-pane -k -t firstmate:=main -c "$CH" "printf 'LABREADY-$NONCE\n❯ '; exec sleep 600"
+lab_tmux "$C" display-message -p -t firstmate:=main '#{pane_pid}' > "$CH/state/.lock"
+pass "say verifies whole multiline pastes and rejects truncation despite stale matching text"
+
 # trust: the workspace-trust prompt wedged the first lab.
 cp "$HOME/.claude.json" "$TMP_ROOT/claude.json.keep"
 node -e 'const fs=require("node:fs");const [s,h]=process.argv.slice(1);const j=JSON.parse(fs.readFileSync(s,"utf8"));delete j.projects[h];fs.writeFileSync(s,JSON.stringify(j))' "$HOME/.claude.json" "$CH"
