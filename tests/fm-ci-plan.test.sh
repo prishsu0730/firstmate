@@ -314,6 +314,63 @@ test_deleted_or_moved_source_runs_full() {
   pass "a deleted or renamed script runs the full suite"
 }
 
+# A removed file outside bin/ and tests/ has no mapping the runner can prove: the
+# file is gone, so only a literal mention of its old path in a test is found and
+# an indirect consumer is missed. The stand-in runner answers with an empty
+# selection, the answer the real runner gives for such a path.
+commit_on_main() {  # <repo> <path>: add a file to the base so the branch can remove it
+  local repo=$1 path=$2
+  mkdir -p "$(dirname "$repo/$path")"
+  printf 'base\n' >"$repo/$path"
+  git_fx "$repo" add -A
+  git_fx "$repo" commit -qm "add $path"
+  git_fx "$repo" branch -f main HEAD
+}
+
+test_deleted_file_outside_bin_and_tests_runs_full() {
+  local repo path
+  for path in config/settings.json extensions/pi/ext.ts .agents/skills/x/SKILL.md; do
+    repo=$(make_fixture)
+    commit_on_main "$repo" "$path"
+    git_fx "$repo" rm -q "$path"
+    git_fx "$repo" commit -qm remove
+    select_tests "$repo"
+    pr "$repo"
+    expect_code 0 "$PLAN_CODE" "plan after removing $path"
+    assert_equals full "$(key mode)" "removing $path never skips the behavior tests"
+    assert_contains "$(key reason)" "$path" "the removed path is named"
+    [ "$(key lanes | jq -r '[.[] | select(. == "")] | length')" = 0 ] || fail "removing $path left a lane empty"
+  done
+  pass "deleting a file outside bin/ and tests/ runs the full suite"
+}
+
+test_renamed_file_outside_bin_and_tests_runs_full() {
+  local repo
+  repo=$(make_fixture)
+  commit_on_main "$repo" config/settings.json
+  git_fx "$repo" mv config/settings.json config/prefs.json
+  git_fx "$repo" commit -qm rename
+  select_tests "$repo"
+  pr "$repo"
+  assert_equals full "$(key mode)" "a renamed config file can break an indirect consumer"
+  assert_contains "$(key reason)" "config/settings.json" "the old path is named"
+  [ "$(key lanes | jq -r '[.[] | select(. == "")] | length')" = 0 ] || fail "a rename left a lane empty"
+  pass "renaming a file outside bin/ and tests/ runs the full suite"
+}
+
+test_deleted_documentation_stays_docs_only() {
+  local repo
+  repo=$(make_fixture)
+  commit_on_main "$repo" docs/old.md
+  git_fx "$repo" rm -q docs/old.md
+  git_fx "$repo" commit -qm remove-doc
+  select_tests "$repo"
+  pr "$repo"
+  assert_equals docs "$(key mode)" "removing a documentation .md still skips behavior tests"
+  assert_equals 0 "$(all_lanes '')" "no lane runs"
+  pass "deleting a documentation .md stays docs-only"
+}
+
 test_missing_base_runs_full() {
   local repo
   repo=$(make_fixture)
@@ -471,6 +528,9 @@ test_empty_selection_for_files_no_test_covers_skips_every_lane
 test_selection_no_lane_owns_runs_full
 test_selection_that_is_not_a_test_runs_full
 test_deleted_or_moved_source_runs_full
+test_deleted_file_outside_bin_and_tests_runs_full
+test_renamed_file_outside_bin_and_tests_runs_full
+test_deleted_documentation_stays_docs_only
 test_missing_base_runs_full
 test_empty_diff_runs_full
 test_macos_job_follows_shell_changes_and_its_own_suites

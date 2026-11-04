@@ -27,7 +27,7 @@
 #   full     every lane runs unchanged. Chosen for any event that is not a
 #            pull request (a main push and the nightly schedule keep full
 #            coverage), for a change to shared core files (CORE_PATTERNS),
-#            for a deleted or renamed bin/ or tests/ file, and whenever the
+#            for a deleted or renamed file other than a documentation .md, and whenever the
 #            plan cannot be proven: an unreadable diff, a selection error, an
 #            unmapped path, or a selection no lane owns. Fail closed: every
 #            doubt resolves to full, never to a skipped test.
@@ -264,14 +264,25 @@ while IFS= read -r path; do
   fi
 done <<<"$CHANGED"
 
+# A removed path cannot be mapped to the tests that read it: the file is gone,
+# so the runner can only search test text for its old name and an indirect
+# consumer is missed. Only a removed documentation file is proven safe to leave
+# to that search; any other removal or rename runs the whole suite.
+removal_is_doc_only() {
+  case "$1" in
+    docs/*.md) return 0 ;;
+    */*) return 1 ;;
+    *.md) return 0 ;;
+  esac
+  return 1
+}
+
 while IFS= read -r path; do
   [ -n "$path" ] || continue
-  case "$path" in
-    bin/*|tests/*)
-      full_plan "deleted or moved file may leave consumers broken: $path"
-      exit 0
-      ;;
-  esac
+  if ! removal_is_doc_only "$path"; then
+    full_plan "deleted or moved file may leave consumers broken: $path"
+    exit 0
+  fi
 done <<<"$REMOVED"
 
 if ! SELECTED=$("$RUNNER" --list --changed --base "$BASE" 2>/dev/null); then

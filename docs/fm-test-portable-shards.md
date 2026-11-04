@@ -133,7 +133,7 @@ Every doubt resolves to the full suite, never to a skipped test.
 | Run | What executes |
 |---|---|
 | Push to `main`, the nightly schedule | Every lane, exactly as before. |
-| Ready pull request that changes a shared core file, a deleted or moved `bin/` or `tests/` file, or anything the runner cannot map | Every lane. |
+| Ready pull request that changes a shared core file, any deleted or moved file other than a documentation `.md`, or anything the runner cannot map | Every lane. |
 | Pull request that changes mapped files | Only the selected tests, in their lanes. The large lanes (the serial shards and real Herdr) run only when a selected test belongs to them; a lane with nothing to run reports success without running. |
 | Pull request whose files no test covers, such as documentation | No behavior lane; lint, the coverage guard, and the invariants still run. |
 | Draft pull request | No behavior lane and no macOS job until it is marked ready for review, which starts a fresh run. |
