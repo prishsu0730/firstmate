@@ -50,7 +50,10 @@
 #     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
 #     Missing or unreadable worktree folders retain occupancy unless
 #     fm_control_endpoint_absence_verdict proves the endpoint gone or dead.
-# A place frees only on a fresh admission-time check of current idle or absence
+#     Codex workers may instead supply a current-launch successful process-exit
+#     receipt plus a done declaration with a recorded PR or saved scout report
+#     (bin/fm-codex-worker.sh). This does not declare an interactive Codex idle.
+# A place frees only on a fresh admission-time check of current idle, exit, or absence
 # proof, or cleanup removing the record. Stored PR and status records alone
 # never release a place. Relaunches and steers to released workers
 # must pass admission before resuming.
@@ -177,6 +180,12 @@ fm_project_capacity_record_released() {  # <state-dir> <task-id>
       ;;
   esac
   [ "$worktree_unknown" = 0 ] || return 1
+  # An unverified backend cannot prove a stopped shell. A launch-owned receipt
+  # can prove our Codex process returned; unreadable endpoints still fail closed.
+  if [ "$endpoint" = unverified ] &&
+    fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-codex-worker.sh" released "$1" "$2"; then
+    return 0
+  fi
   # shellcheck disable=SC2016
   activity=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"

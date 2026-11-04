@@ -1203,6 +1203,46 @@ EOF
   pass 'stale and fresh watcher completions cannot release uncertain workers'
 }
 
+# A process-exit receipt, unlike a PR alone, proves our unverified Codex
+# launch returned. Admission still owns the queued reviewer's transition.
+test_codex_exit_admits_queued_reviewer() {
+  local case_dir home out rc wt
+  case_dir=$(make_case codex-exit reviewer)
+  home="$case_dir/home"
+  declare_capacity "$home" 'project 1'
+  write_live "$home" completed "$case_dir/project" 'backend=cmux' \
+    'pr=https://github.com/o/r/pull/9' \
+    "tasktmp=$home/completed-tmp"
+  mkdir -p "$home/completed-tmp"
+  wt=$(new_worktree "$case_dir" completed)
+  printf 'worktree=%s\n' "$wt" >> "$home/state/completed.meta"
+  printf 'preserve uncommitted work\n' > "$wt/unlanded.txt"
+  printf 'done [at=1793790163]: PR https://github.com/o/r/pull/9 checks green\n' \
+    > "$home/state/completed.status"
+  rc=0
+  out=$(spawn_ship "$case_dir" reviewer "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "unverified worker without exit proof released: $out"
+  "$ROOT/bin/fm-codex-worker.sh" run "$home/state" completed s-completed \
+    bash -c 'exit 0' || fail 'process exit receipt not written'
+  mkdir -p "$home/state/completed.inbox/handled"
+  printf 'new work\n' > "$home/state/completed.inbox/001.msg"
+  rc=0
+  out=$(spawn_ship "$case_dir" reviewer "$case_dir/unused") || rc=$?
+  expect_code 75 "$rc" "unread steer released completed worker: $out"
+  # Acknowledge the fixture message through the production inbox interface.
+  FM_TASK_INBOX="$home/state/completed.inbox" "$ROOT/bin/fm-inbox-ack.sh" 001 || fail 'ack failed'
+  rc=0
+  out=$(spawn_ship "$case_dir" reviewer "$(new_worktree "$case_dir" reviewer)") || rc=$?
+  expect_code 0 "$rc" "completed Codex blocked reviewer admission: $out"
+  assert_present "$home/state/reviewer.meta" 'queued reviewer not admitted'
+  assert_present "$home/state/completed.meta" 'completion removed task record'
+  [ "$(cat "$wt/unlanded.txt")" = 'preserve uncommitted work' ] || fail 'release touched worktree'
+  [ "$(git -C "$wt" branch --show-current)" = wt-completed ] || fail 'release changed branch'
+  [ "$(git -C "$wt" status --porcelain)" = '?? unlanded.txt' ] || fail 'release changed unlanded status'
+  pass 'Codex exit admits queued reviewer without discarding work or bypassing unread steering'
+}
+
+test_codex_exit_admits_queued_reviewer
 test_pr_completion_requires_fresh_idle_check
 test_pr_worker_readmission
 test_other_backends_hold_capacity
