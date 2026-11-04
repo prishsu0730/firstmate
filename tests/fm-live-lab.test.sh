@@ -89,7 +89,7 @@ make_lab() {
 
   lab_tmux "$root" new-session -d -s firstmate -n lab -c "$root" 'exec sleep 600'
   record_pid "$root" "$(lab_tmux "$root" display-message -p '#{pid}')"
-  lab_tmux "$root" new-window -d -t firstmate: -n main -c "$home" "printf 'LABREADY-$NONCE\n'; exec sleep 600"
+  lab_tmux "$root" new-window -d -t firstmate: -n main -c "$home" "printf 'LABREADY-$NONCE\n❯ '; exec sleep 600"
   lab_tmux "$root" new-window -d -t firstmate: -n "fm-$MATE_ID" -c "$root/mate" 'exec sleep 600'
   lab_tmux "$root" new-window -d -t firstmate: -n "fm-$WORKER_ID" -c "$root" 'exec sleep 600'
   fm_write_meta "$home/state/$MATE_ID.meta" "window=firstmate:fm-$MATE_ID" "tasktmp=/tmp/fm-$MATE_ID"
@@ -190,7 +190,7 @@ lab_tmux "$C" rename-window -t firstmate:=wtmain main
 run_check "$WT_CASE"
 assert_contains "$CHECK_OUT" "fail primary: the lab home is not a primary checkout" "primary refuses a linked-worktree home"
 lab_tmux "$C" kill-window -t firstmate:=main
-lab_tmux "$C" new-window -d -t firstmate: -n main -c "$CH" "printf 'LABREADY-$NONCE\n'; exec sleep 600"
+lab_tmux "$C" new-window -d -t firstmate: -n main -c "$CH" "printf 'LABREADY-$NONCE\n❯ '; exec sleep 600"
 lab_tmux "$C" display-message -p -t firstmate:=main '#{pane_pid}' > "$CH/state/.lock"
 pass "primary fails when the primary runs in a linked worktree instead of the lab's primary checkout"
 
@@ -200,6 +200,35 @@ run_check "$C"
 assert_contains "$CHECK_OUT" "fail probe: no LABREADY-00000000 reply" "probe names the missing reply"
 set_record "$C" nonce "$NONCE"
 pass "probe fails when the primary never answered its nonce"
+
+# A modal appearing after a successful probe invalidates readiness and say.
+MODAL_INPUT="$TMP_ROOT/modal-input"
+lab_tmux "$C" respawn-pane -k -t firstmate:=main -c "$CH" "printf 'LABREADY-$NONCE\nYou already have auto-mode entries — add to them, or start fresh?\n   ❯ 1. Add to them (keeps your existing entries)\n     2. Start fresh (replaces the environment section)\n     3. Cancel\n\n   Enter to continue · Esc to cancel\n'; exec cat > '$MODAL_INPUT'"
+for ((attempt=0; attempt<50; attempt++)); do
+  screen=$(lab_tmux "$C" capture-pane -p -t firstmate:=main)
+  [[ "$screen" == *'3. Cancel'* ]] && break
+  sleep 0.1
+done
+assert_contains "$screen" '3. Cancel' "post-probe modal is displayed"
+lab_tmux "$C" display-message -p -t firstmate:=main '#{pane_pid}' > "$CH/state/.lock"
+run_check "$C"
+expect_code 1 "$CHECK_RC" "post-probe modal refuses readiness"
+assert_contains "$CHECK_OUT" 'fail composer:' "readiness reports the blocking composer"
+out=$("$LIVE_LAB" say "$C" 'Launch the trial' 2>&1)
+expect_code 1 "$?" "post-probe modal refuses submission"
+assert_contains "$out" '3. Cancel' "submission reports the exact blocking screen"
+# Send a sentinel ourselves to flush canonical input; a helper Enter would
+# have flushed a prior line and made the input contain more than this sentinel.
+lab_tmux "$C" send-keys -t firstmate:=main -l SENTINEL
+lab_tmux "$C" send-keys -t firstmate:=main Enter
+for ((attempt=0; attempt<50; attempt++)); do
+  [ -s "$MODAL_INPUT" ] && break
+  sleep 0.1
+done
+assert_equals SENTINEL "$(cat "$MODAL_INPUT")" "neither prompt text nor Enter reached the modal"
+lab_tmux "$C" respawn-pane -k -t firstmate:=main -c "$CH" "printf 'LABREADY-$NONCE\n❯ '; exec sleep 600"
+lab_tmux "$C" display-message -p -t firstmate:=main '#{pane_pid}' > "$CH/state/.lock"
+pass "post-probe modal refuses readiness and submission without sending Enter"
 
 # trust: the workspace-trust prompt wedged the first lab.
 cp "$HOME/.claude.json" "$TMP_ROOT/claude.json.keep"
@@ -598,6 +627,7 @@ PARTIAL="$TMP_ROOT/partial-lab"
 mkdir -p "$TMP_ROOT/stub-bin"
 cat > "$TMP_ROOT/stub-bin/claude" <<'SH'
 #!/bin/sh
+printf '❯ '
 : > "$FM_HOME/state/.session-start-complete"
 exec sleep 45 >/dev/null 2>&1
 SH
@@ -702,6 +732,7 @@ if node -e 'const [s,k]=process.argv.slice(1);const j=JSON.parse(require("node:f
 else
   echo absent > "$FM_HOME/../claude-launch-trust"
 fi
+printf '❯ '
 : > "$FM_HOME/state/.session-start-complete"
 exec sleep 45 >/dev/null 2>&1
 SH
