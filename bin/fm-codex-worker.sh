@@ -55,7 +55,7 @@ case "$action" in
     [ -f "$state/$id.status" ] && [ ! -L "$state/$id.status" ] && [ -r "$state/$id.status" ] || exit 1
     kind=$(fm_meta_get "$meta" kind)
     line=$(status_current_line "$state/$id.status" "$kind") || exit 1
-    [ "$(status_line_verb "$line")" = done ] || exit 1
+    [ "$(status_line_verb "$line")" = "done" ] || exit 1
     case "$kind" in
       scout)
         report="${state%/*}/data/$id/report.md"
