@@ -44,8 +44,9 @@
 #   draft    a draft pull request. Behavior lanes and the macOS job wait for
 #            ready_for_review, which triggers a fresh run.
 #
-# Lint, the test-coverage guard, and the repository invariants are not planned
-# here: they are cheap and run in every mode.
+# The workflow also reuses this planner for lint selection; see
+# docs/fm-test-portable-shards.md for that contract. The test-coverage guard
+# and repository invariants run in every mode independently of this plan.
 #
 # The macOS parse sweep runs for full or any changed shell file. Named
 # behavior suites run for full or when selected in MACOS_TESTS. The job runs
