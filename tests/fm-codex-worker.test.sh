@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Portable launch-exit proof with real child processes, no vendor name mocks.
 set -u
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh" || exit 1
 TMP_ROOT=$(fm_test_tmproot fm-codex-worker)
 mkdir -p "$TMP_ROOT/state" "$TMP_ROOT/data/worker" "$TMP_ROOT/tasktmp"
