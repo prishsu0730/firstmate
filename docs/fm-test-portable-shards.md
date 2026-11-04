@@ -112,10 +112,14 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 ## Lint partitions and end-to-end latency
 
 `bin/fm-lint.sh` owns two canonical CI partitions, each attempting full source-aware ShellCheck analysis and running workflow validation and backend-purity checks.
+Main pushes and scheduled runs use those full partitions.
+Pull requests, including drafts, reuse the behavior planner with draft suppression disabled: changed and documentation-only plans run the linter's changed-file mode against the PR base in both required lint jobs.
+Shared-core changes, uncertain selections, and lint-tooling changes retain full partitions; [the workflow](../.github/workflows/ci.yml) owns the exact tooling override patterns and invocation.
+Changed-file mode retains dataflow analysis but disables source following and its context-dependent diagnostics, as specified in the linter's header; workflow validation and backend-purity checks still run.
 CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, per-root execution contract, and memory fallback.
 Its `--list-files` interface exposes partition membership; `tests/fm-lint.test.sh` verifies complete/disjoint executed roots, initial analysis flags, and fallback reporting.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
-Lint never skips by path, and no fast mode or paid runner provisioning is part of this layout.
+Both lint check names remain present even when there are no changed shell targets, and no fast mode or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the current watch-triage floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
