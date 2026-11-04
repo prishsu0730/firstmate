@@ -64,6 +64,15 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   "Schema: \(.schema)",
   "Home: \(.fm_home)",
   "",
+  "## Free Slots",
+  (if (.free_slots // []) | length == 0 then
+    "No ready free slots found."
+   else
+    "| Project | Free slots | Ready task IDs |",
+    "| --- | ---: | --- |",
+    (.free_slots[] | "| \(.project) | \(.free) | \((.ready_task_ids // []) | join(", ")) |")
+   end),
+  "",
   "## Under Way",
   (if (.tasks | length) == 0 then
     "No live task metadata found."
