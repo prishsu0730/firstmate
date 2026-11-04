@@ -264,8 +264,13 @@ assert_no_re() {  # <regex> <file> <msg>
   ! grep -E -- "$1" "$2" >/dev/null || fail "$3"$'\n'"--- $2 ---"$'\n'"$(cat "$2" 2>/dev/null)"
 }
 
+# A positive wait returns as soon as its condition holds, so a longer budget only
+# costs time when the condition never arrives. The budget is multiplied for slow
+# or loaded runners (CI serial shards run for many minutes, and a host that needs
+# 28s instead of 25s must not fail the suite); an assertion that something does NOT
+# happen sets FM_TEST_WAIT_SCALE=1 so its quiet window keeps its exact length.
 wait_until() {  # <polls of 0.1s> <command...>
-  local limit=$1 i=0
+  local limit=$(($1 * ${FM_TEST_WAIT_SCALE:-3})) i=0
   shift
   while [ "$i" -lt "$limit" ]; do
     "$@" && return 0

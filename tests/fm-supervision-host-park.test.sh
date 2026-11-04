@@ -60,7 +60,7 @@ test_attended_latch_keeps_closes_on_main_and_records_recovery_off_main() {
   wait_until 250 handled_at_least "$home" $((handled + 1)) \
     || fail "latch: the successful probe was not handled: $(cat "$home/host.out"; tail -n 5 "$home/state/.supervision-host.log")"
   assert_re '	recovered	after a successful probe$' "$home/state/.supervision-host.log" "the ledger must record the recovery"
-  ! wait_until 20 host_exited "$home" || fail "a routine probe's recovery reached main: $(cat "$home/host.out")"
+  ! FM_TEST_WAIT_SCALE=1 wait_until 20 host_exited "$home" || fail "a routine probe's recovery reached main: $(cat "$home/host.out")"
   assert_no_re '^supervision-host' "$home/host.out" "a recovery must stay off main"
   assert_grep 'cooldown=0' "$home/state/.supervision-host-health" "a successful probe must clear the latch"
   assert_grep 'errors=0' "$home/state/.supervision-host-health" "a successful probe must clear the error streak"
@@ -514,7 +514,7 @@ test_unchanged_held_outcome_reaches_the_captain_once_until_a_new_event() {
       || fail "held: could not age the scan marker before cadence $cycle"
     wait_until 150 scan_ran "$home" || fail "held: cadence $cycle never rescanned"
     wait_until 150 scan_idle "$home" || fail "held: cadence $cycle never finished its scan"
-    ! wait_until 10 flood_signal "$home" \
+    ! FM_TEST_WAIT_SCALE=1 wait_until 10 flood_signal "$home" \
       || fail "held: cadence $cycle re-escalated the unchanged held outcome: $(cat "$home/state/branch-outcomes.jsonl")"
   done
   [ "$(captain_rows "$home")" -eq 1 ] || fail "held: the unchanged situation reached the captain $(captain_rows "$home") times"

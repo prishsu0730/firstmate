@@ -827,7 +827,7 @@ test_claude_stop_hook_host_does_not_rewake_a_delivered_unacked_recovery() {
 
   # Main's turn ends without running its acknowledgement.
   turn_end "$home"
-  ! wait_until 150 hook_exited "$home" \
+  ! FM_TEST_WAIT_SCALE=1 wait_until 150 hook_exited "$home" \
     || fail "unacked recovery: the next turn end rewoke main with the same unacknowledged news: $(cat "$home/hook.err")"
   watcher_live "$home" || fail "unacked recovery: the quiet park left no live watcher"
   [ "$(cat "$home/state/.watcher-down")" = "$delivered" ] \
