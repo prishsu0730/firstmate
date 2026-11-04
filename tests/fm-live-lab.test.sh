@@ -718,6 +718,7 @@ cp -R "$UPSRC" "$WORKSRC"
 cat > "$WORKSRC/bin/fm-brief.sh" <<'SH'
 #!/usr/bin/env bash
 mkdir -p "$FM_HOME/data/$1"
+printf '%s\n' "${FM_STATE_OVERRIDE-unset}" > "$FM_HOME/state/seen-state-override"
 printf '{TASK}\n{FIRSTMATE_SPEC}\n' > "$FM_HOME/data/$1/brief.md"
 SH
 cat > "$WORKSRC/bin/fm-tasks-axi.sh" <<'SH'
@@ -751,6 +752,7 @@ assert_contains "$out" "gate: $W/home/data/" "up shows the gate path"
 assert_contains "$out" "then message the worker to resume" "up explains the release message"
 worker_id=$(sed -n 's/^worker_id=//p' "$W/.fm-live-lab")
 brief=$(<"$W/home/data/$worker_id/brief.md")
+assert_equals "$W/home/state" "$(<"$W/home/state/seen-state-override")" "worker brief setup uses lab state override"
 assert_contains "$brief" "append one paused status line naming the gate file" "worker declares its wait"
 assert_contains "$brief" "and end your turn" "worker ends its waiting turn"
 assert_contains "$brief" "Do not poll or sleep in a foreground command" "worker does not run a blocking wait"
