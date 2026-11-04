@@ -14,7 +14,7 @@ Use the slowest successful `duration_ms` per script across their uploaded portab
 All artifact records were cross-checked against the corresponding job's markers.
 That refresh covered 24 parallel and 201 serial members; an existing live-capability skip is a portable-runner measurement, not a timing claim for the unavailable live integration.
 Observed maxima provide conservative packing weights, not an upper bound on future durations.
-The 71 subsequently added test scripts have serial hints without recorded measurement provenance; those hints do not establish Ubuntu CI durations and need refreshing from successful CI samples using the procedure below.
+Serial hints added after that baseline and not covered by the refresh below still need recorded measurement provenance; those hints do not establish Ubuntu CI durations and need refreshing from successful CI samples using the procedure below.
 
 Two serial-5 jobs were cancelled at their 30-minute cap and uploaded no artifact.
 Their completed log markers supplement the complete runs, but a cancelled job's wall time is only a lower bound and its unfinished or never-started scripts have no completed sample.
@@ -133,14 +133,14 @@ Every doubt resolves to the full suite, never to a skipped test.
 | Run | What executes |
 |---|---|
 | Push to `main`, the nightly schedule | Every lane, exactly as before. |
-| Pull request that changes a shared core file, a deleted or moved script, or anything the runner cannot map | Every lane. |
+| Ready pull request that changes a shared core file, a deleted or moved `bin/` or `tests/` file, or anything the runner cannot map | Every lane. |
 | Pull request that changes mapped files | Only the selected tests, in their lanes. The large lanes (the serial shards and real Herdr) run only when a selected test belongs to them; a lane with nothing to run reports success without running. |
 | Pull request whose files no test covers, such as documentation | No behavior lane; lint, the coverage guard, and the invariants still run. |
 | Draft pull request | No behavior lane and no macOS job until it is marked ready for review, which starts a fresh run. |
 
-The shared core files are listed in the planner, and a change to the planner, the runner, or the workflow is always a full run.
+The shared core files are listed in the planner; on a ready pull request, a change to the planner, the runner, or the workflow is always a full run.
 The macOS job runs when either its stock-Bash parse sweep or a behavior suite is needed.
-The parse sweep runs for any changed shell file; each behavior suite runs only when selected by the changed-file map.
+On a ready pull request, the parse sweep runs for any changed shell file; each behavior suite runs only when selected by the changed-file map.
 Full runs execute both the parse sweep and every macOS suite.
 Every lane keeps its check name: single-name jobs are skipped at job level, and the serial matrix gates its steps so each shard still reports.
 `tests/fm-ci-plan.test.sh` holds the planner's behavior and `tests/fm-ci-workflow.test.sh` holds the workflow wiring.
