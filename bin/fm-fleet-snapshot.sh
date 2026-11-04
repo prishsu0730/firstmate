@@ -241,24 +241,22 @@ esac
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 free_slots_json() {
-  local project capacity line names=() json='[]' ready_json live
-  [ -r "$CONFIG/project-capacity" ] || { printf '[]'; return 0; }
-  while IFS= read -r line || [ -n "$line" ]; do
-    line=${line%$'\r'}
-    line=${line#"${line%%[![:space:]]*}"}
-    line=${line%"${line##*[![:space:]]}"}
-    case "$line" in ''|'#'|'#'[[:space:]]*) continue ;; esac
-    case "${line##*[[:space:]]}" in ''|*[!0-9]*) continue ;; esac
-    project=${line%" ${line##*[[:space:]]}"}
-    names+=("$project")
-  done < "$CONFIG/project-capacity"
+  local project capacity names=() json='[]' ready_json live config project_dir lock
+  [ -d "$STATE" ] || { printf '[]'; return 0; }
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  config=$(fm_project_capacity_config_dir "$FM_HOME" "$CONFIG") || return 1
+  fm_project_capacity_lookup "$config" '' || return 1
+  [ -n "$FM_PROJECT_CAPACITY_ANY" ] || { printf '[]'; return 0; }
+  names=("${FM_PROJECT_CAPACITY_NAMES[@]}")
   for project in "${names[@]}"; do
-    fm_project_capacity_lookup "$CONFIG" "$project" || continue
+    fm_project_capacity_lookup "$config" "$project" || return 1
     capacity=$FM_PROJECT_CAPACITY
-    [ -n "$capacity" ] || continue
-    live=$(jq --arg project "$project" '[.[] | select(.kind != "secondmate" and .project == $project and (.current_state.state // "") != "done" and (.current_state.state // "") != "parked" and (.current_state.state // "") != "paused")] | length' "$TASKS_JSON_FILE")
+    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || continue
+    lock=$(fm_treehouse_project_lock_path "$project_dir") || return 1
+    fm_project_capacity_occupants "$lock" "$project_dir" "$STATE" '' || return 1
+    live=$FM_PROJECT_CAPACITY_OCCUPANTS
     [ "$live" -lt "$capacity" ] || continue
-    ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
+    ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and (.kind == "ship" or .kind == "scout") and .hold_bucket == null and .hold_reason == null and .hold_kind == null and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
     [ "$ready_json" != '[]' ] || continue
     json=$(jq -c --arg project "$project" --argjson free "$((capacity - live))" --argjson ids "$ready_json" '. + [{project:$project,free:$free,ready_task_ids:$ids}]' <<<"$json")
   done

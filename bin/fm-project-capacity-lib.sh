@@ -247,6 +247,7 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
   FM_PROJECT_CAPACITY_FILE="$1/project-capacity"
   FM_PROJECT_CAPACITY=
   FM_PROJECT_CAPACITY_ANY=
+  FM_PROJECT_CAPACITY_NAMES=()
   FM_PROJECT_CAPACITY_ERROR=
   if [ ! -e "$FM_PROJECT_CAPACITY_FILE" ] && [ ! -L "$FM_PROJECT_CAPACITY_FILE" ]; then
     return 0
@@ -301,6 +302,7 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
         ;;
     esac
     seen="$seen$pname|"
+    FM_PROJECT_CAPACITY_NAMES+=("$pname")
     [ "$pname" != "$name" ] || FM_PROJECT_CAPACITY=$pcap
   done < "$FM_PROJECT_CAPACITY_FILE"
   [ "$seen" = '|' ] || FM_PROJECT_CAPACITY_ANY=1
