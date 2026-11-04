@@ -258,6 +258,7 @@ esac
 free_slots_json() {
   local project capacity names=() json='[]' ready_json live config project_dir lock
   [ -d "$STATE" ] || { printf '[]'; return 0; }
+  # shellcheck source=bin/fm-wake-lib.sh
   . "$SCRIPT_DIR/fm-wake-lib.sh"
   config=$(fm_project_capacity_config_dir "$FM_HOME" "$CONFIG") || return 1
   fm_project_capacity_lookup "$config" '' || return 1
