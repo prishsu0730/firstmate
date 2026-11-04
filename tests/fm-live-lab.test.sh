@@ -627,6 +627,7 @@ PARTIAL="$TMP_ROOT/partial-lab"
 mkdir -p "$TMP_ROOT/stub-bin"
 cat > "$TMP_ROOT/stub-bin/claude" <<'SH'
 #!/bin/sh
+printf '❯ '
 : > "$FM_HOME/state/.session-start-complete"
 exec sleep 45 >/dev/null 2>&1
 SH
@@ -731,6 +732,7 @@ if node -e 'const [s,k]=process.argv.slice(1);const j=JSON.parse(require("node:f
 else
   echo absent > "$FM_HOME/../claude-launch-trust"
 fi
+printf '❯ '
 : > "$FM_HOME/state/.session-start-complete"
 exec sleep 45 >/dev/null 2>&1
 SH
