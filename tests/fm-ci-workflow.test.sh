@@ -73,7 +73,7 @@ puts YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("timeout-minutes
 # Tier membership is the executable inventory of the timeout policy: a new job
 # must join a tier, and a job-level value outside these tiers is exactly the
 # one-off number the policy removed.
-FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate'
+FAST_TIER_JOBS='plan test-coverage invariants tests-timing-aggregate'
 NORMAL_TIER_JOBS='lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash'
 HEAVY_TIER_JOBS='tests-herdr'
 
@@ -249,7 +249,77 @@ RUBY
   pass "CI matrices cover every executable serial lane and canonical lint root exactly once"
 }
 
+# Run-only-what-changed contract (bin/fm-ci-plan.sh owns the plan itself, and
+# tests/fm-ci-plan.test.sh holds its behavior): every lane job must be keyed by
+# a name the plan emits, so a lane can be skipped by the plan but never lost by
+# a naming drift, and a skipped lane must still report a check.
+test_plan_keys_every_ci_lane_and_triggers_cover_ready_and_nightly() {
+  local planned
+  planned=$(cd "$ROOT" && env -u FM_HOME bin/fm-ci-plan.sh --event push --base HEAD 2>/dev/null \
+    | sed -n 's/^lanes=//p') || fail "could not run the CI planner"
+  ruby -ryaml -rjson - "$CI_WORKFLOW" "$planned" <<'RUBY' || fail "CI plan contract"
+doc = YAML.load_file(ARGV[0])
+jobs = doc.fetch("jobs")
+plan = JSON.parse(ARGV[1])
+shards = jobs.fetch("tests-portable-serial").fetch("strategy").fetch("matrix").fetch("shard")
+expected = ["portable-parallel-1", "portable-parallel-2", "real-herdr-gated"] +
+           shards.map { |s| "portable-serial-#{s}of#{shards.length}" }
+raise "plan lanes #{plan.keys.sort} differ from CI lanes #{expected.sort}" unless plan.keys.sort == expected.sort
+empty = plan.select { |_, v| v.to_s.empty? }.keys
+raise "a full run must schedule every lane, but #{empty} are empty" unless empty.empty?
+
+# A matrix job skipped at job level reports an unexpanded check name, so the
+# serial shards gate their steps instead and always report a result.
+raise "the serial matrix must not be skipped at job level" if jobs.fetch("tests-portable-serial").key?("if")
+plan_gated = %w[tests-portable-parallel-1 tests-portable-parallel-2 tests-herdr macos-stock-bash]
+plan_gated.each do |name|
+  raise "#{name} must wait for the plan" unless Array(jobs.fetch(name).fetch("needs")).include?("plan")
+end
+%w[lint test-coverage invariants].each do |name|
+  raise "#{name} must run on every event" if jobs.fetch(name).key?("if")
+end
+
+on = doc.fetch(true) { doc.fetch("on") }
+raise "CI must expose only push, pull request, and nightly triggers" unless on.keys.sort == %w[pull_request push schedule]
+types = on.fetch("pull_request").fetch("types")
+raise "pull_request must include ready_for_review so a draft's heavy lanes start when it is ready" unless types.include?("ready_for_review")
+raise "a nightly schedule is required" unless on.fetch("schedule").first.key?("cron")
+RUBY
+  pass "the plan keys every CI lane, and the triggers cover ready-for-review and the nightly run"
+}
+
+test_macos_steps_follow_independent_selections() {
+  ruby -ryaml -rjson - "$CI_WORKFLOW" <<'RUBY' || fail "macOS selection contract"
+job = YAML.load_file(ARGV[0]).fetch("jobs").fetch("macos-stock-bash")
+evaluate = lambda do |condition, parse, suites|
+  case condition
+  when "needs.plan.outputs.macos == 'true'" then parse || !suites.empty?
+  when "needs.plan.outputs.macos_parse == 'true'" then parse
+  when "needs.plan.outputs.macos_tests != '[]'" then !suites.empty?
+  when /\Acontains\(fromJSON\(needs.plan.outputs.macos_tests\), '([^']+)'\)\z/
+    suites.include?(Regexp.last_match(1))
+  else raise "unexpected condition: #{condition}"
+  end
+end
+paths = %w[fm-fleet-snapshot-view fm-bearings-snapshot fm-public-followup fm-watch-triage fm-fork-free-helpers fm-backend]
+suites = paths.map { |p| "tests/#{p}.test.sh" }
+cases = [[false, []], [true, []], [true, suites]] + suites.map { |t| [false, [t]] }
+cases.each do |parse, selected|
+  active = job.fetch("steps").select { |step| !step.key?("if") || evaluate.call(step["if"], parse, selected) }.map { |step| step["name"] }
+  raise "job selection disagrees" unless evaluate.call(job.fetch("if"), parse, selected) == (parse || !selected.empty?)
+  raise "parse selection disagrees" unless active.include?("Parse shell files with stock Bash") == parse
+  raise "dependency selection disagrees" unless active.include?("Install stock Bash test dependencies") == !selected.empty?
+  paths.each_with_index do |path, i|
+    raise "suite selection disagrees: #{path}" unless active.include?("Run #{path} with stock Bash") == selected.include?(suites[i])
+  end
+end
+RUBY
+  pass "macOS parsing and each behavior suite follow independent selections"
+}
+
+test_macos_steps_follow_independent_selections
 test_ci_matrices_match_executable_partitions
+test_plan_keys_every_ci_lane_and_triggers_cover_ready_and_nightly
 test_pr_pushes_supersede_within_one_pr
 test_separate_prs_do_not_cancel_each_other
 test_main_pushes_are_never_cancelled

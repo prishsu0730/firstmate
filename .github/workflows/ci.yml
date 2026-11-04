@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # ready_for_review is listed because a draft pull request skips the heavy
+    # lanes; marking it ready starts the run that covers them.
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Nightly full run on main: pull requests run only what their files can
+  # affect, so this is the backstop that exercises the whole suite.
+  schedule:
+    - cron: '17 19 * * *'
 
 permissions:
   contents: read
@@ -26,7 +33,42 @@ concurrency:
 # tiers and their rationale; tests/fm-ci-workflow.test.sh guards this workflow.
 # Each job comment identifies the tier implemented by its executable value.
 
+# Run only what changed: the plan job runs bin/fm-ci-plan.sh, the single owner
+# of which behavior lanes a run executes (its header owns the modes and the
+# shared-core list; docs/fm-test-portable-shards.md "Selective pull request
+# runs" is the reader-facing summary). Every job below keeps its check name, and
+# a lane with nothing to run reports a skipped or successful check, never a
+# missing one. Lint, the coverage guard, and the invariants are cheap and run
+# for every event.
+
 jobs:
+  plan:
+    name: Plan test lanes
+    runs-on: ubuntu-24.04
+    # Fast tier: the plan is a few git and runner listings.
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      lanes: ${{ steps.plan.outputs.lanes }}
+      macos: ${{ steps.plan.outputs.macos }}
+      macos_parse: ${{ steps.plan.outputs.macos_parse }}
+      macos_tests: ${{ steps.plan.outputs.macos_tests }}
+      tests: ${{ steps.plan.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The planner diffs the merge checkout against origin/<base>.
+          fetch-depth: 0
+      - name: Plan the behavior lanes
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          DRAFT: ${{ github.event.pull_request.draft || false }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          set -eu
+          bin/fm-ci-plan.sh --event "$EVENT" --draft "$DRAFT" --base "origin/$BASE_REF" >> "$GITHUB_OUTPUT"
+
   lint:
     name: Lint ${{ matrix.partition }}
     runs-on: ubuntu-24.04
@@ -90,6 +132,8 @@ jobs:
   # set only. Composition owner: bin/fm-test-run.sh (docs/fm-test-portable-shards.md).
   tests-portable-parallel-1:
     name: Behavior portable parallel 1
+    needs: plan
+    if: fromJSON(needs.plan.outputs.lanes)['portable-parallel-1'] != ''
     runs-on: ubuntu-24.04
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
@@ -118,10 +162,15 @@ jobs:
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable parallel shard 1
+        env:
+          # The plan's selection for this lane: the whole lane, or only the
+          # changed tests that belong to it.
+          LANE_ARGS: ${{ fromJSON(needs.plan.outputs.lanes)['portable-parallel-1'] }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane portable-parallel-1 \
+          read -r -a lane_args <<<"$LANE_ARGS"
+          bin/fm-test-run.sh "${lane_args[@]}" \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-1.json"
       - name: Upload shard 1 timing artifact
@@ -134,6 +183,8 @@ jobs:
 
   tests-portable-parallel-2:
     name: Behavior portable parallel 2
+    needs: plan
+    if: fromJSON(needs.plan.outputs.lanes)['portable-parallel-2'] != ''
     runs-on: ubuntu-24.04
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
@@ -157,10 +208,13 @@ jobs:
           npm install -g tasks-axi
           tasks-axi --version
       - name: Run portable parallel shard 2
+        env:
+          LANE_ARGS: ${{ fromJSON(needs.plan.outputs.lanes)['portable-parallel-2'] }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          bin/fm-test-run.sh --lane portable-parallel-2 \
+          read -r -a lane_args <<<"$LANE_ARGS"
+          bin/fm-test-run.sh "${lane_args[@]}" \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-parallel-2.json"
       - name: Upload shard 2 timing artifact
         if: always()
@@ -178,6 +232,7 @@ jobs:
   # whose "ofN" disagrees with it (docs/fm-test-portable-shards.md).
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
+    needs: plan
     runs-on: ubuntu-24.04
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
@@ -186,21 +241,35 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    env:
+      # The plan's selection for this shard: its whole lane, or only the changed
+      # tests that belong to it, or empty when it has nothing to run. Every
+      # step below is gated on it instead of the job, because a matrix job
+      # skipped at job level reports an unexpanded check name; gating the steps
+      # keeps "Behavior portable serial N" reporting success for every shard.
+      # job-total rather than a literal, so shrinking or growing the matrix
+      # without matching bin/fm-test-run.sh is refused instead of quietly
+      # leaving a shard of the required lane unrun.
+      LANE_ARGS: ${{ fromJSON(needs.plan.outputs.lanes)[format('portable-serial-{0}of{1}', matrix.shard, strategy.job-total)] }}
     steps:
       - uses: actions/checkout@v6
+        if: env.LANE_ARGS != ''
         with:
           fetch-depth: 0
       - name: Install pinned ShellCheck
+        if: env.LANE_ARGS != ''
         run: |
           set -eu
           bin/fm-install-shellcheck.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Install pinned actionlint
+        if: env.LANE_ARGS != ''
         run: |
           set -eu
           bin/fm-install-actionlint.sh "$RUNNER_TEMP/bin"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Require tmux for e2e tests
+        if: env.LANE_ARGS != ''
         run: |
           set -eu
           command -v tmux >/dev/null || {
@@ -209,6 +278,7 @@ jobs:
           }
           tmux -V
       - name: Install tasks-axi for backlog-handoff delegation
+        if: env.LANE_ARGS != ''
         run: |
           set -eu
           npm install -g tasks-axi
@@ -217,27 +287,26 @@ jobs:
       # runtime, so without it they gate-skip and pass silently. It is a public
       # npm package and needs no credential, so CI can hold the real thing.
       - name: Install the Pi package for the Pi extension tests
+        if: env.LANE_ARGS != ''
         run: |
           set -eu
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
+        if: env.LANE_ARGS != ''
         env:
-          # job-total rather than a literal, so shrinking or growing the matrix
-          # without matching bin/fm-test-run.sh is refused instead of quietly
-          # leaving a shard of the required lane unrun.
-          FM_SERIAL_LANE: portable-serial-${{ matrix.shard }}of${{ strategy.job-total }}
           FM_SERIAL_SHARD: ${{ matrix.shard }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
           # The Pi package is installed above and CI provides npm and tsc, so
           # any missing typecheck prerequisite is a broken lane, not a valid skip.
-          bin/fm-test-run.sh --lane "$FM_SERIAL_LANE" \
+          read -r -a lane_args <<<"$LANE_ARGS"
+          bin/fm-test-run.sh "${lane_args[@]}" \
             --fail-on-gate-skip 'Pi extension typecheck prerequisite not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-portable-serial-${FM_SERIAL_SHARD}.json"
       - name: Upload portable serial shard ${{ matrix.shard }} timing artifact
-        if: always()
+        if: always() && env.LANE_ARGS != ''
         uses: actions/upload-artifact@v4
         with:
           name: fm-test-timing-portable-serial-${{ matrix.shard }}
@@ -250,6 +319,9 @@ jobs:
   # the failure evidence and move the job to macOS rather than skip assertions.
   tests-herdr:
     name: Behavior tests (Herdr)
+    needs: plan
+    # Skipped (a successful check) when the plan has no Herdr test to run.
+    if: fromJSON(needs.plan.outputs.lanes)['real-herdr-gated'] != ''
     runs-on: ubuntu-24.04
     # Heavy tier (see the timeout policy above): the last-resort job backstop.
     # The family-run step below owns the hang tripwire, so a wedged suite fails
@@ -338,12 +410,16 @@ jobs:
         # Heavy tier step tripwire: above the healthy 7-10 minute wall and far
         # below the job backstop, so a hang fails this step and cleanup runs.
         timeout-minutes: 20
+        env:
+          # The whole real-herdr-gated family, or only the changed members.
+          LANE_ARGS: ${{ fromJSON(needs.plan.outputs.lanes)['real-herdr-gated'] }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
+          read -r -a lane_args <<<"$LANE_ARGS"
           # Serial only. Fail if any script reports herdr not found. Live
           # harness credential tests stay outside this family (opt-in env only).
-          bin/fm-test-run.sh --family real-herdr-gated \
+          bin/fm-test-run.sh "${lane_args[@]}" \
             --fail-on-gate-skip 'herdr not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-herdr.json"
       - name: Cleanup job-owned Herdr lab sessions
@@ -375,11 +451,14 @@ jobs:
     # Fast tier: aggregation is seconds of work over lane artifacts.
     timeout-minutes: 5
     needs:
+      - plan
       - tests-portable-parallel-1
       - tests-portable-parallel-2
       - tests-portable-serial
       - tests-herdr
-    if: always()
+    # Nothing to aggregate when the plan ran no behavior lane (docs-only or
+    # draft); the job is then skipped, which reports success.
+    if: always() && needs.plan.outputs.tests == 'true'
     steps:
       - uses: actions/checkout@v6
       - name: Download lane timing artifacts
@@ -411,12 +490,17 @@ jobs:
 
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
+    needs: plan
+    # macOS minutes cost about ten times a Linux minute, so this runs only when
+    # the planner selects parsing or a stock-Bash suite (see its header).
+    if: needs.plan.outputs.macos == 'true'
     runs-on: macos-latest
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Run snapshot consumers with stock Bash
+      - name: Parse shell files with stock Bash
+        if: needs.plan.outputs.macos_parse == 'true'
         shell: /bin/bash {0}
         env:
           PATH: /bin:/usr/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin
@@ -437,12 +521,21 @@ jobs:
           done < "$shell_inventory"
           [ "$parse_fail" -eq 0 ] || { echo "::error::stock macOS Bash 3.2 parse sweep failed"; exit 1; }
 
+      - name: Install stock Bash test dependencies
+        if: needs.plan.outputs.macos_tests != '[]'
+        run: |
+          set -eu
           command -v npm >/dev/null || { echo "::error::npm is required to install tasks-axi"; exit 1; }
           npm install -g tasks-axi@0.2.6 >/dev/null
           PATH="$(npm prefix -g)/bin:$PATH"
-          export PATH
+          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
           command -v tasks-axi >/dev/null || { echo "::error::tasks-axi is required for the stock Bash regressions"; exit 1; }
 
+      - name: Run fm-fleet-snapshot-view with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-fleet-snapshot-view.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           snapshot_output=$(/bin/bash tests/fm-fleet-snapshot-view.test.sh)
           printf '%s\n' "$snapshot_output"
           snapshot_count=$(printf '%s\n' "$snapshot_output" | grep -c '^ok - ')
@@ -451,6 +544,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-bearings-snapshot with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-bearings-snapshot.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           bearings_output=$(/bin/bash tests/fm-bearings-snapshot.test.sh)
           printf '%s\n' "$bearings_output"
           bearings_count=$(printf '%s\n' "$bearings_output" | grep -c '^ok - ')
@@ -459,6 +557,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-public-followup with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-public-followup.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           # The full public-followup suite is not a stock-bash snapshot; run only
           # the empty-lock register regression under real /bin/bash 3.2.
           pf_output=$(FM_TEST_ONLY=test_first_register_succeeds_with_empty_lock_list_under_bash32 \
@@ -470,6 +573,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-watch-triage with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-watch-triage.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           # Same shape for the watcher's churn-deferral regression: an already-
           # marked churn window expands an empty array that only stock Bash
           # treats as an unbound variable under set -u.
@@ -482,6 +590,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-fork-free-helpers with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-fork-free-helpers.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           # The fork-free hot-path helpers must stay byte-identical to the
           # commands they replace under stock Bash 3.2, which lacks the
           # printf %(...)T clock and falls back to date.
@@ -493,6 +606,11 @@ jobs:
             exit 1
           }
 
+      - name: Run fm-backend with stock Bash
+        if: contains(fromJSON(needs.plan.outputs.macos_tests), 'tests/fm-backend.test.sh')
+        shell: /bin/bash {0}
+        run: |
+          set -eu
           backend_output=$(FM_TEST_ONLY=test_backend_source_requires_adapter_file \
             FM_TEST_BASH=/bin/bash \
             /bin/bash tests/fm-backend.test.sh)
@@ -530,3 +648,5 @@ jobs:
             printf '%s\n' "$tracked"
             exit 1
           fi
+      - name: Documentation audience inventory must stay intact
+        run: bin/fm-doc-audience-check.sh

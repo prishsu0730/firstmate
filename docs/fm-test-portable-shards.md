@@ -14,7 +14,7 @@ Use the slowest successful `duration_ms` per script across their uploaded portab
 All artifact records were cross-checked against the corresponding job's markers.
 That refresh covered 24 parallel and 201 serial members; an existing live-capability skip is a portable-runner measurement, not a timing claim for the unavailable live integration.
 Observed maxima provide conservative packing weights, not an upper bound on future durations.
-The 71 subsequently added test scripts have serial hints without recorded measurement provenance; those hints do not establish Ubuntu CI durations and need refreshing from successful CI samples using the procedure below.
+Serial hints added after that baseline and not covered by the refresh below still need recorded measurement provenance; those hints do not establish Ubuntu CI durations and need refreshing from successful CI samples using the procedure below.
 
 Two serial-5 jobs were cancelled at their 30-minute cap and uploaded no artifact.
 Their completed log markers supplement the complete runs, but a cancelled job's wall time is only a lower bound and its unfinished or never-started scripts have no completed sample.
@@ -24,7 +24,11 @@ Collect successful per-script measurements for every member before calculating a
 
 The 74 cases formerly in `tests/fm-supervision-host.test.sh` are split between that file and `tests/fm-supervision-host-park.test.sh` at case 55, based on the case timestamps in [job 114702572329](https://github.com/prishsu0730/firstmate/actions/runs/38216522352/job/114702572329).
 That completed job measured 1397913 ms for the original script, with about 696 seconds through case 55 and 701 seconds afterward, including suite cleanup.
-The two new hints initially model those measured halves; refresh them from successful per-script timing artifacts after the split runs on CI.
+The split did not stay balanced on CI: in run [41690399227](https://github.com/prishsu0730/firstmate/actions/runs/41690399227), `tests/fm-supervision-host.test.sh` took 1102541 ms and `tests/fm-supervision-host-park.test.sh` took 197264 ms.
+Their hints now use those per-script measurements, so the first hint no longer understates the heavier half by about 400 seconds.
+That understated hint left serial shard 3 modeled near 19 minutes while it ran 29 minutes and hit its 30-minute cap.
+The same refresh raised hints that were more than 40 seconds below that run's measurement and added a hint for every serial script that had none.
+`tests/fm-watch-triage.test.sh` measured 1256657 ms but keeps its lower hint, because a hint above the packing budget would make the coverage guard refuse the lane; it is the indivisible floor and sits in a shard with little else.
 The native-Windows-only `tests/fm-pi-windows-shell-invocation.test.sh` retains its separate 5121 ms measurement from 2026-09-06T21:02Z instead of a portable capability skip.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 
@@ -111,13 +115,35 @@ Portable shards, each portable serial shard, and the Herdr lane upload runner-ge
 CI requires its per-root bounds, so an unenforceable deadline or address-space limit refuses lint rather than running uncapped; the script header owns the envelope, per-root execution contract, and memory fallback.
 Its `--list-files` interface exposes partition membership; `tests/fm-lint.test.sh` verifies complete/disjoint executed roots, initial analysis flags, and fallback reporting.
 The workflow uploads each partition's quiet telemetry plus its per-root lifecycle sidecar to distinguish analysis cost, memory use, and host contention.
-No fast mode, path skips, or paid runner provisioning is part of this layout.
+Lint never skips by path, and no fast mode or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the current watch-triage floor alone exceeds that objective.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
 The layout uses fourteen long-lived Linux jobs (nine serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession without cancelling main pushes or changing the compliance workflow's event semantics.
+
+## Selective pull request runs
+
+A pull request runs only the behavior tests its changed files can affect, so checks finish sooner and fewer Actions minutes are spent.
+The `plan` job in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs `bin/fm-ci-plan.sh`, which owns the decision and its modes in its header.
+The planner reuses the runner's own changed-file map (`bin/fm-test-run.sh --list --changed`) and keeps each selected test in the lane that already owns it, so the per-lane packing and timeout tiers above are unchanged.
+Every doubt resolves to the full suite, never to a skipped test.
+
+| Run | What executes |
+|---|---|
+| Push to `main`, the nightly schedule | Every lane, exactly as before. |
+| Ready pull request that changes a shared core file, deletes or moves a file outside the planner's documentation-only paths, or changes anything the runner cannot map | Every lane. |
+| Pull request that changes mapped files | Only the selected tests, in their lanes. The large lanes (the serial shards and real Herdr) run only when a selected test belongs to them; a lane with nothing to run reports success without running. |
+| Pull request whose files no test covers, such as documentation | No behavior lane; lint, the coverage guard, and the invariants still run. |
+| Draft pull request | No behavior lane and no macOS job until it is marked ready for review, which starts a fresh run. |
+
+The shared core files are listed in the planner; on a ready pull request, a change to the planner, the runner, or the workflow is always a full run.
+The macOS job runs when either its stock-Bash parse sweep or a behavior suite is needed.
+On a ready pull request, the parse sweep runs for any changed shell file; each behavior suite runs only when selected by the changed-file map.
+Full runs execute both the parse sweep and every macOS suite.
+Every lane keeps its check name: single-name jobs are skipped at job level, and the serial matrix gates its steps so each shard still reports.
+`tests/fm-ci-plan.test.sh` holds the planner's behavior and `tests/fm-ci-workflow.test.sh` holds the workflow wiring.
 
 ## Local entry points
 
@@ -132,7 +158,7 @@ A lane that reaches its tier bound needs investigation and a distribution or run
 
 | Tier | Jobs | Bound | Rationale |
 |---|---|---|---|
-| Fast | coverage guard, repo invariants, timing aggregate | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
+| Fast | plan, coverage guard, repo invariants, timing aggregate | 5 minutes | Seconds-long local work, so the tripwire only catches a hung runner. |
 | Normal | lint partitions, portable parallel shards, portable serial shards, macOS stock Bash | 30 minutes, one value shared by every job in the tier | One shared hang tripwire keeps every ordinary test and lint lane on the same policy instead of allowing per-lane packing estimates or one-off caps to set the bound. |
 | Heavy | Herdr | family-run step 20 minutes under a 75-minute job-level last-resort backstop | Healthy runs finish in about 7-10 minutes, so the step tripwire fails a wedged suite while the `always()` cleanup and timing upload still run, and the job cap only catches a hang outside that step. |
 
