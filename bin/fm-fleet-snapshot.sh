@@ -253,6 +253,7 @@ esac
 # shellcheck source=bin/fm-hold-reason-lib.sh
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
 # shellcheck source=bin/fm-project-capacity-lib.sh
+# shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 free_slots_json() {
