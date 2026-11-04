@@ -2129,6 +2129,7 @@ jq -n \
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
      free_slots:$free_slots[0],
+     stale_capacity_holders:[$tasks[] | select(.project != null and (.current_state.state // "") != "done" and (.current_state.state // "") != "parked" and (.current_state.state // "") != "paused" and ((.paths.status_log.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.age_seconds}],
      main_inventory:$main_inventory,
      contributions:$contributions[0],
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),

@@ -72,6 +72,8 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     "| --- | ---: | --- |",
     (.free_slots[] | "| \(.project) | \(.free) | \((.ready_task_ids // []) | join(", ")) |")
    end),
+  (if (.stale_capacity_holders // []) | length == 0 then empty
+   else "Stale capacity holders: " + ([.stale_capacity_holders[] | "\(.id) (\(.age_seconds)s)"] | join(", ")) end),
   "",
   "## Under Way",
   (if (.tasks | length) == 0 then
