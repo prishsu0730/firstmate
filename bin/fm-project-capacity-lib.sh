@@ -50,13 +50,15 @@
 #     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
 #     Missing or unreadable worktree folders retain occupancy unless
 #     fm_control_endpoint_absence_verdict proves the endpoint gone or dead.
-#     Codex workers may instead supply a current-launch successful process-exit
+#     Codex workers with an unverified endpoint may instead supply a current-launch successful process-exit
 #     receipt plus a done declaration with a recorded PR or saved scout report
 #     (bin/fm-codex-worker.sh). This does not declare an interactive Codex idle.
 # A place frees only on a fresh admission-time check of current idle, exit, or absence
 # proof, or cleanup removing the record. Stored PR and status records alone
 # never release a place. Relaunches and steers to released workers
 # must pass admission before resuming.
+# A Codex resume reservation invalidates prior exit proof even without busy_gen;
+# only a fresh successful wrapped command can restore that proof.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -149,9 +151,9 @@ fm_project_capacity_publish() {
   esac
 }
 
-# Succeeds only when fm-crew-state.sh positively reads the record as not
-# executing. Any failed, timed-out, or unrecognized read returns 1, so the
-# record keeps its place.
+# Applies the occupancy contract above; fm-crew-state.sh reconciles the idle
+# path, while endpoint absence and Codex exit proof have separate checks.
+# Uncertain evidence retains the place.
 fm_project_capacity_record_released() {  # <state-dir> <task-id>
   local verdict activity endpoint backend message
   [ -r "$1/$2.meta" ] || return 1
