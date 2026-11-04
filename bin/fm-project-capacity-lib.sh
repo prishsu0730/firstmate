@@ -96,6 +96,14 @@ fm_project_capacity_publish() {
     reserve)
       lock=$(fm_meta_lock_path "$state/$id.meta") || return 1
       fm_lock_acquire_wait "$lock" || return 1
+      if [ "$(fm_meta_get "$state/$id.meta" harness)" = codex ] &&
+        [ -n "$(fm_meta_get "$state/$id.meta" tasktmp)" ] &&
+        [ -n "$(fm_meta_get "$state/$id.meta" spawn_gen)" ]; then
+        "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-codex-worker.sh" invalidate "$state" "$id" || {
+          fm_lock_release "$lock"
+          return 1
+        }
+      fi
       if [ "${4:-}" = busy ] && [ -n "$(fm_meta_get "$state/$id.meta" busy_gen)" ]; then
         "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-busy-event.sh" apply "$state" "$id" unknown \
           --current-gen --source fm-recovery --event send-admitted || {

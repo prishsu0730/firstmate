@@ -1206,7 +1206,7 @@ EOF
 # A process-exit receipt, unlike a PR alone, proves our unverified Codex
 # launch returned. Admission still owns the queued reviewer's transition.
 test_codex_exit_admits_queued_reviewer() {
-  local case_dir home out rc wt
+  local case_dir home out rc wt mode title
   case_dir=$(make_case codex-exit reviewer)
   home="$case_dir/home"
   declare_capacity "$home" 'project 1'
@@ -1231,6 +1231,36 @@ test_codex_exit_admits_queued_reviewer() {
   expect_code 75 "$rc" "unread steer released completed worker: $out"
   # Acknowledge the fixture message through the production inbox interface.
   FM_TASK_INBOX="$home/state/completed.inbox" "$ROOT/bin/fm-inbox-ack.sh" 001 || fail 'ack failed'
+  # Keep the real cmux adapter and send admission; only the terminal is fake.
+  title=$(FM_HOME="$home" bash -c '. "$1/bin/fm-backend.sh"; fm_backend_source cmux; fm_backend_cmux_scoped_title fm-completed' _ "$ROOT")
+  cat > "$case_dir/fakebin/cmux" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  'workspace list'*) printf '{"workspaces":[{"id":"ws","title":"%s"}]}\n' "$FM_FAKE_CMUX_TITLE" ;;
+  list-panes*) printf '%s\n' '{"panes":[{"selected_surface_id":"sf","surface_ids":["sf"]}]}' ;;
+  read-screen*) printf '❯ \n' ;;
+esac
+exit 0
+SH
+  chmod +x "$case_dir/fakebin/cmux"
+  out=$(sed 's/^window=.*/window=ws:sf/' "$home/state/completed.meta")
+  printf '%s\ncmux_workspace_id=ws\ncmux_surface_id=sf\n' "$out" > "$home/state/completed.meta"
+  for mode in key typed; do
+    case "$mode" in
+      key) set -- --key Enter ;;
+      typed) set -- /resume ;;
+    esac
+    rc=0
+    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+      FM_FAKE_CMUX_TITLE="$title" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+      PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" completed "$@" 2>&1) || rc=$?
+    expect_code 0 "$rc" "$mode resume failed: $out"
+    rc=0
+    out=$(spawn_ship "$case_dir" reviewer "$case_dir/unused") || rc=$?
+    expect_code 75 "$rc" "$mode resume reused stale Codex completion: $out"
+    "$ROOT/bin/fm-codex-worker.sh" run "$home/state" completed s-completed \
+      bash -c 'exit 0' || fail 'fresh completion failed'
+  done
   rc=0
   out=$(spawn_ship "$case_dir" reviewer "$(new_worktree "$case_dir" reviewer)") || rc=$?
   expect_code 0 "$rc" "completed Codex blocked reviewer admission: $out"

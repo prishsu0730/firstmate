@@ -2,6 +2,7 @@
 # Codex launch-owned process-exit proof, independent of semantic busy hooks.
 # Usage: fm-codex-worker.sh run <state> <id> <spawn-gen> <command> [args...]
 #        fm-codex-worker.sh released <state> <id>
+#        fm-codex-worker.sh invalidate <state> <id>
 # Only the synchronous successful return of the launched command publishes a
 # receipt. A killed wrapper, failed command, old launch, unreadable record, or
 # absent completion artifact supplies no release proof. The receipt is not a
@@ -28,6 +29,12 @@ writable=$(find "$tasktmp" -prune \( -perm -g=w -o -perm -o=w \) -print) || exit
 [ -z "$writable" ] || exit 1
 receipt="$tasktmp/codex-exited.$gen"
 case "$action" in
+  invalidate)
+    [ ! -L "$receipt" ] || exit 1
+    # An empty receipt cannot release capacity, even if the done declaration
+    # survives a resume. Only a fresh successful wrapped command restores it.
+    [ ! -e "$receipt" ] || : > "$receipt"
+    ;;
   run)
     [ "$#" -ge 5 ] && [ "$4" = "$gen" ] || exit 1
     # Invalidate a previous receipt before executing anything, including a
