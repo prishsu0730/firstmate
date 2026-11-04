@@ -24,7 +24,11 @@ Collect successful per-script measurements for every member before calculating a
 
 The 74 cases formerly in `tests/fm-supervision-host.test.sh` are split between that file and `tests/fm-supervision-host-park.test.sh` at case 55, based on the case timestamps in [job 114702572329](https://github.com/prishsu0730/firstmate/actions/runs/38216522352/job/114702572329).
 That completed job measured 1397913 ms for the original script, with about 696 seconds through case 55 and 701 seconds afterward, including suite cleanup.
-The two new hints initially model those measured halves; refresh them from successful per-script timing artifacts after the split runs on CI.
+The split did not stay balanced on CI: in run [41690399227](https://github.com/prishsu0730/firstmate/actions/runs/41690399227), `tests/fm-supervision-host.test.sh` took 1102541 ms and `tests/fm-supervision-host-park.test.sh` took 197264 ms.
+Their hints now use those per-script measurements, so the first hint no longer understates the heavier half by about 400 seconds.
+That understated hint left serial shard 3 modeled near 19 minutes while it ran 29 minutes and hit its 30-minute cap.
+The same refresh raised hints that were more than 40 seconds below that run's measurement and added a hint for every serial script that had none.
+`tests/fm-watch-triage.test.sh` measured 1256657 ms but keeps its lower hint, because a hint above the packing budget would make the coverage guard refuse the lane; it is the indivisible floor and sits in a shard with little else.
 The native-Windows-only `tests/fm-pi-windows-shell-invocation.test.sh` retains its separate 5121 ms measurement from 2026-09-06T21:02Z instead of a portable capability skip.
 The session-start hint retains its pre-optimization maximum until CI measures the shorter fixture-only home-summary bound; do not discount a local speedup from CI packing weights.
 
