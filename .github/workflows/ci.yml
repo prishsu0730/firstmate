@@ -38,8 +38,8 @@ concurrency:
 # shared-core list; docs/fm-test-portable-shards.md "Selective pull request
 # runs" is the reader-facing summary). Every job below keeps its check name, and
 # a lane with nothing to run reports a skipped or successful check, never a
-# missing one. Lint, the coverage guard, and the invariants are cheap and run
-# for every event.
+# missing one. Lint runs changed files on narrow PRs and full partitions on
+# shared-core or lint-tooling changes; coverage and invariants run every event.
 
 jobs:
   plan:
@@ -80,6 +80,8 @@ jobs:
         partition: [1, 2]
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Install pinned ShellCheck
         run: |
           set -eu
@@ -94,17 +96,45 @@ jobs:
       # and GitHub workflow lint). Do not re-spell the checks here; keep CI
       # and the pre-push gate on this script so a self-broken ci.yml still
       # fails locally before merge.
-      - name: Lint canonical partition
+      - name: Lint selected files or canonical partition
         env:
           # Fail closed rather than lint uncapped when a configured per-root
           # bound (wall deadline or memory rlimit) cannot be enforced here.
           FM_LINT_REQUIRE_BOUNDS: '1'
           FM_LINT_JOBS: '1'
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref || 'main' }}
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-lint"
-          bin/fm-lint.sh --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
-            --telemetry "$RUNNER_TEMP/fm-lint/partition-${{ matrix.partition }}.tsv"
+          telemetry="$RUNNER_TEMP/fm-lint/partition-${{ matrix.partition }}.tsv"
+          # Reuse the behavior selector's full-suite rule, including its
+          # fail-closed fallbacks. Lint also covers draft PRs.
+          mode=full
+          if [ "$EVENT" = pull_request ]; then
+            plan=$(bin/fm-ci-plan.sh --event "$EVENT" --draft false --base "origin/$BASE_REF")
+            mode=$(printf '%s\n' "$plan" | sed -n 's/^mode=//p')
+            changed=$(git diff --name-only "origin/$BASE_REF...HEAD")
+            while IFS= read -r path; do
+              case "$path" in
+                bin/fm-lint*.sh|bin/fm-install-shellcheck.sh|bin/fm-install-actionlint.sh|*shellcheckrc|*actionlint*|.no-mistakes.yaml)
+                  mode=full ;;
+              esac
+            done <<<"$changed"
+          fi
+          case "$mode" in
+            changed|docs)
+              # The existing changed-file mode uses origin/main. Point it at
+              # this PR's base, and opt out of the CI full-inventory default
+              # for this invocation only. Keep both required matrix checks.
+              git update-ref refs/remotes/origin/main "origin/$BASE_REF"
+              CI=false GITHUB_ACTIONS=false bin/fm-lint.sh --telemetry "$telemetry"
+              ;;
+            *)
+              bin/fm-lint.sh --partition "${{ matrix.partition }}of${{ strategy.job-total }}" \
+                --telemetry "$telemetry"
+              ;;
+          esac
       - name: Upload lint telemetry
         if: always()
         uses: actions/upload-artifact@v4
