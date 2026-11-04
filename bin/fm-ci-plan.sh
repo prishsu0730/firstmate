@@ -27,7 +27,8 @@
 #   full     every lane runs unchanged. Chosen for any event that is not a
 #            pull request (a main push and the nightly schedule keep full
 #            coverage), for a change to shared core files (CORE_PATTERNS),
-#            for a deleted or renamed file other than a documentation .md, and whenever the
+#            for a deleted or renamed file except .md files at the repository
+#            root or anywhere under docs/, and whenever the
 #            plan cannot be proven: an unreadable diff, a selection error, an
 #            unmapped path, or a selection no lane owns. Fail closed: every
 #            doubt resolves to full, never to a skipped test.
