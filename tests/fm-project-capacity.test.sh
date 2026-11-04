@@ -1238,7 +1238,7 @@ test_codex_exit_admits_queued_reviewer() {
 case "$*" in
   'workspace list'*) printf '{"workspaces":[{"id":"ws","title":"%s"}]}\n' "$FM_FAKE_CMUX_TITLE" ;;
   list-panes*) printf '%s\n' '{"panes":[{"selected_surface_id":"sf","surface_ids":["sf"]}]}' ;;
-  read-screen*) printf '❯ \n' ;;
+  read-screen*) printf '{"text":"❯ \\n"}\n' ;;
 esac
 exit 0
 SH
