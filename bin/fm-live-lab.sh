@@ -19,7 +19,9 @@
 # /tmp/fmlab.XXXXXX), verifies readiness itself, and prints one line per check.
 # It exits 0 only when every check passed; otherwise it exits 1 and leaves the
 # lab up for inspection, so run down either way. check re-runs the same checks
-# once. say types text into a lab window and presses Enter (window main, the
+# once. Readiness and submission require a currently verified empty composer.
+# A blocked composer prints its verdict and current screen and exits non-zero.
+# say types text into a lab window and presses Enter (window main, the
 # lab primary, by default; mate and worker name the lab's own tasks). pane
 # prints a window's recent scrollback. down stops every lab process, removes the
 # lab's Claude trust entries by one atomic replace, removes <lab-root>, and exits
@@ -228,10 +230,23 @@ check_primary() {
   echo "ok primary: $HARNESS pid $pid in $LAB"
 }
 
+check_composer() (  # <window-id>: bind classifier reads to this lab server only
+  local id=$1 state
+  # shellcheck source=bin/fm-backend.sh
+  . "$SCRIPT_DIR/fm-backend.sh"
+  tmux() { lab_tmux "$@"; }
+  state=$(fm_backend_composer_state tmux "$id")
+  [ "$state" = empty ] && return 0
+  echo "fail composer: $HARNESS window $id verdict ${state:-unknown}; current blocking screen:" >&2
+  lab_tmux capture-pane -p -J -t "$id" >&2
+  return 1
+)
+
 check_probe() {
   local id
   id=$(window_id main)
   if [ -n "$id" ] && lab_tmux capture-pane -p -J -t "$id" -S -5000 2>/dev/null | grep -Fq "LABREADY-$NONCE"; then
+    check_composer "$id" || return 1
     echo "ok probe: the primary answered LABREADY-$NONCE"
   else
     echo "fail probe: no LABREADY-$NONCE reply in window main (model refused, turn still running, or a dialog is open)"
@@ -374,6 +389,7 @@ say_text() {  # <window> <text>
   local id
   id=$(window_id "$1")
   [ -n "$id" ] || { echo "fm-live-lab: no lab window named '$1'" >&2; return 1; }
+  check_composer "$id" || return 1
   lab_tmux send-keys -t "$id" -l "$2" || return 1
   sleep 1
   lab_tmux send-keys -t "$id" Enter
