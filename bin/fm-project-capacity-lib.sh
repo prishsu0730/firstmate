@@ -50,10 +50,15 @@
 #     with successful capture, and no unread steering messages. Unknown activity and uncertain reads retain occupancy.
 #     Missing or unreadable worktree folders retain occupancy unless
 #     fm_control_endpoint_absence_verdict proves the endpoint gone or dead.
-# A place frees only on a fresh admission-time check of current idle or absence
+#     Codex workers with an unverified endpoint may instead supply a current-launch successful process-exit
+#     receipt plus a done declaration with a recorded PR or saved scout report
+#     (bin/fm-codex-worker.sh). This does not declare an interactive Codex idle.
+# A place frees only on a fresh admission-time check of current idle, exit, or absence
 # proof, or cleanup removing the record. Stored PR and status records alone
 # never release a place. Relaunches and steers to released workers
 # must pass admission before resuming.
+# A Codex resume reservation invalidates prior exit proof even without busy_gen;
+# only a fresh successful wrapped command can restore that proof.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
 # clone of that origin under a different directory name finds no declaration
@@ -93,6 +98,14 @@ fm_project_capacity_publish() {
     reserve)
       lock=$(fm_meta_lock_path "$state/$id.meta") || return 1
       fm_lock_acquire_wait "$lock" || return 1
+      if [ "$(fm_meta_get "$state/$id.meta" harness)" = codex ] &&
+        [ -n "$(fm_meta_get "$state/$id.meta" tasktmp)" ] &&
+        [ -n "$(fm_meta_get "$state/$id.meta" spawn_gen)" ]; then
+        "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-codex-worker.sh" invalidate "$state" "$id" || {
+          fm_lock_release "$lock"
+          return 1
+        }
+      fi
       if [ "${4:-}" = busy ] && [ -n "$(fm_meta_get "$state/$id.meta" busy_gen)" ]; then
         "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-busy-event.sh" apply "$state" "$id" unknown \
           --current-gen --source fm-recovery --event send-admitted || {
@@ -138,9 +151,9 @@ fm_project_capacity_publish() {
   esac
 }
 
-# Succeeds only when fm-crew-state.sh positively reads the record as not
-# executing. Any failed, timed-out, or unrecognized read returns 1, so the
-# record keeps its place.
+# Applies the occupancy contract above; fm-crew-state.sh reconciles the idle
+# path, while endpoint absence and Codex exit proof have separate checks.
+# Uncertain evidence retains the place.
 fm_project_capacity_record_released() {  # <state-dir> <task-id>
   local verdict activity endpoint backend message
   [ -r "$1/$2.meta" ] || return 1
@@ -177,6 +190,12 @@ fm_project_capacity_record_released() {  # <state-dir> <task-id>
       ;;
   esac
   [ "$worktree_unknown" = 0 ] || return 1
+  # An unverified backend cannot prove a stopped shell. A launch-owned receipt
+  # can prove our Codex process returned; unreadable endpoints still fail closed.
+  if [ "$endpoint" = unverified ] &&
+    fm_run_timed 15 "$FM_PROJECT_CAPACITY_SCRIPT_DIR/fm-codex-worker.sh" released "$1" "$2"; then
+    return 0
+  fi
   # shellcheck disable=SC2016
   activity=$(fm_run_timed 15 bash -c '
     . "$1/fm-backend.sh"
