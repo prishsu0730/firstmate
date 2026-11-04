@@ -21,8 +21,12 @@
 # lab up for inspection, so run down either way. check re-runs the same checks
 # once. Readiness and submission require a currently verified empty composer.
 # A blocked composer prints its verdict and current screen and exits non-zero.
-# say types text into a lab window and presses Enter (window main, the
-# lab primary, by default; mate and worker name the lab's own tasks). pane
+# say pastes text as one bracketed paste, presses Enter, and returns success
+# only after a new target transcript entry matches the entire text exactly.
+# Missing or incomplete transcript evidence fails closed (including a timeout);
+# failure does not imply that nothing was submitted, so never retry blindly.
+# Window main, the lab primary, is the default; mate and worker name the lab's
+# own tasks. pane
 # prints a window's recent scrollback. down stops every lab process, removes the
 # lab's Claude trust entries by one atomic replace, removes <lab-root>, and exits
 # non-zero if the recorded Pi trust store or ~/.treehouse gained changes.
@@ -386,14 +390,84 @@ run_checks() {
 
 # ---- up ---------------------------------------------------------------------
 
-say_text() {  # <window> <text>
-  local id
+# Read only the target pane's transcript directory. Snapshot byte offsets before
+# delivery so an earlier identical prompt cannot prove a new submission.
+submission_record() {  # <snapshot|verify> <directory> [<snapshot> <text>]
+  python3 - "$@" <<'PYTHON'
+import glob, json, os, re, sys, time
+mode, directory = sys.argv[1:3]
+def files():
+    return glob.glob(os.path.join(directory, "*.jsonl"))
+if mode == "snapshot":
+    print(json.dumps({p: [os.stat(p).st_ino, os.path.getsize(p)] for p in files()}))
+    sys.exit(0)
+before = json.loads(sys.argv[3])
+expected = sys.argv[4]
+deadline = time.monotonic() + 20
+while True:
+    for path in files():
+        try:
+            with open(path, "rb") as stream:
+                inode, offset = before.get(path, [None, 0])
+                if inode == os.fstat(stream.fileno()).st_ino:
+                    stream.seek(offset)
+                for raw in stream:
+                    try:
+                        entry = json.loads(raw)
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    message = entry.get("message", {})
+                    if message.get("role") != "user":
+                        continue
+                    content = message.get("content")
+                    if isinstance(content, list):
+                        if not all(isinstance(c, dict) and c.get("type") == "text" for c in content):
+                            continue
+                        content = "".join(c.get("text", "") for c in content)
+                    # Claude 2.1.318 wraps a large bracketed paste in its
+                    # transcript. Accept only that complete outer envelope;
+                    # compare every byte of the enclosed prompt unchanged.
+                    wrapped = re.fullmatch(r'\n\n<pasted_content id="([0-9a-zA-Z]+)">\n(.*)\n</pasted_content id="\1">\n', content, re.S) if isinstance(content, str) else None
+                    if content == expected or (wrapped and wrapped.group(2) == expected):
+                        print("ok submission: full prompt verified in target transcript")
+                        sys.exit(0)
+        except OSError:
+            continue
+    if time.monotonic() >= deadline:
+        sys.exit("fm-live-lab: submission unverified: no new complete prompt in target transcript; do not retry blindly")
+    time.sleep(0.1)
+PYTHON
+}
+
+# The readiness probe passes "unverified": run_checks proves its delivery by
+# the nonce reply, and a fresh primary has no transcript directory yet.
+say_text() {  # <window> <text> [unverified]
+  local id path directory snapshot buffer
   id=$(window_id "$1")
   [ -n "$id" ] || { echo "fm-live-lab: no lab window named '$1'" >&2; return 1; }
   check_composer "$id" || return 1
-  lab_tmux send-keys -t "$id" -l "$2" || return 1
+  if [ "${3:-}" != unverified ]; then
+    path=$(window_field "$1" '#{pane_current_path}') || return 1
+    if [ "$HARNESS" = pi ] && [ "$1" = main ]; then
+      directory="$ROOT/pi-sessions"
+    else
+      path=$(printf '%s' "$path" | LC_ALL=C sed 's/[^a-zA-Z0-9]/-/g')
+      directory="${CLAUDE_DIR:-$HOME/.claude}/projects/$path"
+    fi
+    # A directory that does not exist yet has no records: snapshot is empty.
+    snapshot=$(submission_record snapshot "$directory") || return 1
+  fi
+  buffer="fmlab-say-$$"
+  printf '%s' "$2" | lab_tmux load-buffer -b "$buffer" - || return 1
+  # Literal multiline keystrokes are not a paste: Claude can discard their
+  # beginning. Bracketed paste makes the whole buffer one composer insertion.
+  if ! lab_tmux paste-buffer -p -r -d -b "$buffer" -t "$id"; then
+    lab_tmux delete-buffer -b "$buffer" 2>/dev/null || true
+    return 1
+  fi
   sleep 1
-  lab_tmux send-keys -t "$id" Enter
+  lab_tmux send-keys -t "$id" Enter || return 1
+  [ "${3:-}" = unverified ] || submission_record verify "$directory" "$snapshot" "$2"
 }
 
 make_notes_project() {
@@ -600,7 +674,7 @@ cmd_up() {
   local deadline=$(( $(date +%s) + 180 ))
   until [ -f "$LAB/state/.session-start-complete" ] || [ "$(date +%s)" -ge "$deadline" ]; do sleep 2; done
   sleep 5
-  say_text main "Lab readiness probe from bin/fm-live-lab.sh. Run no tool or command for this message. Reply with only the word LABREADY, a hyphen, and then $NONCE, with no spaces." \
+  say_text main "Lab readiness probe from bin/fm-live-lab.sh. Run no tool or command for this message. Reply with only the word LABREADY, a hyphen, and then $NONCE, with no spaces." unverified \
     || die "cannot send the readiness probe"
 
   deadline=$(( $(date +%s) + timeout ))
