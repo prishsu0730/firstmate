@@ -2,19 +2,19 @@
 # fm-lint.sh - the single owner of firstmate's lint definition.
 #
 # Runs its file set with ShellCheck's default severity, extended analysis,
-# ambient configuration disabled, and one exact ShellCheck version. CI selects
-# canonical partitions; no-mistakes invokes the context-selected default, so
-# both use this owner without duplicating lint configuration.
+# ambient configuration disabled, and one exact ShellCheck version.
+# docs/fm-test-portable-shards.md owns CI invocation selection; no-mistakes
+# invokes the context-selected default. Both use this lint definition.
 # The explicit --fast mode is local-only and disables ShellCheck's extended
 # dataflow analysis while preserving ordinary shell lint checks and source
-# following. CI, main, and merge-base-less runs attempt --norc
+# following. CI-context, main, and merge-base-less runs attempt --norc
 # --external-sources with full dataflow for each canonical root. An ordinary
 # local branch (changed-file mode, including the no-mistakes lint step) drops
 # --external-sources, keeps dataflow, and excludes SC1091, SC2034, SC2153,
-# and SC2329, the codes that need library context. CI checks those codes
+# and SC2329, the codes that need library context. Full partitions check those codes
 # on source-following attempts (see the memory fallback below). Explicit
 # paths attempt --external-sources with the selected dataflow mode.
-# Tests stop source analysis at imported production modules because CI analyzes
+# Tests stop source analysis at imported production modules because full partitions analyze
 # every production shell separately as a canonical, source-aware root.
 # The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
 # malformed GitHub workflow, including a self-broken ci.yml, fails locally
@@ -25,8 +25,8 @@
 #   - In CI (GITHUB_ACTIONS=true or CI=true), on the main branch, or when no
 #     merge-base against origin/main (or local main) can be found, it lints
 #     the full canonical set: bin/*.sh bin/backends/*.sh tests/*.sh, with
-#     --external-sources and full dataflow first. CI coverage never depends
-#     on a local diff; memory failures may take the narrower retry below.
+#     --external-sources and full dataflow first. Memory failures may take
+#     the narrower retry below.
 #   - Otherwise (an ordinary local branch with a real merge-base) it lints
 #     only the canonical-set files changed since that merge-base, including
 #     uncommitted local edits, via plain local `git diff` (no network, no
