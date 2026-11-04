@@ -70,6 +70,21 @@
 #     endpoint.agent_alive is populated for local secondmates only, where it is
 #     useful return-channel supervision data; remote secondmates use "unknown"
 #     without a probe, and other tasks use "not_checked".
+#   free_slots[]: {project,free,ready_task_ids[]} for declared capacity projects
+#     with a readable clone under this home's projects root, positive remaining
+#     capacity, and eligible queued work in this home's backlog.
+#     Declaration lookup and cross-home occupancy use fm-project-capacity-lib.sh's
+#     root-home configuration, project identity, and positive release proof rules.
+#     Occupancy is sampled sequentially with fresh release checks, independently
+#     of the bounded concurrent task observations; this is not a slot reservation.
+#     ready_task_ids contains at most three structured queued ship/scout ids in
+#     backlog order, matching the project name, with no hold bucket, reason, or
+#     kind, no unresolved blockers, and no future hold_until date.
+#     Undeclared projects, missing clones, full projects, and projects without
+#     eligible work are omitted; an absent state directory yields an empty list.
+#     Declaration or occupancy read failure aborts the snapshot rather than
+#     publishing uncertain availability. Spawn admission still rechecks capacity.
+#     tests/fm-fleet-capacity.test.sh covers this projection.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json
