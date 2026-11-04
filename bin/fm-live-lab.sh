@@ -234,6 +234,7 @@ check_composer() (  # <window-id>: bind classifier reads to this lab server only
   local id=$1 state
   # shellcheck source=bin/fm-backend.sh
   . "$SCRIPT_DIR/fm-backend.sh"
+  # shellcheck disable=SC2329 # Invoked indirectly by the sourced tmux composer classifier.
   tmux() { lab_tmux "$@"; }
   state=$(fm_backend_composer_state tmux "$id")
   [ "$state" = empty ] && return 0

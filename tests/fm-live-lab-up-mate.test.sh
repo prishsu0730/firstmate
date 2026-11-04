@@ -32,6 +32,7 @@ printf 'window=firstmate:fm-%s\n' "$1" > "$FM_HOME/state/$1.meta"
 SH
 cat > "$TMP_ROOT/fakebin/claude" <<'SH'
 #!/usr/bin/env bash
+printf '❯ '
 : > "$FM_HOME/state/.session-start-complete"
 exec sleep 45
 SH
