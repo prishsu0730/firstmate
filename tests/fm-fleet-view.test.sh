@@ -20,7 +20,7 @@ SNAPSHOT
 chmod +x "$TMP/fm-fleet-snapshot.sh"
 printf '0\n' > "$TMP/status"
 cat > "$TMP/snapshot" <<'JSON'
-{"schema":"v1","fm_home":"/fixture","tasks":[],"backlog":{"records":[]},"secondmate_guidance":{"note":"Use the return channel."}}
+{"schema":"v1","fm_home":"/fixture","tasks":[],"backlog":{"records":[]},"free_slots":[{"project":"repo","free":2,"ready_task_ids":["queued-1"]}],"secondmate_guidance":{"note":"Use the return channel."}}
 JSON
 
 contains() {
@@ -34,6 +34,7 @@ test_empty() {
   contains 'No live task metadata found.'
   contains 'No queued backlog records found.'
   contains 'No done backlog records found.'
+  contains '| repo | 2 | queued-1 |'
   contains 'Use the return channel.'
   [ "$(cat "$TMP/args")" = --json ] || fail "snapshot arguments"
   pass "empty sections and snapshot metadata render"

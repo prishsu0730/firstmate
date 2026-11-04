@@ -237,6 +237,33 @@ esac
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-hold-reason-lib.sh
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
+# shellcheck source=bin/fm-project-capacity-lib.sh
+. "$SCRIPT_DIR/fm-project-capacity-lib.sh"
+
+free_slots_json() {
+  local project capacity line names=() json='[]' ready_json live
+  [ -r "$CONFIG/project-capacity" ] || { printf '[]'; return 0; }
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    line=${line#"${line%%[![:space:]]*}"}
+    line=${line%"${line##*[![:space:]]}"}
+    case "$line" in ''|'#'|'#'[[:space:]]*) continue ;; esac
+    case "${line##*[[:space:]]}" in ''|*[!0-9]*) continue ;; esac
+    project=${line%" ${line##*[[:space:]]}"}
+    names+=("$project")
+  done < "$CONFIG/project-capacity"
+  for project in "${names[@]}"; do
+    fm_project_capacity_lookup "$CONFIG" "$project" || continue
+    capacity=$FM_PROJECT_CAPACITY
+    [ -n "$capacity" ] || continue
+    live=$(jq --arg project "$project" '[.[] | select(.kind != "secondmate" and .project == $project and (.current_state.state // "") != "done" and (.current_state.state // "") != "parked" and (.current_state.state // "") != "paused")] | length' "$TASKS_JSON_FILE")
+    [ "$live" -lt "$capacity" ] || continue
+    ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
+    [ "$ready_json" != '[]' ] || continue
+    json=$(jq -c --arg project "$project" --argjson free "$((capacity - live))" --argjson ids "$ready_json" '. + [{project:$project,free:$free,ready_task_ids:$ids}]' <<<"$json")
+  done
+  printf '%s' "$json"
+}
 
 usage() {
   cat <<'EOF'
@@ -2039,6 +2066,9 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary backlog file write failed" >&2; exit 1; }
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
+FREE_SLOTS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slots.json"
+free_slots_json > "$FREE_SLOTS_JSON_FILE" \
+  || { echo "fm-fleet-snapshot: free-slot projection failed" >&2; exit 1; }
 
 CONTRIBUTIONS_JSON_FILE="$JSON_TRANSPORT_DIR/contributions.json"
 CONTRIBUTION_TASKS_JSON=$(contribution_tasks_json) \
@@ -2076,6 +2106,7 @@ jq -n \
   --arg projects "$PROJECTS" \
   --slurpfile backlog "$BACKLOG_JSON_FILE" \
   --slurpfile tasks "$TASKS_JSON_FILE" \
+  --slurpfile free_slots "$FREE_SLOTS_JSON_FILE" \
   --slurpfile main_inventory "$MAIN_INVENTORY_JSON_FILE" \
   --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
@@ -2097,6 +2128,7 @@ jq -n \
      roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
+     free_slots:$free_slots[0],
      main_inventory:$main_inventory,
      contributions:$contributions[0],
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
