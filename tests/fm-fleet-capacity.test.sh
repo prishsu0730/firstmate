@@ -77,7 +77,13 @@ jq -e '.free_slots == [{project:"repo",free:1,ready_task_ids:["ready","scout"]}]
   || fail "missing clone warning: $out"
 
 printf 'working: old news\n' > "$home/state/worker.status"
-touch -t "$(date -v-2d +%Y%m%d%H%M.%S)" "$home/state/worker.status"
+python3 -c 'import os, sys, time; t = time.time() - 172800; os.utime(sys.argv[1], (t, t))' "$home/state/worker.status"
+out=$(snapshot) || fail 'legacy holder snapshot'
+jq -e '.tasks[] | select(.id == "worker") | .paths.status_log.last_event.age_seconds == null' <<< "$out" >/dev/null \
+  || fail "legacy event age should be unknown"
+jq -e '[.stale_capacity_holders[] | select(.id == "worker")] == []' <<< "$out" >/dev/null \
+  || fail "legacy event should not be a stale holder"
+printf 'working [at=%s]: old news\n' "$((old_epoch - 172800))" > "$home/state/worker.status"
 out=$(snapshot) || fail 'stale holder snapshot'
 jq -e '.stale_capacity_holders | any(.id == "worker" and .age_seconds > 86400)' <<< "$out" >/dev/null \
   || fail "stale holder signal: $out"

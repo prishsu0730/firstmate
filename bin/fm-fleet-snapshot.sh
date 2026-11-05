@@ -90,8 +90,7 @@
 #   stale_capacity_holders[]: {id,age_seconds} for this home's captured tasks
 #     whose last status event is more than 86400 seconds old and whose id is
 #     returned as an occupant of a declared project with a readable local clone.
-#     Event age falls back to the status file modification time when its event
-#     timestamp is unusable; unknown ages and secondmates are excluded.
+#     Unknown ages and secondmates are excluded.
 #     IDs are deduplicated.
 #     Occupancy is checked for eligible queued work or an old non-secondmate
 #     task, so stale holders can appear even when free_slots is empty.
@@ -420,7 +419,7 @@ crew_state_json() {  # <id> [<captured-meta>] [<captured-status>]
 }
 
 status_event_json() {  # <observed-status-log> [<contract-path>]
-  local log=$1 path=${2:-$1} present=0 raw='' verb='' note='' epoch=null age=null mtime
+  local log=$1 path=${2:-$1} present=0 raw='' verb='' note='' epoch=null age=null
   if [ -f "$log" ]; then
     present=1
     raw=$(last_nonempty_line "$log" || true)
@@ -429,11 +428,6 @@ status_event_json() {  # <observed-status-log> [<contract-path>]
     epoch=$(status_line_at_epoch "$raw") || epoch=null
     if [ "$epoch" != null ] && [ "$epoch" -le "$SNAPSHOT_EPOCH" ]; then
       age=$((SNAPSHOT_EPOCH - epoch))
-    else
-      mtime=$(file_mtime_epoch "$log")
-      if [ -n "$mtime" ] && [ "$mtime" -le "$SNAPSHOT_EPOCH" ]; then
-        age=$((SNAPSHOT_EPOCH - mtime))
-      fi
     fi
   fi
   jq -n \
