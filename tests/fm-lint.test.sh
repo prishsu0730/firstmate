@@ -243,6 +243,16 @@ fm_lint_stub_git() {
   cat > "$fakebin/git" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
+  "rev-parse --git-dir")
+    printf '.git\n'
+    exit 0
+    ;;
+  "rev-parse --verify --quiet "*)
+    exit 0
+    ;;
+  "rev-list "*)
+    exit 0
+    ;;
   "rev-parse --is-inside-work-tree")
     [ "${FM_TEST_GIT_INSIDE_WORKTREE:-1}" = 1 ] || exit 1
     printf 'true\n'
@@ -1152,8 +1162,10 @@ test_rejects_direct_beads_cli_invocations() {
   fakebin=$(fm_fakebin "$tmp")
   log="$tmp/shellcheck.log"
   mkdir -p "$tmp/repo/bin/backends" "$tmp/repo/tests"
+  fm_git_init_commit "$tmp/repo"
   lint_copy="$tmp/repo/bin/fm-lint.sh"
   cp "$LINT" "$lint_copy"
+  cp "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$tmp/repo/bin/"
   cat > "$tmp/repo/bin/fm-lint-workflows.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1886,9 +1898,11 @@ test_sidecar_result_exit_reflects_final_status() {
   log="$tmp/shellcheck.log"
   telemetry="$tmp/lint.tsv"
   roots_log="$tmp/lint.roots.tsv"
+  fm_git_init_commit "$tmp/repo"
   mkdir -p "$tmp/repo/bin/backends" "$tmp/repo/tests" "$tmp/repo/.github/workflows"
   cp "$LINT" "$tmp/repo/bin/fm-lint.sh"
   cp "$ROOT/bin/fm-timeout-lib.sh" "$tmp/repo/bin/fm-timeout-lib.sh"
+  cp "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$tmp/repo/bin/"
   cat > "$tmp/repo/bin/fm-lint-workflows.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -2043,13 +2057,13 @@ test_commit_address_gate() {
   git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q -m 'docs: captain note'
   git -C "$repo" checkout -q -b work
   rc=0
-  out=$(cd "$repo" && PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
+  out=$(cd "$repo" && CI='' GITHUB_ACTIONS='' PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "lint missed offending commit (exit $rc): $out"
   assert_contains "$out" "no changed lint targets" "docs-only run did not reach the empty target path"
   assert_contains "$out" "direct address" "docs-only run failed for a reason other than the commit message"
   git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --amend -m 'docs: update note'
   rc=0
-  out=$(cd "$repo" && PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
+  out=$(cd "$repo" && CI='' GITHUB_ACTIONS='' PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
   [ "$rc" -eq 0 ] || fail "lint rejected clean commit (exit $rc): $out"
   pass "lint checks final commits against the named base"
 }
