@@ -1206,7 +1206,7 @@ EOF
 # A process-exit receipt, unlike a PR alone, proves our unverified Codex
 # launch returned. Admission still owns the queued reviewer's transition.
 test_codex_exit_admits_queued_reviewer() {
-  local case_dir home out rc wt mode title uncertainty
+  local case_dir home out rc wt mode title uncertainty message_id
   case_dir=$(make_case codex-exit reviewer)
   home="$case_dir/home"
   declare_capacity "$home" 'project 1'
@@ -1248,13 +1248,13 @@ SH
   for uncertainty in known worktree inbox; do
     for mode in key typed; do
       case "$mode" in
-        key) set -- --key Enter ;;
-        typed) set -- /resume ;;
+        key) message_id=002; set -- --key Enter ;;
+        typed) message_id=003; set -- /resume ;;
       esac
       [ -z "$(FM_HOME="$home" bash -c '. "$1/bin/fm-backend.sh"; fm_meta_get "$2" busy_gen' _ "$ROOT" "$home/state/completed.meta")" ] || fail 'fixture has busy tracking'
       case "$uncertainty" in
         worktree) printf 'worktree=%s\n' "$case_dir/unavailable" >> "$home/state/completed.meta" ;;
-        inbox) printf 'new work\n' > "$home/state/completed.inbox/002.msg" ;;
+        inbox) printf 'new work\n' > "$home/state/completed.inbox/$message_id.msg" ;;
       esac
       rc=0
       out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
@@ -1263,7 +1263,7 @@ SH
       expect_code 0 "$rc" "$uncertainty $mode resume failed: $out"
       case "$uncertainty" in
         worktree) printf 'worktree=%s\n' "$wt" >> "$home/state/completed.meta" ;;
-        inbox) FM_TASK_INBOX="$home/state/completed.inbox" "$ROOT/bin/fm-inbox-ack.sh" 002 || fail 'ack failed' ;;
+        inbox) FM_TASK_INBOX="$home/state/completed.inbox" "$ROOT/bin/fm-inbox-ack.sh" "$message_id" || fail 'ack failed' ;;
       esac
       rc=0
       out=$(spawn_ship "$case_dir" reviewer "$case_dir/unused") || rc=$?
