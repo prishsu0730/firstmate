@@ -506,6 +506,7 @@ Ship branch: $branch
 The task is complete only when committed on your branch.
 When you believe it is complete and committed, run /no-mistakes yourself; the pipeline owns the push, so never push from this copy.
 Do not append a \`done:\` before the run: a \`done:\` that names no PR URL is refused.
+Before starting the pipeline, inspect the project checkout: if \`.github/workflows\` is absent or contains no workflow files (\`*.yml\` or \`*.yaml\`), run \`no-mistakes axi run --skip ci\` with the required intent; if it contains at least one workflow file, keep the CI step unchanged.
 ${nm_base}
 EOF
       fm_nm_driving_block "$forge"
