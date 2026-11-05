@@ -6758,7 +6758,7 @@ SH
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    FM_HEARTBEAT=1 "$WATCH" > "$out.advisories" &
+    FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 "$WATCH" > "$out.advisories" &
   pid=$!
   for advisory in \
     'WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.' \
