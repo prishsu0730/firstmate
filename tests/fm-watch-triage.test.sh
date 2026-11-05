@@ -6764,10 +6764,12 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     && fail "the refusal record kept the volatile queued-wakes warning"
   FM_STATE_OVERRIDE="$state" bash -c '
     . "$1"
-    cut -f 1 "$FM_WAKE_QUEUE" > "$STATE/.branch-eligible-rows"
+    cut -f 2 "$FM_WAKE_QUEUE" > "$STATE/.branch-eligible-rows"
     printf "fm-branch-eligible-owner-v1\n%s\n%s\nnotice-test\n" \
       "$2" "$(fm_pid_identity "$2")" > "$STATE/.branch-eligible-owner"
-    fm_wake_branch_grant_live "$STATE/.branch-eligible-rows" "$STATE/.branch-eligible-owner"
+    fm_wake_branch_grant_live "$STATE/.branch-eligible-rows" "$STATE/.branch-eligible-owner" &&
+    [ "$(fm_wake_actor_pending_count main)" = 0 ] &&
+      [ "$(fm_wake_actor_pending_count branch)" -gt 0 ]
   ' _ "$ROOT/bin/fm-wake-lib.sh" "$$" || fail "could not grant pending wake to a live branch"
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
