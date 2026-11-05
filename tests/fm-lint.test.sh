@@ -2038,11 +2038,15 @@ test_commit_address_gate() {
   fakebin=$(fm_fakebin "$tmp")
   fm_lint_stub_shellcheck "$fakebin" "$tmp/stub.log"
   git -C "$repo" branch release
-  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --allow-empty -m 'docs: captain note'
+  printf 'Documentation update\n' >> "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q -m 'docs: captain note'
   git -C "$repo" checkout -q -b work
   rc=0
   out=$(cd "$repo" && PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "lint missed offending commit (exit $rc): $out"
+  assert_contains "$out" "no changed lint targets" "docs-only run did not reach the empty target path"
+  assert_contains "$out" "direct address" "docs-only run failed for a reason other than the commit message"
   git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --amend -m 'docs: update note'
   rc=0
   out=$(cd "$repo" && PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?

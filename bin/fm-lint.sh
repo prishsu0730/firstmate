@@ -940,11 +940,16 @@ else
   printf 'fm-lint.sh: full ShellCheck extended analysis enabled\n' >&2
 fi
 
+address_rc=0
+if [ "$EXPLICIT_PATHS" -eq 0 ]; then
+  "$SELF_DIR/fm-commit-address-check.sh" ${BASE_REF:+"$BASE_REF"} || address_rc=$?
+fi
+
 if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
   printf 'fm-lint.sh: no changed lint targets\n'
-  overall_rc=0
-  fm_lint_run_backend_purity || overall_rc=$?
-  fm_lint_run_workflows || overall_rc=$?
+  overall_rc=$address_rc
+  fm_lint_run_backend_purity || { rc=$?; [ "$overall_rc" -ne 0 ] || overall_rc=$rc; }
+  fm_lint_run_workflows || { rc=$?; [ "$overall_rc" -ne 0 ] || overall_rc=$rc; }
   exit "$overall_rc"
 fi
 
@@ -1235,7 +1240,7 @@ fi
 
 # Replay both stable shards in deterministic order and select the first nonzero
 # shard status. ShellCheck processes every root in a shard after earlier findings.
-overall_rc=0
+overall_rc=$address_rc
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   output="$OUTPUT_DIR/shard.$worker"
@@ -1276,10 +1281,6 @@ purity_rc=0
 fm_lint_run_backend_purity || purity_rc=$?
 if [ "$overall_rc" -eq 0 ] && [ "$purity_rc" -ne 0 ]; then
   overall_rc=$purity_rc
-fi
-
-if [ "$EXPLICIT_PATHS" -eq 0 ]; then
-  "$SELF_DIR/fm-commit-address-check.sh" ${BASE_REF:+"$BASE_REF"} || overall_rc=$?
 fi
 
 if [ "$overall_rc" -eq 0 ]; then
