@@ -1164,6 +1164,8 @@ test_rejects_direct_beads_cli_invocations() {
   log="$tmp/shellcheck.log"
   mkdir -p "$tmp/repo/bin/backends" "$tmp/repo/tests"
   fm_git_init_commit "$tmp/repo"
+  git -C "$tmp/repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$tmp/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
   lint_copy="$tmp/repo/bin/fm-lint.sh"
   cp "$LINT" "$lint_copy"
   cp "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$tmp/repo/bin/"
@@ -1202,7 +1204,7 @@ SH
   do
     printf '#!/usr/bin/env bash\n%s\n' "$invocation" > "$tmp/repo/bin/direct-beads.sh"
     rc=0
-    out=$(cd "$tmp/repo" && CI=true PATH="$fakebin:$PATH" "$lint_copy" 2>&1) || rc=$?
+    out=$(cd "$tmp/repo" && CI=true GITHUB_BASE_REF=main PATH="$fakebin:$PATH" "$lint_copy" 2>&1) || rc=$?
     [ "$rc" -ne 0 ] || fail "lint accepted a direct Beads CLI invocation: $invocation"
     assert_contains "$out" "direct Beads CLI invocation bypasses tasks-axi" \
       "lint did not identify the backend-boundary violation: $invocation"
@@ -1900,6 +1902,8 @@ test_sidecar_result_exit_reflects_final_status() {
   telemetry="$tmp/lint.tsv"
   roots_log="$tmp/lint.roots.tsv"
   fm_git_init_commit "$tmp/repo"
+  git -C "$tmp/repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$tmp/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
   mkdir -p "$tmp/repo/bin/backends" "$tmp/repo/tests" "$tmp/repo/.github/workflows"
   cp "$LINT" "$tmp/repo/bin/fm-lint.sh"
   cp "$ROOT/bin/fm-timeout-lib.sh" "$tmp/repo/bin/fm-timeout-lib.sh"
@@ -1923,7 +1927,7 @@ SH
   # Every ShellCheck root passes, then the backend-purity check fails the run:
   # the retained records must carry that final status, not the clean lint exit.
   rc=0
-  out=$(cd "$tmp/repo" && CI=true PATH="$fakebin:$PATH" \
+  out=$(cd "$tmp/repo" && CI=true GITHUB_BASE_REF=main PATH="$fakebin:$PATH" \
     "$tmp/repo/bin/fm-lint.sh" --telemetry "$telemetry" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "a backend-purity failure did not fail the lint run (exit $rc)"$'\n'"$out"
   assert_contains "$out" "direct Beads CLI invocation bypasses tasks-axi" \
