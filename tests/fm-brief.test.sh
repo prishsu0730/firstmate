@@ -360,6 +360,29 @@ test_pr_based_dod_requires_non_draft() {
   pass "fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait"
 }
 
+# The generated brief is the public instruction contract; assert both paths of
+# its checkout-time decision, without depending on the supervisor checkout.
+test_no_mistakes_ci_workflow_instruction() {
+  local home brief mode
+  home="$TMP_ROOT/ci-workflow-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "ci-$mode" some-proj --mode "$mode" >/dev/null 2>&1
+    brief="$home/data/ci-$mode/brief.md"
+    if [ "$mode" = no-mistakes ]; then
+      # shellcheck disable=SC2016 # Generated commands must retain literal backticks.
+      assert_grep 'if `.github/workflows` is absent or contains no workflow files (`*.yml` or `*.yaml`), run `no-mistakes axi run --skip ci` with the required intent' "$brief" \
+        "no-workflow projects must skip only CI at pipeline start"
+      assert_grep 'if it contains at least one workflow file, keep the CI step unchanged' "$brief" \
+        "workflow-backed projects must retain CI"
+    else
+      assert_no_grep 'no-mistakes axi run --skip ci' "$brief" \
+        "$mode must not gain a pipeline invocation"
+    fi
+  done
+  pass "no-mistakes briefs distinguish absent/empty workflows from workflow-backed CI"
+}
+
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
@@ -1656,6 +1679,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_no_mistakes_ci_workflow_instruction
 test_no_mistakes_dod_green_detection
 test_pr_based_dod_requires_non_draft
 test_ask_user_escalation_format

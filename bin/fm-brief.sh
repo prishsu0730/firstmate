@@ -776,6 +776,11 @@ case "$MODE" in
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
+if [ "$MODE" = no-mistakes ]; then
+  # shellcheck disable=SC2016 # Commands in generated instructions stay literal.
+  DOD+='
+Before starting the pipeline, inspect the project checkout: if `.github/workflows` is absent or contains no workflow files (`*.yml` or `*.yaml`), run `no-mistakes axi run --skip ci` with the required intent; if it contains at least one workflow file, keep the CI step unchanged.'
+fi
 SCOPE_MAP=$(fm_scope_map_block "$FM_ROOT" "$DATA" "$ID")
 
 # The task's file boundary: the validated list is recorded beside the brief for
