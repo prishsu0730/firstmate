@@ -908,8 +908,6 @@ snap_tree() {
   (cd "$1" && { find . | LC_ALL=C sort; find . -type f -exec shasum -a 256 {} + | LC_ALL=C sort; })
 }
 REAL_BEFORE=$(snap_tree "$REAL")
-# The real fm-brief.sh stays in this source, so the generated brief carries the
-# status path it resolves from the caller's environment; only spawn is stubbed.
 LEAKSRC="$TMP_ROOT/leak-source"
 mkdir -p "$LEAKSRC"
 cp -R "$ROOT/bin" "$LEAKSRC/bin"
@@ -920,7 +918,14 @@ exit 0
 SH
 cat > "$LEAKSRC/bin/fm-spawn.sh" <<'SH'
 #!/usr/bin/env bash
-printf 'working [at=1]: setting up\n' > "$FM_HOME/state/$1.status"
+id=$1
+tmux new-window -d -t firstmate: -n "fm-$id" -c "$FM_HOME" \
+  "printf 'paused [at=%s]: waiting on gate file %s to exist\\n' \"\$(date +%s)\" '$FM_HOME/data/$id/gate' > '$FM_HOME/state/$id.status'; exec sleep 600" || exit 1
+printf 'window=firstmate:fm-%s\nkind=ship\nworktree=%s/projects/notes\n' "$id" "$FM_HOME" > "$FM_HOME/state/$id.meta"
+for (( n=0; n<50; n++ )); do
+  [ ! -s "$FM_HOME/state/$id.status" ] || exit 0
+  sleep 0.1
+done
 exit 1
 SH
 chmod +x "$LEAKSRC/bin/fm-tasks-axi.sh" "$LEAKSRC/bin/fm-spawn.sh"
@@ -932,7 +937,12 @@ out=$(FM_HOME="$REAL" FM_STATE_OVERRIDE="$REAL/state" FM_DATA_OVERRIDE="$REAL/da
   FM_CONFIG_OVERRIDE="$REAL/config" FM_ROOT_OVERRIDE="$REAL" \
   SHELL=/bin/sh PATH="$TMP_ROOT/stub-bin:$PATH" \
   "$LIVE_LAB" up --harness claude --worker --source "$LEAKSRC" --timeout 0 "$LEAK_LAB" 2>&1)
+expect_code 1 "$?" "the stand-in primary leaves readiness unanswered: $out"
+assert_contains "$out" "primary: claude" "up launched the primary after registering the gated worker"
+assert_contains "$out" "fail probe: no LABREADY-" "up completed startup and ran final readiness checks"
 leak_worker_id=$(sed -n 's/^worker_id=//p' "$LEAK_LAB/.fm-live-lab")
+assert_contains "$out" "ok worker: $leak_worker_id parked on $LEAK_LAB/home/data/$leak_worker_id/gate" "the live worker reached its gate before isolation is checked"
+assert_absent "$LEAK_LAB/home/data/$leak_worker_id/gate" "the worker's gate remains closed"
 leak_brief=$(<"$LEAK_LAB/home/data/$leak_worker_id/brief.md" 2>/dev/null) || fail "the lab path generated no worker brief: $out"
 assert_not_contains "$leak_brief" "$REAL" "the lab's brief never names the caller's real state or data home"
 assert_equals "$REAL_BEFORE" "$(snap_tree "$REAL")" "a full lab up writes nothing into the real state home: $out"
