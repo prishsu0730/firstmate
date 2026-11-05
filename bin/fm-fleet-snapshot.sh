@@ -2131,7 +2131,7 @@ scout_report_lines > "$SCOUT_REPORTS_JSON_FILE" \
 main_inventory_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" > "$MAIN_INVENTORY_JSON_FILE" \
   || { echo "fm-fleet-snapshot: main inventory summary failed" >&2; exit 1; }
 secondmate_current_json "$TASKS_JSON_FILE" "$SECONDMATE_CURRENT_JSON_FILE" \
-  || printf '%s\n' '{"registry":{"available":false,"reason":"registered secondmate aggregation unavailable"},"records":[],"total":0,"shown":0,"truncated":0}' > "$SECONDMATE_CURRENT_JSON_FILE"
+  || { echo "fm-fleet-snapshot: registered secondmate aggregation failed" >&2; exit 1; }
 secondmate_landed_from_current_json "$SECONDMATE_CURRENT_JSON_FILE" "$SECONDMATE_LANDED_JSON_FILE" \
   || { echo "fm-fleet-snapshot: secondmate landed projection failed" >&2; exit 1; }
 
