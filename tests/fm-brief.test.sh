@@ -363,7 +363,7 @@ test_pr_based_dod_requires_non_draft() {
 # The generated brief is the public instruction contract; assert both paths of
 # its checkout-time decision, without depending on the supervisor checkout.
 test_no_mistakes_ci_workflow_instruction() {
-  local home brief mode forge delivery id out rc
+  local home brief mode forge delivery id out rc registry_forge
   for delivery in fresh promoted; do
     for forge in none gerrit; do
       for mode in no-mistakes direct-PR local-only; do
@@ -378,7 +378,9 @@ test_no_mistakes_ci_workflow_instruction() {
         else
           mkdir -p "$home/data/$id"
           printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=some-proj\n' "$id" > "$home/state/$id.meta"
-          printf '%s\n' "- some-proj [no-mistakes forge=$forge] - fixture (added 2026-01-01)" > "$home/data/projects.md"
+          registry_forge=
+          [ "$forge" != gerrit ] || registry_forge=' forge=gerrit'
+          printf '%s\n' "- some-proj [no-mistakes$registry_forge] - fixture (added 2026-01-01)" > "$home/data/projects.md"
           printf "# Task\n## Captain's intent\nSkip unnecessary CI waits.\n\n## Firstmate spec\nInvestigate the wait.\n" > "$home/data/$id/brief.md"
           out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-promote.sh" "$id" --mode "$mode" --yolo off 2>&1)
           rc=$?
