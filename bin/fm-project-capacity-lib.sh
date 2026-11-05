@@ -392,6 +392,7 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       id=$(basename "$meta" .meta)
       released=1
       if [ -n "${5:-}" ]; then
+        # shellcheck disable=SC2016 # Expand positional parameters in the child shell.
         if fm_run_timed "$5" bash -c '
           . "$1/fm-backend.sh"
           . "$1/fm-project-capacity-lib.sh"
