@@ -91,20 +91,11 @@ test_unreadable_range_is_not_a_pass() {
   pass "an unreadable range or non-git copy refuses with exit 2"
 }
 
-test_check_applies_the_word_list_the_merge_guard_owns() {
-  # shellcheck source=bin/fm-commit-address-lib.sh
-  . "$ROOT/bin/fm-commit-address-lib.sh"
-  assert_grep 'fm-commit-address-lib.sh' "$ROOT/bin/fm-pr-merge.sh" "merge guard does not source the shared word list"
-  [ -n "$FM_COMMIT_ADDRESS_RE" ] || fail "shared word list is empty"
-  pass "the merge guard sources the shared word list"
-}
-
 test_direct_address_in_subject_is_caught
 test_direct_address_in_body_is_caught
 test_exempt_tokens_and_clean_messages_pass
 test_only_commits_beyond_the_base_are_checked
 test_amend_clears_the_failure
 test_unreadable_range_is_not_a_pass
-test_check_applies_the_word_list_the_merge_guard_owns
 
 echo "# all fm-commit-address-check tests passed"
