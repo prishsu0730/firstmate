@@ -6648,9 +6648,23 @@ test_heartbeat_auto_closes_a_local_main_ship() {
 }
 
 test_heartbeat_surfaces_one_auto_close_refusal() {
-  local dir state fakebin out pid sig drain_out drain_err marker
+  local dir state fakebin out pid sig drain_out drain_err advisory
+  local WATCH
   dir=$(make_case heartbeat-auto-close-refusal); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"
+  # Keep the real watcher and its libraries, controlling only teardown output.
+  cp -R "$ROOT/bin" "$dir/bin"
+  WATCH="$dir/bin/fm-watch.sh"
+  cat > "$dir/bin/fm-teardown.sh" <<'SH'
+#!/usr/bin/env bash
+case_dir=$(cd "$(dirname "$0")/.." && pwd)
+cat "$case_dir/advisory" >&2
+printf 'REFUSED: ship task x still has open, unmerged PR https://github.com/example/repo/pull/1\n' >&2
+cat "$case_dir/reason" >&2
+exit 1
+SH
+  : > "$dir/advisory"
+  printf 'REFUSED: waiting for merge\n' > "$dir/reason"
   printf 'done: report ready\n' > "$state/refused.status"
   fm_write_meta "$state/refused.meta" \
     'kind=scout' \
@@ -6713,9 +6727,8 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || fail "drain after watcher recovery failed"
   ack_drain_err "$state" "$drain_err.recovery" || fail "could not acknowledge watcher recovery wake"
 
-  marker="$state/.auto-close-refusal-refused"
-  [ -f "$marker" ] || fail "automatic teardown refusal did not persist its reason"
-  printf 'exit=1\nREFUSED: changed fixture reason\n' > "$marker"
+  [ -f "$state/.auto-close-refusal-refused" ] || fail "automatic teardown refusal did not persist its reason"
+  printf 'REFUSED: changed fixture reason\n' > "$dir/reason"
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
@@ -6729,8 +6742,6 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
   ack_drain_err "$state" "$drain_err.changed" \
     || fail "could not acknowledge changed automatic teardown refusal wake"
 
-  # A queued wake makes the guard add a WARNING line to teardown's output; that
-  # line reflects queue state, not the refusal, so it must not re-fire the wake.
   # A different PR head is a new refusal and must fire again.
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
   printf 'pr_head=%s\n' "$(printf 'a%.0s' $(seq 1 40))" >> "$state/refused.meta"
@@ -6745,47 +6756,34 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || fail "a new PR head did not queue a fresh refusal wake"
   ack_drain_err "$state" "$drain_err.head" || fail "could not acknowledge new-head refusal wake"
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
-  FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    fm_wake_append check unrelated-pending "check: unrelated pending wake"
-  ' _ "$ROOT/bin/fm-wake-lib.sh" || fail "could not queue an unrelated pending wake"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    FM_HEARTBEAT=1 "$WATCH" > "$out.queued" &
+    FM_HEARTBEAT=1 "$WATCH" > "$out.advisories" &
   pid=$!
-  # The pending row may itself wake the watcher; only the refusal must stay quiet.
-  wait_poll_cycle "$state" "$pid" || true
+  for advisory in \
+    'WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.' \
+    'NOTICE: wake rows held by the live supervision branch - it presents and acknowledges them; do not drain them from here.' \
+    'WARNING: queued wakes pending - left untouched because this session lacks verified fleet-lock ownership.'; do
+    printf '%s\n' "$advisory" > "$dir/advisory"
+    wait_poll_cycle "$state" "$pid" \
+      || { reap "$pid"; fail "queue advisory re-surfaced an unchanged refusal"; }
+    grep -Fx "$advisory" "$out.advisories" >/dev/null \
+      || { reap "$pid"; fail "controlled teardown did not emit the queue advisory"; }
+    [ ! -s "$state/.wake-queue" ] \
+      || { reap "$pid"; fail "queue advisory re-queued an unchanged refusal"; }
+    ! grep -E '^(WARNING: queued wakes pending|NOTICE: wake rows held)' \
+      "$state/.auto-close-refusal-refused" >/dev/null \
+      || { reap "$pid"; fail "refusal record retained a queue advisory"; }
+    : > "$dir/advisory"
+    wait_poll_cycle "$state" "$pid" \
+      || { reap "$pid"; fail "removing the queue advisory re-surfaced an unchanged refusal"; }
+    [ ! -s "$state/.wake-queue" ] \
+      || { reap "$pid"; fail "removing the queue advisory re-queued an unchanged refusal"; }
+    ! grep -E '^(WARNING: queued wakes pending|NOTICE: wake rows held)' \
+      "$state/.auto-close-refusal-refused" >/dev/null \
+      || { reap "$pid"; fail "refusal record retained a removed queue advisory"; }
+  done
   reap "$pid"
-  ! grep -F 'automatic finished-task teardown refused' "$out.queued" >/dev/null \
-    || fail "queued-wake noise re-surfaced an unchanged teardown refusal"
-  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$state/.wake-queue" || true)" = 0 ] \
-    || fail "queued-wake noise re-queued an unchanged teardown refusal"
-  grep -q 'WARNING' "$state/.auto-close-refusal-refused" \
-    && fail "the refusal record kept the volatile queued-wakes warning"
-  FM_STATE_OVERRIDE="$state" bash -c '
-    . "$1"
-    cut -f 2 "$FM_WAKE_QUEUE" > "$STATE/.branch-eligible-rows"
-    printf "fm-branch-eligible-owner-v1\n%s\n%s\nnotice-test\n" \
-      "$2" "$(fm_pid_identity "$2")" > "$STATE/.branch-eligible-owner"
-    fm_wake_branch_grant_live "$STATE/.branch-eligible-rows" "$STATE/.branch-eligible-owner" &&
-    [ "$(fm_wake_actor_pending_count main)" = 0 ] &&
-      [ "$(fm_wake_actor_pending_count branch)" -gt 0 ]
-  ' _ "$ROOT/bin/fm-wake-lib.sh" "$$" || fail "could not grant pending wake to a live branch"
-  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
-  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
-    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    FM_HEARTBEAT=1 "$WATCH" > "$out.held" &
-  pid=$!
-  wait_poll_cycle "$state" "$pid" || true
-  reap "$pid"
-  grep -F 'NOTICE: wake rows held by the live supervision branch' "$out.held" >/dev/null \
-    || fail "branch-held wake did not exercise the guard notice"
-  ! grep -F 'automatic finished-task teardown refused' "$out.held" >/dev/null \
-    || fail "branch-held notice re-surfaced an unchanged teardown refusal"
-  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$state/.wake-queue" || true)" = 0 ] \
-    || fail "branch-held notice re-queued an unchanged teardown refusal"
-  ! grep -F 'NOTICE: wake rows held' "$state/.auto-close-refusal-refused" >/dev/null \
-    || fail "the refusal record kept the volatile branch-held notice"
   pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
