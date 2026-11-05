@@ -20,7 +20,7 @@ SNAPSHOT
 chmod +x "$TMP/fm-fleet-snapshot.sh"
 printf '0\n' > "$TMP/status"
 cat > "$TMP/snapshot" <<'JSON'
-{"schema":"v1","fm_home":"/fixture","tasks":[],"backlog":{"records":[]},"free_slots":[{"project":"repo","free":2,"ready_task_ids":["queued-1"]}],"stale_capacity_holders":[{"id":"old-worker","age_seconds":90000}],"secondmate_guidance":{"note":"Use the return channel."}}
+{"schema":"v1","fm_home":"/fixture","tasks":[],"backlog":{"records":[]},"free_slots":[{"project":"repo","free":2,"ready_task_ids":["queued-1"]}],"warnings":[{"message":"capacity configuration unreadable"},{"message":"declared project has no clone: missing"}],"stale_capacity_holders":[{"id":"old-worker","age_seconds":90000}],"secondmate_guidance":{"note":"Use the return channel."}}
 JSON
 
 contains() {
@@ -35,6 +35,8 @@ test_empty() {
   contains 'No queued backlog records found.'
   contains 'No done backlog records found.'
   contains '| repo | 2 | queued-1 |'
+  contains 'Warning: capacity configuration unreadable'
+  contains 'Warning: declared project has no clone: missing'
   contains 'Stale capacity holders: old-worker (90000s)'
   contains 'Use the return channel.'
   [ "$(cat "$TMP/args")" = --json ] || fail "snapshot arguments"

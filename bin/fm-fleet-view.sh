@@ -65,6 +65,7 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
   "Home: \(.fm_home)",
   "",
   "## Free Slots",
+  (.warnings[]? | "Warning: \(.message)"),
   (if (.free_slots // []) | length == 0 then
     "No ready free slots found."
    else

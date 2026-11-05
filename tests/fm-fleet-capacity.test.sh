@@ -71,9 +71,9 @@ printf 'repo nope\n' > "$home/config/project-capacity"
 out=$(snapshot) || fail 'malformed capacity should be skipped without aborting snapshot'
 jq -e '.free_slots == []' <<< "$out" >/dev/null || fail 'malformed capacity emitted free slots'
 
-printf 'repo 3\nmissing 2\n' > "$home/config/project-capacity"
+printf 'repo 3\nmissing "quoted" 2\n' > "$home/config/project-capacity"
 out=$(snapshot) || fail 'missing clone should not abort snapshot'
-jq -e '.free_slots == [{project:"repo",free:1,ready_task_ids:["ready","scout"]}] and (.warnings | any(.message | contains("missing")))' <<< "$out" >/dev/null \
+jq -e '.free_slots == [{project:"repo",free:1,ready_task_ids:["ready","scout"]}] and (.warnings | any(.message == "declared project has no clone: missing \"quoted\""))' <<< "$out" >/dev/null \
   || fail "missing clone warning: $out"
 
 printf 'working: old news\n' > "$home/state/worker.status"

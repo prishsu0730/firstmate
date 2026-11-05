@@ -275,10 +275,9 @@ free_slots_json() {
   [ -n "$FM_PROJECT_CAPACITY_ANY" ] || { printf '[]'; return 0; }
   names=("${FM_PROJECT_CAPACITY_NAMES[@]}")
   for project in "${names[@]}"; do
-    fm_project_capacity_lookup "$config" "$project" || { printf '%s\n' "{\"message\":\"capacity declaration skipped: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
+    fm_project_capacity_lookup "$config" "$project" || { jq -cn --arg project "$project" '{message:("capacity declaration skipped: " + $project)}' >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
     capacity=$FM_PROJECT_CAPACITY
-    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { printf '%s\n' "{\"message\":\"declared project has no clone: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
-    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { printf '%s\n' "{\"message\":\"declared project has no clone: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
+    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { jq -cn --arg project "$project" '{message:("declared project has no clone: " + $project)}' >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
     ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and (.kind == "ship" or .kind == "scout") and .hold_bucket == null and .hold_reason == null and .hold_kind == null and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
     old_json=$(jq -c '[.[] | select(.kind != "secondmate" and ((.paths.status_log.last_event.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.last_event.age_seconds}]' "$TASKS_JSON_FILE")
     [ "$ready_json" != '[]' ] || [ "$old_json" != '[]' ] || continue
