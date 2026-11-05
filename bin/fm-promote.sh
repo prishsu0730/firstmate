@@ -326,6 +326,7 @@ EOF
   if [ -n "$BASE_BRANCH" ]; then
     printf -v COMMIT_BASE_ARG ' %q' "origin/$BASE_BRANCH"
   fi
+  # shellcheck disable=SC2016 # backticks are literal prose, not a command substitution.
   printf '\nBefore running /no-mistakes or pushing, run `%s/bin/fm-commit-address-check.sh%s` from the worktree and resolve any failure.\n' "$FM_ROOT" "$COMMIT_BASE_ARG"
   if [ -n "$PROMOTION_ASK_USER_BLOCK" ]; then
     printf '\nThe no-mistakes ask-user escalation below supersedes the scout rule 6 escalation shape.\n'
