@@ -51,6 +51,7 @@ for declaration in $'repo\t3' 'repo   3'; do
     || fail "canonical capacity and eligible queue: $out"
 done
 old_epoch=$(date +%s)
+printf 'working [at=%s]: implementing\n' "$((old_epoch - 172800))" > "$home/state/worker.status"
 printf 'parked [at=%s]: waiting\n' "$old_epoch" > "$home/state/parked.status"
 printf '%s\n' "project=$home/projects/repo" 'kind=secondmate' 'harness=codex' 'window=firstmate:mate' > "$home/state/mate.meta"
 printf 'working [at=%s]: supervising\n' "$old_epoch" > "$home/state/mate.status"
