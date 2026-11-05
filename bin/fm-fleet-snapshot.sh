@@ -2100,13 +2100,10 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 FREE_SLOTS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slots.json"
-<<<<<<< HEAD
 FREE_SLOT_WARNINGS_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.jsonl"
 : > "$FREE_SLOT_WARNINGS_FILE"
-=======
 STALE_HOLDERS_JSON_FILE="$JSON_TRANSPORT_DIR/stale-holders.json"
 printf '' > "$STALE_HOLDERS_JSON_FILE"
->>>>>>> 38b01966 (no-mistakes(review): Align stale holders with occupancy and bound snapshot probes)
 free_slots_json > "$FREE_SLOTS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: free-slot projection failed" >&2; exit 1; }
 FREE_SLOT_WARNINGS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.json"

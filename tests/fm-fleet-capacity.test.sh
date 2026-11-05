@@ -55,7 +55,7 @@ printf 'parked [at=%s]: waiting\n' "$old_epoch" > "$home/state/parked.status"
 printf '%s\n' "project=$home/projects/repo" 'kind=secondmate' 'harness=codex' 'window=firstmate:mate' > "$home/state/mate.meta"
 printf 'working [at=%s]: supervising\n' "$old_epoch" > "$home/state/mate.status"
 out=$(snapshot) || fail 'old parked holder snapshot'
-jq -e '(.stale_capacity_holders | map(.id) | sort) == ["parked","worker"]' <<< "$out" >/dev/null || fail 'stale list disagrees with occupancy'
+jq -e '(.stale_capacity_holders | map(.id) | sort) == ["worker"]' <<< "$out" >/dev/null || fail 'stale list disagrees with occupancy'
 printf 'parked: waiting\n' > "$home/state/parked.status"
 printf 'working [at=%s]: implementing\n' "$(date +%s)" > "$home/state/worker.status"
 printf 'repo 2\n' > "$home/config/project-capacity"
