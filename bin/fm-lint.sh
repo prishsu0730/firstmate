@@ -19,6 +19,9 @@
 # The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
 # malformed GitHub workflow, including a self-broken ci.yml, fails locally
 # before merge instead of only failing to run as CI.
+# It also runs bin/fm-commit-address-check.sh, including when no lint targets
+# changed. --base-ref selects its base; otherwise GITHUB_BASE_REF selects
+# origin/<base> when set, or the check chooses its own default.
 #
 # With no explicit paths, the file set and source-following posture depend
 # on context:
@@ -107,6 +110,7 @@
 #   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override concurrent worker count
+#   fm-lint.sh --base-ref <ref>        select the commit wording check's base
 #   fm-lint.sh --partition <1of2|2of2> lint one canonical CI partition (see fallback above)
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   fm-lint.sh --required-version      print the ShellCheck pin
