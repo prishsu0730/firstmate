@@ -360,6 +360,54 @@ test_pr_based_dod_requires_non_draft() {
   pass "fm-brief.sh: PR-based done requires a non-draft PR; a deliberate draft declares a wait"
 }
 
+# The generated brief is the public instruction contract; assert both paths of
+# its checkout-time decision, without depending on the supervisor checkout.
+test_no_mistakes_ci_workflow_instruction() {
+  local home brief mode forge delivery id out rc registry_forge
+  for delivery in fresh promoted; do
+    for forge in none gerrit; do
+      for mode in no-mistakes direct-PR local-only; do
+        [ "$mode:$forge" != local-only:gerrit ] || continue
+        id="ci-$delivery-$forge-$mode"
+        home="$TMP_ROOT/$id"
+        mkdir -p "$home/data" "$home/state"
+        if [ "$delivery" = fresh ]; then
+          out=$(FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode "$mode" --forge "$forge" 2>&1)
+          rc=$?
+          brief="$home/data/$id/brief.md"
+        else
+          mkdir -p "$home/data/$id"
+          printf 'window=fm-%s\nkind=scout\nworktree=/tmp/wt\nproject=some-proj\n' "$id" > "$home/state/$id.meta"
+          registry_forge=
+          [ "$forge" != gerrit ] || registry_forge=' forge=gerrit'
+          printf '%s\n' "- some-proj [no-mistakes$registry_forge] - fixture (added 2026-01-01)" > "$home/data/projects.md"
+          printf "# Task\n## Captain's intent\nSkip unnecessary CI waits.\n\n## Firstmate spec\nInvestigate the wait.\n" > "$home/data/$id/brief.md"
+          out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" "$ROOT/bin/fm-promote.sh" "$id" --mode "$mode" --yolo off 2>&1)
+          rc=$?
+          brief="$home/data/$id/ship-instructions.md"
+        fi
+        expect_code 0 "$rc" "$id must generate instructions: $out"
+        if [ "$mode:$forge" = no-mistakes:none ]; then
+          # shellcheck disable=SC2016
+          assert_grep 'if `.github/workflows` is absent or contains no workflow files (`*.yml` or `*.yaml`), run `no-mistakes axi run --skip ci` with the required intent' "$brief" \
+            "$id: no-workflow projects must skip only CI at pipeline start"
+          assert_grep 'if it contains at least one workflow file, keep the CI step unchanged' "$brief" \
+            "$id: workflow-backed projects must retain CI"
+        else
+          assert_no_grep 'no-mistakes axi run --skip ci' "$brief" \
+            "$id must not gain a CI-only skip invocation"
+          if [ "$mode:$forge" = no-mistakes:gerrit ]; then
+            # shellcheck disable=SC2016
+            assert_grep 'Pass `--skip push,pr,ci` on every `no-mistakes axi run`' "$brief" \
+              "$id must preserve Gerrit's required skip set"
+          fi
+        fi
+      done
+    done
+  done
+  pass "fresh and promoted instructions preserve workflow and forge CI decisions"
+}
+
 # Pin the specific line the bug lived on: the no-mistakes DOD's no-mistakes
 # reference must render as plain prose with no dangling apostrophe artifact.
 test_no_mistakes_dod_wording() {
@@ -1656,6 +1704,7 @@ test_ship_mode_is_explicit_not_registry
 test_delivery_flags_are_refused_where_they_do_not_apply
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_no_mistakes_ci_workflow_instruction
 test_no_mistakes_dod_green_detection
 test_pr_based_dod_requires_non_draft
 test_ask_user_escalation_format
