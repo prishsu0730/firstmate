@@ -716,8 +716,14 @@ ANALYSIS_MODE=full
 PARTITION=
 PARTITION_REQUESTED=0
 LIST_FILES=0
+BASE_REF=${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF}
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --base-ref)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'fm-lint.sh: --base-ref requires a ref.\n' >&2; exit 2; }
+      BASE_REF=$2
+      shift 2
+      ;;
     --jobs)
       [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 or 2.\n' >&2; exit 2; }
       JOBS=$2
@@ -1270,6 +1276,10 @@ purity_rc=0
 fm_lint_run_backend_purity || purity_rc=$?
 if [ "$overall_rc" -eq 0 ] && [ "$purity_rc" -ne 0 ]; then
   overall_rc=$purity_rc
+fi
+
+if [ "$EXPLICIT_PATHS" -eq 0 ]; then
+  "$SELF_DIR/fm-commit-address-check.sh" ${BASE_REF:+"$BASE_REF"} || overall_rc=$?
 fi
 
 if [ "$overall_rc" -eq 0 ]; then

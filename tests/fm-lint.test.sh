@@ -2026,6 +2026,31 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+test_commit_address_gate() {
+  local tmp repo fakebin rc out
+  tmp=$(fm_test_tmproot fm-lint-address)
+  repo="$tmp/repo"
+  fm_git_init_commit "$repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$ROOT/bin/fm-lint.sh" "$ROOT/bin/fm-timeout-lib.sh" "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$repo/bin/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/fm-lint-workflows.sh"
+  chmod +x "$repo/bin/fm-lint-workflows.sh"
+  fakebin=$(fm_fakebin "$tmp")
+  fm_lint_stub_shellcheck "$fakebin" "$tmp/stub.log"
+  git -C "$repo" branch release
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --allow-empty -m 'docs: captain note'
+  git -C "$repo" checkout -q -b work
+  rc=0
+  out=$(cd "$repo" && PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "lint missed offending commit (exit $rc): $out"
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --amend -m 'docs: update note'
+  rc=0
+  out=$(cd "$repo" && PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "lint rejected clean commit (exit $rc): $out"
+  pass "lint checks final commits against the named base"
+}
+
+test_commit_address_gate
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
 test_canonical_partitions_preserve_full_lint

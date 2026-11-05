@@ -68,6 +68,18 @@ test_only_commits_beyond_the_base_are_checked() {
   pass "commits already on the base are not checked"
 }
 
+test_named_base_includes_commits_already_on_main() {
+  local repo="$TMP_ROOT/named" rc=0
+  fm_git_init_commit "$repo"
+  git -C "$repo" branch release
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --allow-empty -m 'docs: captain note'
+  git -C "$repo" checkout -q -b work
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --allow-empty -m 'feat: fine'
+  run_check "$repo" release || rc=$?
+  [ "$rc" -eq 1 ] || fail "named base missed offending main commit (exit $rc)"
+  pass "named base checks commits absent from that base"
+}
+
 test_amend_clears_the_failure() {
   local repo="$TMP_ROOT/amend" rc=0
   make_repo "$repo" 'docs: captain note'
@@ -95,6 +107,7 @@ test_direct_address_in_subject_is_caught
 test_direct_address_in_body_is_caught
 test_exempt_tokens_and_clean_messages_pass
 test_only_commits_beyond_the_base_are_checked
+test_named_base_includes_commits_already_on_main
 test_amend_clears_the_failure
 test_unreadable_range_is_not_a_pass
 
