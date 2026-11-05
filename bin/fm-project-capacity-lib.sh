@@ -344,7 +344,7 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
 # a state directory or task record in them cannot be read, since skipping it
 # could undercount the holders.
 fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> <own-id>
-  local want=$1 own=$2 first=$3 self=$4 state meta kind project lock id label i
+  local want=$1 own=$2 first=$3 self=$4 state meta kind project lock id label i released
   local -a cache_dirs cache_locks
   FM_PROJECT_CAPACITY_OCCUPANTS=0
   FM_PROJECT_CAPACITY_OCCUPANT_IDS=
@@ -387,9 +387,19 @@ fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> 
       fi
       [ -n "$lock" ] && [ "$lock" = "$want" ] || continue
       id=$(basename "$meta" .meta)
-      if fm_project_capacity_record_released "$state" "$id"; then
-        continue
+      released=1
+      if [ -n "${5:-}" ]; then
+        if fm_run_timed "$5" bash -c '
+          . "$1/fm-backend.sh"
+          . "$1/fm-project-capacity-lib.sh"
+          fm_project_capacity_record_released "$2" "$3"
+        ' bash "$FM_PROJECT_CAPACITY_SCRIPT_DIR" "$state" "$id"; then
+          released=0
+        fi
+      elif fm_project_capacity_record_released "$state" "$id"; then
+        released=0
       fi
+      [ "$released" != 0 ] || continue
       label=$id
       [ "$state" = "$first" ] || label="$id in $(dirname "$state")"
       FM_PROJECT_CAPACITY_OCCUPANTS=$((FM_PROJECT_CAPACITY_OCCUPANTS + 1))

@@ -258,7 +258,7 @@ esac
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 free_slots_json() {
-  local project capacity names=() json='[]' ready_json live config project_dir lock
+  local project capacity names=() json='[]' ready_json live config project_dir lock old_json holders
   [ -d "$STATE" ] || { printf '[]'; return 0; }
   # shellcheck source=bin/fm-wake-lib.sh
   # shellcheck disable=SC1091
@@ -271,12 +271,16 @@ free_slots_json() {
     fm_project_capacity_lookup "$config" "$project" || { printf '%s\n' "{\"message\":\"capacity declaration skipped: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
     capacity=$FM_PROJECT_CAPACITY
     project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { printf '%s\n' "{\"message\":\"declared project has no clone: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
-    lock=$(fm_treehouse_project_lock_path "$project_dir") || { printf '%s\n' "{\"message\":\"capacity occupancy unavailable: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
-    fm_project_capacity_occupants "$lock" "$project_dir" "$STATE" '' || { printf '%s\n' "{\"message\":\"capacity occupancy unavailable: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
-    live=$FM_PROJECT_CAPACITY_OCCUPANTS
-    [ "$live" -lt "$capacity" ] || continue
+    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { printf '%s\n' "{\"message\":\"declared project has no clone: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
     ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and (.kind == "ship" or .kind == "scout") and .hold_bucket == null and .hold_reason == null and .hold_kind == null and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
-    [ "$ready_json" != '[]' ] || continue
+    old_json=$(jq -c '[.[] | select(.kind != "secondmate" and ((.paths.status_log.last_event.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.last_event.age_seconds}]' "$TASKS_JSON_FILE")
+    [ "$ready_json" != '[]' ] || [ "$old_json" != '[]' ] || continue
+    lock=$(fm_treehouse_project_lock_path "$project_dir") || return 1
+    fm_project_capacity_occupants "$lock" "$project_dir" "$STATE" '' 2 || return 1
+    live=$FM_PROJECT_CAPACITY_OCCUPANTS
+    holders=$FM_PROJECT_CAPACITY_OCCUPANT_IDS
+    jq -c --arg holders "$holders" '.[] | select(.id as $id | ($holders | split(", ") | index($id)) != null)' <<<"$old_json" >> "$STALE_HOLDERS_JSON_FILE" || return 1
+    [ "$ready_json" != '[]' ] && [ "$live" -lt "$capacity" ] || continue
     json=$(jq -c --arg project "$project" --argjson free "$((capacity - live))" --argjson ids "$ready_json" '. + [{project:$project,free:$free,ready_task_ids:$ids}]' <<<"$json")
   done
   printf '%s' "$json"
@@ -2089,8 +2093,13 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 FREE_SLOTS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slots.json"
+<<<<<<< HEAD
 FREE_SLOT_WARNINGS_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.jsonl"
 : > "$FREE_SLOT_WARNINGS_FILE"
+=======
+STALE_HOLDERS_JSON_FILE="$JSON_TRANSPORT_DIR/stale-holders.json"
+printf '' > "$STALE_HOLDERS_JSON_FILE"
+>>>>>>> 38b01966 (no-mistakes(review): Align stale holders with occupancy and bound snapshot probes)
 free_slots_json > "$FREE_SLOTS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: free-slot projection failed" >&2; exit 1; }
 FREE_SLOT_WARNINGS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.json"
@@ -2132,6 +2141,7 @@ jq -n \
   --arg projects "$PROJECTS" \
   --slurpfile backlog "$BACKLOG_JSON_FILE" \
   --slurpfile tasks "$TASKS_JSON_FILE" \
+  --slurpfile stale_holders "$STALE_HOLDERS_JSON_FILE" \
   --slurpfile free_slots "$FREE_SLOTS_JSON_FILE" \
   --slurpfile warnings "$FREE_SLOT_WARNINGS_JSON_FILE" \
   --slurpfile main_inventory "$MAIN_INVENTORY_JSON_FILE" \
@@ -2157,7 +2167,7 @@ jq -n \
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
      free_slots:$free_slots[0],
      warnings:$warnings[0],
-     stale_capacity_holders:[$tasks[] | select(.project != null and (.current_state.state // "") != "done" and (.current_state.state // "") != "parked" and (.current_state.state // "") != "paused" and ((.paths.status_log.last_event.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.last_event.age_seconds}],
+     stale_capacity_holders:($stale_holders | unique_by(.id)),
      main_inventory:$main_inventory,
      contributions:$contributions[0],
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
