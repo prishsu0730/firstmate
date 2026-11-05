@@ -305,15 +305,21 @@ test_read_only_agent_dispatch_is_allowed() {
     [ "$rc" -eq 0 ] || fail "read-only $type dispatch must allow, got exit $rc: $(cat "$ERR")"
     [ ! -s "$OUT" ] && [ ! -s "$ERR" ] || fail "read-only $type allow wrote output"
   done
-  # The marker may sit on any line, as long as one line starts with it.
-  rc=0
-  run_agent_payload '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"Context first.\nREAD-ONLY diagnosis of the hook."}}' || rc=$?
-  [ "$rc" -eq 0 ] || fail "marker on a later line must allow, got exit $rc"
   pass "a READ-ONLY-declared Agent call with a read-only subagent type is allowed"
 }
 
 test_write_shaped_agent_dispatch_stays_denied() {
-  local payload rc
+  local payload rc type prompt
+  for type in general-purpose Explore Plan; do
+    for prompt in 'Fix the bug.\nREAD-ONLY diagnosis of the hook.' '\nREAD-ONLY: review'; do
+      rc=0
+      run_agent_payload "{\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"$type\",\"prompt\":\"$prompt\"}}" || rc=$?
+      [ "$rc" -eq 2 ] || fail "later-line marker for $type must deny, got exit $rc"
+      [ ! -s "$OUT" ] || fail "later-line marker deny wrote stdout"
+      jq -e '.hookSpecificOutput.permissionDecision == "deny"' "$ERR" >/dev/null \
+        || fail "later-line marker omitted deny decision"
+    done
+  done
   for payload in \
     '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"Fix the bug in bin/foo.sh"}}' \
     '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"Please READ-ONLY review this."}}' \

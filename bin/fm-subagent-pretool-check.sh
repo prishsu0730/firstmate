@@ -45,7 +45,7 @@
 #           non-firstmate repo): exit 0 with no output, exactly like ALLOW.
 #   ESCAPE - FM_ALLOW_SUBAGENT=1 in the environment allows deliberately.
 #   READ-ONLY - stdin mode only: an Agent call whose tool_input.subagent_type is
-#          Explore, Plan, or general-purpose AND whose prompt has a line that
+#          Explore, Plan, or general-purpose AND whose prompt's first line
 #          starts with READ-ONLY is allowed. Review, audit, and diagnosis run
 #          there without a worker slot. Any other Agent call is write-shaped
 #          and stays denied. CLI mode carries no input, so it never qualifies.
@@ -102,7 +102,10 @@ read_only_subagent() {
     Explore|Plan|general-purpose) ;;
     *) return 1 ;;
   esac
-  printf '%s\n' "$PROMPT" | grep -q '^READ-ONLY' || return 1
+  case "$PROMPT" in
+    READ-ONLY*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 usage() {

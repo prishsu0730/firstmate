@@ -66,7 +66,7 @@ Folding the two lists together would be the drift risk, because the observe-or-s
 
 ### Read-only dispatch
 
-An `Agent` call is allowed when its `subagent_type` is `Explore`, `Plan`, or `general-purpose` and its prompt has a line that starts with `READ-ONLY`.
+An `Agent` call is allowed when its `subagent_type` is `Explore`, `Plan`, or `general-purpose` and its prompt's first line starts with `READ-ONLY`.
 That lets a review, audit, or diagnosis run in a harness subagent without taking a worker slot.
 Any other `Agent` call stays denied, and write work still goes through `bin/fm-brief.sh` and `bin/fm-spawn.sh`.
 The check needs the stdin transport, so CLI mode never qualifies.
