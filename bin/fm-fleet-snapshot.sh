@@ -77,6 +77,7 @@
 #     root-home configuration, project identity, and positive release proof rules.
 #     Occupancy is sampled sequentially with fresh release checks, independently
 #     of the bounded concurrent task observations; this is not a slot reservation.
+#     Each release check is bounded to two seconds; timeout retains occupancy.
 #     ready_task_ids contains at most three structured queued ship/scout ids in
 #     backlog order, matching the project name, with no hold bucket, reason, or
 #     kind, no unresolved blockers, and no future hold_until date.
@@ -85,6 +86,12 @@
 #     Declaration or occupancy read failure aborts the snapshot rather than
 #     publishing uncertain availability. Spawn admission still rechecks capacity.
 #     tests/fm-fleet-capacity.test.sh covers this projection.
+#   stale_capacity_holders[]: {id,age_seconds} for this home's captured tasks
+#     whose last status event is more than 86400 seconds old and whose id is
+#     returned as an occupant of a declared project with a readable local clone.
+#     Unknown event ages and secondmates are excluded; ids are deduplicated.
+#     Occupancy is checked for eligible queued work or an old non-secondmate
+#     task, so stale holders can appear even when free_slots is empty.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json

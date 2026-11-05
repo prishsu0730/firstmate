@@ -343,7 +343,10 @@ fm_project_capacity_lookup() {  # <config-dir> <project-name>
 # FM_PROJECT_CAPACITY_ERROR when the local homes cannot be enumerated, or when
 # a state directory or task record in them cannot be read, since skipping it
 # could undercount the holders.
-fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> <own-id>
+# Optional <release-timeout> bounds each release probe in seconds in a separate
+# process; a failed or timed-out probe retains the holder conservatively.
+# Without it, release probes run directly with their normal bounds.
+fm_project_capacity_occupants() {  # <project-lock> <project-dir> <first-state> <own-id> [release-timeout]
   local want=$1 own=$2 first=$3 self=$4 state meta kind project lock id label i released
   local -a cache_dirs cache_locks
   FM_PROJECT_CAPACITY_OCCUPANTS=0
