@@ -83,13 +83,16 @@
 #     kind, no unresolved blockers, and no future hold_until date.
 #     Undeclared projects, missing clones, full projects, and projects without
 #     eligible work are omitted; an absent state directory yields an empty list.
-#     Declaration or occupancy read failure aborts the snapshot rather than
-#     publishing uncertain availability. Spawn admission still rechecks capacity.
+#     Unavailable or unreadable capacity configuration and skipped declarations
+#     produce warnings; an occupancy read failure aborts the snapshot.
+#     Spawn admission still rechecks capacity.
 #     tests/fm-fleet-capacity.test.sh covers this projection.
 #   stale_capacity_holders[]: {id,age_seconds} for this home's captured tasks
 #     whose last status event is more than 86400 seconds old and whose id is
 #     returned as an occupant of a declared project with a readable local clone.
-#     Unknown event ages and secondmates are excluded; ids are deduplicated.
+#     Event age falls back to the status file modification time when its event
+#     timestamp is unusable; unknown ages and secondmates are excluded.
+#     IDs are deduplicated.
 #     Occupancy is checked for eligible queued work or an old non-secondmate
 #     task, so stale holders can appear even when free_slots is empty.
 #   scout_reports[]: present data/<id>/report.md pointers.
