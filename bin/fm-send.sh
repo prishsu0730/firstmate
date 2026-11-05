@@ -794,6 +794,7 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
       done
       SEND_CAPACITY_LOCK=$SEND_PROJECT_LOCK
       SEND_ID=$(fm_send_id_from_meta "$TARGET_META")
+      SEND_RESERVATION=
       if fm_project_capacity_record_released "$STATE" "$SEND_ID"; then
         if [ -n "$FM_PROJECT_CAPACITY" ]; then
           fm_project_capacity_occupants "$SEND_CAPACITY_LOCK" "$SEND_PROJECT" "$STATE" "$SEND_ID" || exit 1
@@ -802,7 +803,6 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
             exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
           fi
         fi
-        SEND_RESERVATION=
         if [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
           { [ "${1:-}" = --key ] ||
           { [ -z "$FIRE_AND_FORGET_ID" ] &&
@@ -810,11 +810,11 @@ if [ -n "$TARGET_META" ] && [ "$TARGET_BACKEND" != remote ] &&
               { [ "$TARGET_HARNESS" = codex ] && [[ "$*" = \$* ]]; }; }; }; }; then
           SEND_RESERVATION=busy
         fi
-        fm_project_capacity_publish reserve "$STATE" "$SEND_ID" "$SEND_RESERVATION" || exit 1
       elif [ -n "$(fm_meta_get "$TARGET_META" busy_gen)" ] &&
         { [ "${1:-}" = --key ] || [ -z "$FIRE_AND_FORGET_ID" ]; }; then
-        fm_project_capacity_publish reserve "$STATE" "$SEND_ID" busy || exit 1
+        SEND_RESERVATION=busy
       fi
+      fm_project_capacity_publish reserve "$STATE" "$SEND_ID" "$SEND_RESERVATION" || exit 1
     fi
   fi
 fi

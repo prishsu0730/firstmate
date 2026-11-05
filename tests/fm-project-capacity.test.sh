@@ -1206,7 +1206,7 @@ EOF
 # A process-exit receipt, unlike a PR alone, proves our unverified Codex
 # launch returned. Admission still owns the queued reviewer's transition.
 test_codex_exit_admits_queued_reviewer() {
-  local case_dir home out rc wt mode title
+  local case_dir home out rc wt mode title uncertainty
   case_dir=$(make_case codex-exit reviewer)
   home="$case_dir/home"
   declare_capacity "$home" 'project 1'
@@ -1245,21 +1245,32 @@ SH
   chmod +x "$case_dir/fakebin/cmux"
   out=$(sed 's/^window=.*/window=ws:sf/' "$home/state/completed.meta")
   printf '%s\ncmux_workspace_id=ws\ncmux_surface_id=sf\n' "$out" > "$home/state/completed.meta"
-  for mode in key typed; do
-    case "$mode" in
-      key) set -- --key Enter ;;
-      typed) set -- /resume ;;
-    esac
-    rc=0
-    out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
-      FM_FAKE_CMUX_TITLE="$title" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
-      PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" completed "$@" 2>&1) || rc=$?
-    expect_code 0 "$rc" "$mode resume failed: $out"
-    rc=0
-    out=$(spawn_ship "$case_dir" reviewer "$case_dir/unused") || rc=$?
-    expect_code 75 "$rc" "$mode resume reused stale Codex completion: $out"
-    "$ROOT/bin/fm-codex-worker.sh" run "$home/state" completed s-completed \
-      bash -c 'exit 0' || fail 'fresh completion failed'
+  for uncertainty in known worktree inbox; do
+    for mode in key typed; do
+      case "$mode" in
+        key) set -- --key Enter ;;
+        typed) set -- /resume ;;
+      esac
+      [ -z "$(FM_HOME="$home" bash -c '. "$1/bin/fm-backend.sh"; fm_meta_get "$2" busy_gen' _ "$ROOT" "$home/state/completed.meta")" ] || fail 'fixture has busy tracking'
+      case "$uncertainty" in
+        worktree) printf 'worktree=%s\n' "$case_dir/unavailable" >> "$home/state/completed.meta" ;;
+        inbox) printf 'new work\n' > "$home/state/completed.inbox/002.msg" ;;
+      esac
+      rc=0
+      out=$(FM_HOME="$home" FM_STATE_OVERRIDE='' FM_CONFIG_OVERRIDE='' FM_SEND_SETTLE=0 \
+        FM_FAKE_CMUX_TITLE="$title" FM_FAKE_CALL_LOG="$case_dir/calls.log" \
+        PATH="$case_dir/fakebin:$PATH" "$ROOT/bin/fm-send.sh" completed "$@" 2>&1) || rc=$?
+      expect_code 0 "$rc" "$uncertainty $mode resume failed: $out"
+      case "$uncertainty" in
+        worktree) printf 'worktree=%s\n' "$wt" >> "$home/state/completed.meta" ;;
+        inbox) FM_TASK_INBOX="$home/state/completed.inbox" "$ROOT/bin/fm-inbox-ack.sh" 002 || fail 'ack failed' ;;
+      esac
+      rc=0
+      out=$(spawn_ship "$case_dir" reviewer "$case_dir/unused") || rc=$?
+      expect_code 75 "$rc" "$uncertainty $mode resume reused stale Codex completion: $out"
+      "$ROOT/bin/fm-codex-worker.sh" run "$home/state" completed s-completed \
+        bash -c 'exit 0' || fail 'fresh completion failed'
+    done
   done
   rc=0
   out=$(spawn_ship "$case_dir" reviewer "$(new_worktree "$case_dir" reviewer)") || rc=$?
