@@ -2052,10 +2052,10 @@ test_commit_address_gate() {
   fakebin=$(fm_fakebin "$tmp")
   fm_lint_stub_shellcheck "$fakebin" "$tmp/stub.log"
   git -C "$repo" branch release
+  git -C "$repo" checkout -q -b work
   printf 'Documentation update\n' >> "$repo/README.md"
   git -C "$repo" add README.md
   git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q -m 'docs: captain note'
-  git -C "$repo" checkout -q -b work
   rc=0
   out=$(cd "$repo" && CI='' GITHUB_ACTIONS='' PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "lint missed offending commit (exit $rc): $out"
