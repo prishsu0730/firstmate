@@ -57,7 +57,9 @@
 # proof, or cleanup removing the record. Stored PR and status records alone
 # never release a place. Relaunches and steers to released workers
 # must pass admission before resuming.
-# A Codex resume reservation invalidates prior exit proof even without busy_gen;
+# Before delivering a supported send to a wrapped Codex worker, fm-send.sh
+# invalidates prior exit proof under the admission lock, even without busy_gen
+# or when the release probe is uncertain. Failed invalidation aborts delivery;
 # only a fresh successful wrapped command can restore that proof.
 # The declaration is matched by the spawning clone's directory name, so clones
 # of one origin share the cap only when they use that same directory name. A
