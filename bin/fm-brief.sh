@@ -379,6 +379,10 @@ if ! git check-ref-format --branch "$BRANCH" >/dev/null 2>&1; then
   exit 1
 fi
 printf -v BRANCH_Q '%q' "$BRANCH"
+COMMIT_BASE_ARG=
+if [ -n "$BASE_BRANCH" ]; then
+  printf -v COMMIT_BASE_ARG ' %q' "origin/$BASE_BRANCH"
+fi
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
@@ -872,7 +876,7 @@ A correction edits only the wrong text: do not run \`$FM_ROOT/bin/fm-ensure-agen
 # Commit wording
 Never put the word "captain" or any other direct address to the operator in a commit subject or body; name the thing changed instead, as in "hold" or "operator preference".
 Hyphenated names such as captain-hold and paths such as data/captain.md stay fine.
-Before you run /no-mistakes or push anything, run \`$FM_ROOT/bin/fm-commit-address-check.sh\` from your worktree.
+Before you run /no-mistakes or push anything, run \`$FM_ROOT/bin/fm-commit-address-check.sh$COMMIT_BASE_ARG\` from your worktree.
 Exit 1 names the offending commits: fix each with a local \`git commit --amend\` or \`git rebase\` now, while nothing is pushed, and rerun it until it exits 0.
 Any other non-zero exit means the check could not run: append \`blocked [at=<epoch>]: commit wording check failed: {its error text}\` and stop.
 The merge guard refuses the same words, so a bad message found only at merge needs a hand amend of a pushed commit.
