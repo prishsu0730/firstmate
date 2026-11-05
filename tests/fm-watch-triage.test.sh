@@ -6728,6 +6728,40 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || fail "changed automatic teardown refusal did not queue a second wake"
   ack_drain_err "$state" "$drain_err.changed" \
     || fail "could not acknowledge changed automatic teardown refusal wake"
+
+  # A queued wake makes the guard add a WARNING line to teardown's output; that
+  # line reflects queue state, not the refusal, so it must not re-fire the wake.
+  # A different PR head is a new refusal and must fire again.
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  printf 'pr_head=%s\n' "$(printf 'a%.0s' $(seq 1 40))" >> "$state/refused.meta"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.head" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a refusal on a new PR head did not wake the watcher"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out.head" 2> "$drain_err.head" \
+    || fail "drain after new-head refusal failed"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out.head" || true)" = 1 ] \
+    || fail "a new PR head did not queue a fresh refusal wake"
+  ack_drain_err "$state" "$drain_err.head" || fail "could not acknowledge new-head refusal wake"
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    fm_wake_append check unrelated-pending "check: unrelated pending wake"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" || fail "could not queue an unrelated pending wake"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.queued" &
+  pid=$!
+  # The pending row may itself wake the watcher; only the refusal must stay quiet.
+  wait_poll_cycle "$state" "$pid" || true
+  reap "$pid"
+  ! grep -F 'automatic finished-task teardown refused' "$out.queued" >/dev/null \
+    || fail "queued-wake noise re-surfaced an unchanged teardown refusal"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$state/.wake-queue" || true)" = 0 ] \
+    || fail "queued-wake noise re-queued an unchanged teardown refusal"
+  grep -q 'WARNING' "$state/.auto-close-refusal-refused" \
+    && fail "the refusal record kept the volatile queued-wakes warning"
   pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
