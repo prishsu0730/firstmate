@@ -105,6 +105,11 @@ case "${1:-}" in
       done
       rm -rf "$socket_dir" && rm -f "$record" || exit 1
     fi
+    # A spawn leaves state/<id>.git-hooks read-only (bin/fm-spawn.sh strips the
+    # commit-msg hook that way), and a directory without write permission
+    # cannot lose its entries. The marked home is verified above, and chmod -R
+    # does not follow symlinks, so granting the owner write access is bounded.
+    chmod -R u+w "$dir" 2>/dev/null || true
     rm -rf "$dir"
     ;;
   *)
