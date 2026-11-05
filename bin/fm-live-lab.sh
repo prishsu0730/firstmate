@@ -71,6 +71,12 @@
 #                    <lab-root>/home/data/<worker-id>/gate until that file
 #                    exists; touch the gate and message the worker to resume.
 #   primary          window main: claude --setting-sources project,local
+#                    plus --settings that turn off Claude's one-time "Teach
+#                    auto mode about your environment?" offer, which appears
+#                    after the first turn once the shared store has counted
+#                    five auto-mode denials, and which the captain's own
+#                    autoMode environment, unread under --setting-sources,
+#                    would otherwise suppress
 #                    (default sonnet, medium, permission mode auto) or pi
 #                    (default openai-codex/gpt-6-luna, medium), launched
 #                    after the mate and worker so its first turn end arms
@@ -122,6 +128,7 @@ RECORD_NAME=.fm-live-lab
 RECORD_TOKEN='fm-live-lab v1'
 PI_TRUST_STORE="$HOME/.pi/agent/trust.json"
 TREEHOUSE_DIR="$HOME/.treehouse"
+AUTO_MODE_OFFER_OFF='{"skillOverrides":{"auto-mode-setup":"off"}}'
 
 die() { echo "fm-live-lab: $*" >&2; exit 1; }
 help_text() { sed -n '/^# Usage:/,/^# up builds/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'; }
@@ -660,7 +667,7 @@ cmd_up() {
       lab_trust_present && break
     done
     lab_trust_present || die "the lab home's Claude trust keeps disappearing from $CLAUDE_STORE"
-    primary=(claude --setting-sources "project,local" --model "$model" --effort "$effort" --permission-mode auto)
+    primary=(claude --setting-sources "project,local" --settings "$AUTO_MODE_OFFER_OFF" --model "$model" --effort "$effort" --permission-mode auto)
   else
     primary=(pi --approve --session-dir "$ROOT/pi-sessions" --model "$model" --thinking "$effort")
   fi

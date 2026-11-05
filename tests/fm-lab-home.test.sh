@@ -3,11 +3,19 @@ set -eu
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fixture=$(mktemp -d "$ROOT/.fm-lab-home-test.XXXXXX")
-trap 'rm -rf "$fixture"' EXIT
+trap 'chmod -R u+w "$fixture" 2>/dev/null; rm -rf "$fixture"' EXIT
 helper="$ROOT/bin/fm-lab-home.sh"
 mkdir "$fixture/tmp"
 
 bash "$helper" create "$fixture/home" >/dev/null
+TMPDIR="$fixture/tmp" bash "$helper" teardown "$fixture/home"
+[ ! -e "$fixture/home" ]
+
+# A spawn's read-only state/<id>.git-hooks must not stop the teardown.
+bash "$helper" create "$fixture/home" >/dev/null
+mkdir "$fixture/home/state/task.git-hooks"
+printf '#!/bin/sh\n' > "$fixture/home/state/task.git-hooks/pre-commit"
+chmod 500 "$fixture/home/state/task.git-hooks/pre-commit" "$fixture/home/state/task.git-hooks"
 TMPDIR="$fixture/tmp" bash "$helper" teardown "$fixture/home"
 [ ! -e "$fixture/home" ]
 

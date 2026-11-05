@@ -696,10 +696,17 @@ assert_present "$PARTIAL/.fm-live-lab" "up recorded its selected task IDs"
 ids=$(awk -F= '/^(mate_id|worker_id)=/ {print $2}' "$PARTIAL/.fm-live-lab")
 if ! printf '%s\n' "$ids" | grep -Eq '^lab[0-9a-f]{12}-(mate|worker)$'; then fail "task IDs need twelve nonce hex digits: $ids"; fi
 assert_equals 2 "$(printf '%s\n' "$ids" | grep -Ec '^lab[0-9a-f]{12}-(mate|worker)$')" "both mate and worker use twelve nonce digits"
+# A spawn leaves state/<id>.git-hooks read-only (the commit-msg strip dir), and
+# a lab down that cannot delete it must not stop half way and strand the root.
+HOOKS="$PARTIAL/home/state/labt$$-readonly.git-hooks"
+mkdir -p "$HOOKS"
+printf '#!/bin/sh\n' > "$HOOKS/pre-commit"
+chmod 500 "$HOOKS/pre-commit" "$HOOKS"
 out=$($LIVE_LAB down "$PARTIAL" 2>&1)
 expect_code 0 "$?" "down cleans a lab whose checkout failed: $out"
+assert_not_contains "$out" "Permission denied" "down meets no read-only spawn directory"
 assert_absent "$PARTIAL" "partial lab removed"
-pass "up gives both task IDs a long nonce and down cleans partial setup"
+pass "up gives both task IDs a long nonce and down cleans partial setup, read-only spawn directories included"
 
 # A rival Claude writer drops the newly registered primary key once. The
 # stand-in primary checks the store on startup, while the readiness probe fails.
@@ -817,6 +824,41 @@ assert_contains "$out" "ok trust: $U/home is trusted in the Claude store" "readi
 out=$("$LIVE_LAB" down "$U" 2>&1)
 expect_code 0 "$?" "down removes the up-built lab: $out"
 pass "up re-registers primary trust after a concurrent Claude write"
+
+# The shared Claude store counts auto-mode denials, and once the count is five
+# the vendor offers "Teach auto mode about your environment?" after the first
+# turn unless the effective settings carry an auto-mode environment or switch
+# that offer off. The lab primary reads only project and local settings, so it
+# never sees the captain's own environment and would stop on that modal. This
+# stand-in claude is the vendor side of that contract: it shows the modal after
+# its first submitted line unless its --settings turn the offer off.
+OFFER_BIN="$TMP_ROOT/offer-bin"
+mkdir -p "$OFFER_BIN"
+cat > "$OFFER_BIN/claude" <<'SH'
+#!/usr/bin/env bash
+offer=yes
+for arg in "$@"; do
+  case "$arg" in *'"auto-mode-setup"'*'"off"'*) offer=no ;; esac
+done
+printf '❯ '
+: > "$FM_HOME/state/.session-start-complete"
+IFS= read -r line
+nonce=$(printf '%s' "$line" | sed -n 's/.*then \([0-9a-f]*\),.*/\1/p')
+printf '\n⏺ LABREADY-%s\n' "$nonce"
+if [ "$offer" = yes ]; then
+  printf '\n  Teach auto mode about your environment?\n\n  ❯ 1. Yes\n    2. Not now\n    3. Don'"'"'t show again\n\n  Enter to confirm · Esc to cancel\n'
+else
+  printf '\n❯ '
+fi
+exec sleep 45 >/dev/null 2>&1
+SH
+chmod +x "$OFFER_BIN/claude"
+OFFER="$TMP_ROOT/offer-lab"
+out=$(SHELL=/bin/sh PATH="$OFFER_BIN:$PATH" "$LIVE_LAB" up --harness claude --source "$UPSRC" --ref HEAD --timeout 8 "$OFFER" 2>&1)
+assert_not_contains "$out" "Teach auto mode about your environment" "the lab primary is never left on the auto-mode offer"
+assert_contains "$out" "ok probe: the primary answered LABREADY-" "the probe reply reaches a clear composer"
+"$LIVE_LAB" down "$OFFER" >/dev/null 2>&1
+pass "the lab primary does not stop on the auto-mode environment offer"
 
 # ---- fm-claude-trust.sh --lab-home -------------------------------------------
 
