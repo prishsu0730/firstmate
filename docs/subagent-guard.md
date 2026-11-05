@@ -64,6 +64,14 @@ Three exclusions keep the shape test from producing false positives.
 Both exclusion lists match the whole normalized name, never a substring, so neither can widen by accident: `TaskCreateAgent` and `RemoteTaskCreate` stay denied.
 Folding the two lists together would be the drift risk, because the observe-or-stop rationale is not true of a tool that writes.
 
+### Read-only dispatch
+
+An `Agent` call is allowed when its `subagent_type` is `Explore`, `Plan`, or `general-purpose` and its prompt has a line that starts with `READ-ONLY`.
+That lets a review, audit, or diagnosis run in a harness subagent without taking a worker slot.
+Any other `Agent` call stays denied, and write work still goes through `bin/fm-brief.sh` and `bin/fm-spawn.sh`.
+The check needs the stdin transport, so CLI mode never qualifies.
+The marker is a prompt convention that guards against accidental write delegation, not a security boundary.
+
 The shipped guard fires on every delegation-shaped name that reaches it, including future names that no deny list knows about yet.
 That future-name behavior is the reason the tracked matcher must match all tools and let the script filter.
 
