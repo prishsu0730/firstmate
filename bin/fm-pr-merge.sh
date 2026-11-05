@@ -532,6 +532,7 @@ github_refuse_mixed_refactor_commits() {
     echo "error: could not read the complete GitHub pull request commit subjects at the verified head before merging" >&2
     return 1
   fi
+  # shellcheck disable=SC2016 # jq, not the shell, expands $re.
   if ! addresses=$(printf '%s' "$json" | jq -r --arg re "$FM_COMMIT_ADDRESS_RE" '
       add | .[]
       | select(.commit.message | test($re; "i"))

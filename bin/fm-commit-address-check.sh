@@ -34,6 +34,7 @@ bad=0
 while IFS= read -r sha; do
   [ -n "$sha" ] || continue
   msg=$(git show -s --format=%B "$sha") || { echo "error: could not read commit $sha" >&2; exit 2; }
+  # shellcheck disable=SC2016 # jq, not the shell, expands $re.
   if printf '%s' "$msg" | jq -Rse --arg re "$FM_COMMIT_ADDRESS_RE" 'test($re; "i")' >/dev/null; then
     printf '%s %s\n' "${sha:0:8}" "$(printf '%s' "$msg" | head -n1 | jq -Rs .)" >&2
     bad=1
