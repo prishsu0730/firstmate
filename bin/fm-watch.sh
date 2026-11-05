@@ -2579,7 +2579,8 @@ auto_close_finished_records() {
     {
       printf 'exit=%s\n' "$rc"
       printf 'pr_head=%s\n' "$(fm_meta_get "$meta" pr_head)"
-      grep -v '^WARNING: queued wakes pending' "$output" || true
+      grep -v -e '^WARNING: queued wakes pending' \
+        -e '^NOTICE: wake rows held by the live supervision branch' "$output" || true
     } > "$record" || {
       rm -f -- "$output" "$record"
       FM_AUTO_CLOSE_REFUSED_ID=$id

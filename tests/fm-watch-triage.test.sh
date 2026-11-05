@@ -6762,6 +6762,28 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || fail "queued-wake noise re-queued an unchanged teardown refusal"
   grep -q 'WARNING' "$state/.auto-close-refusal-refused" \
     && fail "the refusal record kept the volatile queued-wakes warning"
+  FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1"
+    cut -f 1 "$FM_WAKE_QUEUE" > "$STATE/.branch-eligible-rows"
+    printf "fm-branch-eligible-owner-v1\n%s\n%s\nnotice-test\n" \
+      "$2" "$(fm_pid_identity "$2")" > "$STATE/.branch-eligible-owner"
+    fm_wake_branch_grant_live "$STATE/.branch-eligible-rows" "$STATE/.branch-eligible-owner"
+  ' _ "$ROOT/bin/fm-wake-lib.sh" "$$" || fail "could not grant pending wake to a live branch"
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.held" &
+  pid=$!
+  wait_poll_cycle "$state" "$pid" || true
+  reap "$pid"
+  grep -F 'NOTICE: wake rows held by the live supervision branch' "$out.held" >/dev/null \
+    || fail "branch-held wake did not exercise the guard notice"
+  ! grep -F 'automatic finished-task teardown refused' "$out.held" >/dev/null \
+    || fail "branch-held notice re-surfaced an unchanged teardown refusal"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$state/.wake-queue" || true)" = 0 ] \
+    || fail "branch-held notice re-queued an unchanged teardown refusal"
+  ! grep -F 'NOTICE: wake rows held' "$state/.auto-close-refusal-refused" >/dev/null \
+    || fail "the refusal record kept the volatile branch-held notice"
   pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
