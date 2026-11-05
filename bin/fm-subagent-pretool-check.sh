@@ -44,6 +44,13 @@
 #   INERT - not a genuine primary home (a crewmate/scout task worktree or a
 #           non-firstmate repo): exit 0 with no output, exactly like ALLOW.
 #   ESCAPE - FM_ALLOW_SUBAGENT=1 in the environment allows deliberately.
+#   READ-ONLY - stdin mode only: an Agent call whose tool_input.subagent_type is
+#          Explore, Plan, or general-purpose AND whose prompt's first line
+#          starts with READ-ONLY is allowed. Review, audit, and diagnosis run
+#          there without a worker slot. Any other Agent call is write-shaped
+#          and stays denied. CLI mode carries no input, so it never qualifies.
+#          This is a guard against accidental write delegation, not a security
+#          boundary: the marker is a prompt convention the primary chooses.
 #   FAIL OPEN - malformed or empty stdin, or missing jq for stdin transport.
 #
 # Claude requires stdout to remain empty on deny.
@@ -81,6 +88,25 @@ PLAN_ONLY_TOOLS='taskcreate taskupdate'
 TOOL=""
 TOOL_SET=0
 CLAUDE_MODE=0
+SUBAGENT_TYPE=""
+PROMPT=""
+
+# Read-only subagent dispatch: a review, audit, or diagnosis may run in a
+# harness subagent without a worker slot, but only when the call declares a
+# read-only subagent type and its prompt opens with the READ-ONLY marker line.
+# Write work never carries that marker, so it keeps going through fm-brief and
+# fm-spawn. Needs stdin input, so CLI mode never reaches it.
+read_only_subagent() {
+  [ "$TOOL" = "Agent" ] || return 1
+  case "$SUBAGENT_TYPE" in
+    Explore|Plan|general-purpose) ;;
+    *) return 1 ;;
+  esac
+  case "$PROMPT" in
+    READ-ONLY*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 usage() {
   cat <<'EOF'
@@ -138,6 +164,8 @@ if [ "$TOOL_SET" -eq 0 ]; then
   [ -n "$PAYLOAD" ] || exit 0
   command -v jq >/dev/null 2>&1 || exit 0
   TOOL=$(printf '%s' "$PAYLOAD" | jq -r '(.tool_name // .toolName // empty)' 2>/dev/null) || exit 0
+  SUBAGENT_TYPE=$(printf '%s' "$PAYLOAD" | jq -r '(.tool_input.subagent_type // empty)' 2>/dev/null) || SUBAGENT_TYPE=""
+  PROMPT=$(printf '%s' "$PAYLOAD" | jq -r '(.tool_input.prompt // empty)' 2>/dev/null) || PROMPT=""
 fi
 
 [ -n "$TOOL" ] || exit 0
@@ -170,6 +198,8 @@ done
 # in-session tool call can set it for the call that follows.
 [ "${FM_ALLOW_SUBAGENT:-}" != "1" ] || exit 0
 
+read_only_subagent && exit 0
+
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" 2>/dev/null && pwd -P) || exit 0
 FM_ROOT=${FM_ROOT_OVERRIDE:-$(CDPATH='' cd -- "$SCRIPT_DIR/.." 2>/dev/null && pwd -P)} || exit 0
 FM_HOME=${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}
@@ -195,7 +225,7 @@ else
   ROUTE='first classify the work under the AGENTS.md intake contract, then use bin/fm-brief.sh followed by bin/fm-spawn.sh for dispatched work'
 fi
 
-REASON="[subagent-dispatch] the firstmate primary dispatches through the fleet, not the harness's own delegation tools: work started that way has no durable fleet record, leaves every firstmate guard inert, and dies with this session. Instead, $ROUTE (blocked tool: $TOOL, delegation-shaped on \"$MATCHED\"). Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."
+REASON="[subagent-dispatch] the firstmate primary dispatches through the fleet, not the harness's own delegation tools: work started that way has no durable fleet record, leaves every firstmate guard inert, and dies with this session. Instead, $ROUTE (blocked tool: $TOOL, delegation-shaped on \"$MATCHED\"). A read-only review, audit, or diagnosis may use Agent with subagent_type Explore, Plan, or general-purpose and a prompt whose first line starts READ-ONLY. Launch the session with FM_ALLOW_SUBAGENT=1 for a deliberate exception."
 
 json_escape() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr '\n' ' '

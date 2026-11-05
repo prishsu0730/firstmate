@@ -2,7 +2,7 @@
 
 This document is the authoritative human-readable contract for the guard that stops a firstmate primary from delegating work outside the fleet.
 
-The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a PreToolUse guard that denies a delegation-SHAPED tool name in a genuine primary home.
+The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a PreToolUse guard that denies a delegation-SHAPED tool name in a genuine primary home, subject to the exclusions below.
 Claude primaries should also use an untracked per-home local `permissions.deny` list as hardening for known Claude delegation tools, because it removes them from the model's schema entirely.
 That deny list must not ship in tracked `.claude/settings.json` because it is Claude-only rather than harness-agnostic, and because tracked project settings propagate into linked worktrees where they disarm legitimate crewmates.
 
@@ -29,7 +29,7 @@ The guard addresses one concrete, mechanically identifiable event: the primary s
 
 It deliberately does **not** address the broader question of whether a given piece of work should be delegated at all.
 That question is a judgment boundary over read-and-think work, it has no tool-shape signal, and a hook that tried to police it would degrade into an advisory nag.
-The scope line is therefore: wrong tool reached for, deny; wrong amount of thinking done before reaching for a tool, out of scope.
+The scope line is therefore: delegation-shaped call without an applicable exclusion, deny; wrong amount of thinking done before reaching for a tool, out of scope.
 
 The guard is also not a dispatch-quality check.
 It says nothing about whether the resulting brief, project, or delivery mode is correct.
@@ -64,7 +64,15 @@ Three exclusions keep the shape test from producing false positives.
 Both exclusion lists match the whole normalized name, never a substring, so neither can widen by accident: `TaskCreateAgent` and `RemoteTaskCreate` stay denied.
 Folding the two lists together would be the drift risk, because the observe-or-stop rationale is not true of a tool that writes.
 
-The shipped guard fires on every delegation-shaped name that reaches it, including future names that no deny list knows about yet.
+### Read-only dispatch
+
+An `Agent` call is allowed when its `subagent_type` is `Explore`, `Plan`, or `general-purpose` and its prompt's first line starts with `READ-ONLY`.
+That lets a review, audit, or diagnosis run in a harness subagent without taking a worker slot.
+Any other `Agent` call stays denied, and write work still goes through `bin/fm-brief.sh` and `bin/fm-spawn.sh`.
+The check needs the stdin transport, so CLI mode never qualifies.
+The marker is a prompt convention that guards against accidental write delegation, not a security boundary.
+
+The shipped guard classifies every delegation-shaped name that reaches it, including future names that no deny list knows about yet.
 That future-name behavior is the reason the tracked matcher must match all tools and let the script filter.
 
 ## Recommended Local Claude Deny List
@@ -75,8 +83,6 @@ Claude primaries should add this deny list in untracked per-home local settings,
 {
   "permissions": {
     "deny": [
-      "Task",
-      "Agent",
       "Workflow",
       "RemoteTrigger",
       "Monitor",
@@ -119,7 +125,7 @@ Narrowing the list further, including the five observe-or-stop names, is the cap
 That is why any fixed deny list is fail-open against future tools and why the shape-based guard still exists.
 The hook cannot re-enable a tool removed from the schema; it only handles a tool name that still reaches PreToolUse.
 
-### Both `Task` and `Agent` are valid deny keys
+### Keeping read-only dispatch available
 
 The tool presents to the model as `Agent`.
 A prior investigation recorded that the deny key must be `Task` and that using `Agent` "silently does nothing at all".
@@ -128,8 +134,9 @@ That is not what this machine shows.
 A five-way A/B with a control, each run in its own directory to rule out settings caching, found that `Task` and `Agent` each independently remove the tool, and that a nonsense name leaves it present.
 The full evidence is in the validation record below.
 
-Pinning both names in the recommended local deny list is correct regardless of which build is running.
-It costs one line and removes the failure mode where a rename or a rollback silently reopens the surface.
+Keep both `Task` and `Agent` out of the local deny list to use [read-only dispatch](#read-only-dispatch); either deny key can remove the `Agent` tool before the hook can inspect its prompt.
+Existing local lists that contain either key must be narrowed before launch to make that path available.
+Retaining either key is an optional stricter posture that disables read-only dispatch too.
 
 ## Scope
 
@@ -296,7 +303,7 @@ This distinction matters when reading the next result: a tool absent from a plai
 ### Local deny-list hardening
 
 Run in a scratch firstmate-shaped project containing `AGENTS.md`, `state/`, a full copy of `bin/`, and a Claude settings file containing the local deny list exactly as recommended on that date, which was the 18-name form that still included `TaskCreate` and `TaskUpdate`.
-The result validates that local deny list rather than tracked repo state, and the recommendation above has since dropped those two session-local todo tools.
+The result validates that historical local deny list rather than the current recommendation above.
 Asking for deferred entries explicitly returned:
 
 ```text
@@ -354,7 +361,7 @@ The live consequence is confirmed by the shipped-guard result above: Claude hono
 ## Automated validation
 
 `tests/fm-subagent-pretool-check.test.sh` owns the acceptance matrix and is registered in the `pure-contract-unit` family in `bin/fm-test-run.sh`.
-It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; denial of every work-creating delegation tool by shape; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
+It covers the tracked Claude settings boundary that forbids a `permissions` key; the match-all Claude hook registration; delegation-shape denial with the [read-only dispatch](#read-only-dispatch) exclusion and rejection of later-line markers; denial of twelve hypothetical future tool names that appear on no list; the observe-or-stop, plan-only, and MCP exclusions; the exactness of the plan-only exclusion against six near-miss names a substring or shorter-stem widening would release; the scout-present and scout-absent message variants; the escape hatch including its fail-closed values; inertness in a linked task worktree and in a non-firstmate repo; in-scope enforcement for a marked secondmate home; both stdin transports; the empty-stdout requirement; fail-open transport behavior; and the preserved `Bash` seatbelts and `Stop` guard.
 
 Run:
 

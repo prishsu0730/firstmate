@@ -288,4 +288,64 @@ test_task_worktree_and_non_firstmate_repo_are_inert
 test_secondmate_home_is_in_scope
 test_stdin_transports_and_output_shapes
 test_malformed_transport_fails_open
+run_agent_payload() {
+  local payload=$1 rc=0
+  : > "$OUT"; : > "$ERR"
+  printf '%s' "$payload" \
+    | FM_ROOT_OVERRIDE="$PRIMARY" FM_HOME="$PRIMARY" FM_STATE_OVERRIDE="$STATE" \
+      "$CHECK" --claude > "$OUT" 2> "$ERR" || rc=$?
+  return "$rc"
+}
+
+test_read_only_agent_dispatch_is_allowed() {
+  local type rc
+  for type in general-purpose Explore Plan; do
+    rc=0
+    run_agent_payload "{\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"$type\",\"prompt\":\"READ-ONLY: review the diff. Do not edit files.\"}}" || rc=$?
+    [ "$rc" -eq 0 ] || fail "read-only $type dispatch must allow, got exit $rc: $(cat "$ERR")"
+    [ ! -s "$OUT" ] && [ ! -s "$ERR" ] || fail "read-only $type allow wrote output"
+  done
+  pass "a READ-ONLY-declared Agent call with a read-only subagent type is allowed"
+}
+
+test_write_shaped_agent_dispatch_stays_denied() {
+  local payload rc type prompt
+  for type in general-purpose Explore Plan; do
+    for prompt in 'Fix the bug.\nREAD-ONLY diagnosis of the hook.' '\nREAD-ONLY: review'; do
+      rc=0
+      run_agent_payload "{\"tool_name\":\"Agent\",\"tool_input\":{\"subagent_type\":\"$type\",\"prompt\":\"$prompt\"}}" || rc=$?
+      [ "$rc" -eq 2 ] || fail "later-line marker for $type must deny, got exit $rc"
+      [ ! -s "$OUT" ] || fail "later-line marker deny wrote stdout"
+      jq -e '.hookSpecificOutput.permissionDecision == "deny"' "$ERR" >/dev/null \
+        || fail "later-line marker omitted deny decision"
+    done
+  done
+  for payload in \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"Fix the bug in bin/foo.sh"}}' \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"general-purpose","prompt":"Please READ-ONLY review this."}}' \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"worker","prompt":"READ-ONLY: review"}}' \
+    '{"tool_name":"Agent","tool_input":{"prompt":"READ-ONLY: review"}}' \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"Explore","prompt":"Edit bin/foo.sh"}}' \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"Explore"}}'; do
+    rc=0
+    run_agent_payload "$payload" || rc=$?
+    [ "$rc" -eq 2 ] || fail "write-shaped Agent call must deny, got exit $rc for $payload"
+    [ ! -s "$OUT" ] || fail "write-shaped deny wrote stdout for $payload"
+  done
+  # CLI mode carries no input, so the READ-ONLY marker can never be seen there.
+  expect_deny "CLI Agent without input" Agent
+  pass "write-shaped Agent calls and CLI-mode Agent calls stay denied"
+}
+
+test_read_only_marker_does_not_release_other_tools() {
+  local tool
+  for tool in Task Workflow SendMessage; do
+    run_agent_payload "{\"tool_name\":\"$tool\",\"tool_input\":{\"subagent_type\":\"general-purpose\",\"prompt\":\"READ-ONLY: review\"}}" && fail "$tool must not be released by the READ-ONLY marker"
+  done
+  pass "the READ-ONLY marker releases only the Agent tool"
+}
+
+test_read_only_agent_dispatch_is_allowed
+test_write_shaped_agent_dispatch_stays_denied
+test_read_only_marker_does_not_release_other_tools
 test_missing_jq_stdin_transport_fails_open
