@@ -254,22 +254,25 @@ esac
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
 # shellcheck source=bin/fm-project-capacity-lib.sh
 # shellcheck source=bin/fm-wake-lib.sh
+# shellcheck disable=SC1091
 . "$SCRIPT_DIR/fm-project-capacity-lib.sh"
 
 free_slots_json() {
   local project capacity names=() json='[]' ready_json live config project_dir lock
   [ -d "$STATE" ] || { printf '[]'; return 0; }
+  # shellcheck source=bin/fm-wake-lib.sh
+  # shellcheck disable=SC1091
   . "$SCRIPT_DIR/fm-wake-lib.sh"
-  config=$(fm_project_capacity_config_dir "$FM_HOME" "$CONFIG") || return 1
-  fm_project_capacity_lookup "$config" '' || return 1
+  config=$(fm_project_capacity_config_dir "$FM_HOME" "$CONFIG") || { printf '%s\n' '{"message":"capacity configuration unavailable"}' >> "$FREE_SLOT_WARNINGS_FILE"; printf '[]'; return 0; }
+  fm_project_capacity_lookup "$config" '' || { printf '%s\n' '{"message":"capacity configuration unreadable"}' >> "$FREE_SLOT_WARNINGS_FILE"; printf '[]'; return 0; }
   [ -n "$FM_PROJECT_CAPACITY_ANY" ] || { printf '[]'; return 0; }
   names=("${FM_PROJECT_CAPACITY_NAMES[@]}")
   for project in "${names[@]}"; do
-    fm_project_capacity_lookup "$config" "$project" || return 1
+    fm_project_capacity_lookup "$config" "$project" || { printf '%s\n' "{\"message\":\"capacity declaration skipped: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
     capacity=$FM_PROJECT_CAPACITY
-    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || continue
-    lock=$(fm_treehouse_project_lock_path "$project_dir") || return 1
-    fm_project_capacity_occupants "$lock" "$project_dir" "$STATE" '' || return 1
+    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { printf '%s\n' "{\"message\":\"declared project has no clone: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
+    lock=$(fm_treehouse_project_lock_path "$project_dir") || { printf '%s\n' "{\"message\":\"capacity occupancy unavailable: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
+    fm_project_capacity_occupants "$lock" "$project_dir" "$STATE" '' || { printf '%s\n' "{\"message\":\"capacity occupancy unavailable: $project\"}" >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
     live=$FM_PROJECT_CAPACITY_OCCUPANTS
     [ "$live" -lt "$capacity" ] || continue
     ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and (.kind == "ship" or .kind == "scout") and .hold_bucket == null and .hold_reason == null and .hold_kind == null and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
@@ -404,7 +407,7 @@ crew_state_json() {  # <id> [<captured-meta>] [<captured-status>]
 }
 
 status_event_json() {  # <observed-status-log> [<contract-path>]
-  local log=$1 path=${2:-$1} present=0 raw='' verb='' note='' epoch=null age=null
+  local log=$1 path=${2:-$1} present=0 raw='' verb='' note='' epoch=null age=null mtime
   if [ -f "$log" ]; then
     present=1
     raw=$(last_nonempty_line "$log" || true)
@@ -413,6 +416,11 @@ status_event_json() {  # <observed-status-log> [<contract-path>]
     epoch=$(status_line_at_epoch "$raw") || epoch=null
     if [ "$epoch" != null ] && [ "$epoch" -le "$SNAPSHOT_EPOCH" ]; then
       age=$((SNAPSHOT_EPOCH - epoch))
+    else
+      mtime=$(file_mtime_epoch "$log")
+      if [ -n "$mtime" ] && [ "$mtime" -le "$SNAPSHOT_EPOCH" ]; then
+        age=$((SNAPSHOT_EPOCH - mtime))
+      fi
     fi
   fi
   jq -n \
@@ -2081,8 +2089,12 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 FREE_SLOTS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slots.json"
+FREE_SLOT_WARNINGS_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.jsonl"
+: > "$FREE_SLOT_WARNINGS_FILE"
 free_slots_json > "$FREE_SLOTS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: free-slot projection failed" >&2; exit 1; }
+FREE_SLOT_WARNINGS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.json"
+jq -s '.' "$FREE_SLOT_WARNINGS_FILE" > "$FREE_SLOT_WARNINGS_JSON_FILE"
 
 CONTRIBUTIONS_JSON_FILE="$JSON_TRANSPORT_DIR/contributions.json"
 CONTRIBUTION_TASKS_JSON=$(contribution_tasks_json) \
@@ -2106,7 +2118,7 @@ scout_report_lines > "$SCOUT_REPORTS_JSON_FILE" \
 main_inventory_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" > "$MAIN_INVENTORY_JSON_FILE" \
   || { echo "fm-fleet-snapshot: main inventory summary failed" >&2; exit 1; }
 secondmate_current_json "$TASKS_JSON_FILE" "$SECONDMATE_CURRENT_JSON_FILE" \
-  || { echo "fm-fleet-snapshot: registered secondmate aggregation failed" >&2; exit 1; }
+  || printf '%s\n' '{"registry":{"available":false,"reason":"registered secondmate aggregation unavailable"},"records":[],"total":0,"shown":0,"truncated":0}' > "$SECONDMATE_CURRENT_JSON_FILE"
 secondmate_landed_from_current_json "$SECONDMATE_CURRENT_JSON_FILE" "$SECONDMATE_LANDED_JSON_FILE" \
   || { echo "fm-fleet-snapshot: secondmate landed projection failed" >&2; exit 1; }
 
@@ -2121,6 +2133,7 @@ jq -n \
   --slurpfile backlog "$BACKLOG_JSON_FILE" \
   --slurpfile tasks "$TASKS_JSON_FILE" \
   --slurpfile free_slots "$FREE_SLOTS_JSON_FILE" \
+  --slurpfile warnings "$FREE_SLOT_WARNINGS_JSON_FILE" \
   --slurpfile main_inventory "$MAIN_INVENTORY_JSON_FILE" \
   --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
@@ -2143,7 +2156,8 @@ jq -n \
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
      free_slots:$free_slots[0],
-     stale_capacity_holders:[$tasks[] | select(.project != null and (.current_state.state // "") != "done" and (.current_state.state // "") != "parked" and (.current_state.state // "") != "paused" and ((.paths.status_log.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.age_seconds}],
+     warnings:$warnings[0],
+     stale_capacity_holders:[$tasks[] | select(.project != null and (.current_state.state // "") != "done" and (.current_state.state // "") != "parked" and (.current_state.state // "") != "paused" and ((.paths.status_log.last_event.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.last_event.age_seconds}],
      main_inventory:$main_inventory,
      contributions:$contributions[0],
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),

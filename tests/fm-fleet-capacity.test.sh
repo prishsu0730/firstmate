@@ -54,7 +54,22 @@ printf 'repo 2\n' > "$home/config/project-capacity"
 out=$(snapshot) || fail 'full snapshot'
 jq -e '.free_slots == []' <<< "$out" >/dev/null || fail 'full capacity advertised as free'
 printf 'repo 0\n' > "$home/config/project-capacity"
-if snapshot > "$TMP_ROOT/out" 2> "$TMP_ROOT/error"; then
-  fail 'invalid capacity advertised as free'
-fi
-pass 'snapshot shares occupancy and declaration rules and excludes held non-worker tickets'
+out=$(snapshot) || fail 'invalid capacity should be skipped without aborting snapshot'
+jq -e '.free_slots == []' <<< "$out" >/dev/null || fail 'invalid capacity emitted free slots'
+
+printf 'repo nope\n' > "$home/config/project-capacity"
+out=$(snapshot) || fail 'malformed capacity should be skipped without aborting snapshot'
+jq -e '.free_slots == []' <<< "$out" >/dev/null || fail 'malformed capacity emitted free slots'
+
+printf 'repo 3\nmissing 2\n' > "$home/config/project-capacity"
+out=$(snapshot) || fail 'missing clone should not abort snapshot'
+jq -e '.free_slots == [{project:"repo",free:1,ready_task_ids:["ready","scout"]}] and (.warnings | any(.message | contains("missing")))' <<< "$out" >/dev/null \
+  || fail "missing clone warning: $out"
+
+printf 'working: old news\n' > "$home/state/worker.status"
+touch -t "$(date -v-2d +%Y%m%d%H%M.%S)" "$home/state/worker.status"
+out=$(snapshot) || fail 'stale holder snapshot'
+jq -e '.stale_capacity_holders | any(.id == "worker" and .age_seconds > 86400)' <<< "$out" >/dev/null \
+  || fail "stale holder signal: $out"
+
+pass 'snapshot shares occupancy and declaration rules, skips bad declarations, warns on missing clones, and flags stale holders'
