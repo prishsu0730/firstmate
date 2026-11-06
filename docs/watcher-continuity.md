@@ -136,7 +136,9 @@ The second case lets a squash-merged or local-main ship reach teardown even thou
 The teardown's merge, landed-work, and safety checks remain the final authority for removing a task record or returning its worktree.
 The watcher never forces that cleanup.
 When teardown refuses, it preserves the task and queues an actionable check wake naming the record once per unchanged refusal.
-Across heartbeats and watcher restarts, the watcher compares the teardown exit code, recorded PR head, and combined output excluding queue-state advisories; a changed refusal queues a fresh wake.
+Across heartbeats and watcher restarts, the watcher compares the teardown exit code, PR head, and combined output excluding queue-state advisories.
+For an open GitHub PR refusal, it looks up the live PR head and falls back to the recorded head if the lookup fails.
+A new head or changed refusal queues a fresh wake.
 It records suppression only after the wake is successfully queued, so a failed queue append remains retryable.
 Successful teardown, whether automatic or manual, clears suppression so a reused task ID can notify again.
 Records whose `kind` is `secondmate` remain outside this automatic cleanup path.
