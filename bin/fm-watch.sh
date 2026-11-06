@@ -2552,7 +2552,7 @@ auto_close_candidate_is_safe_to_check() {  # <meta> <id>
 }
 
 auto_close_finished_records() {
-  local meta id kind rc marker output record
+  local meta id kind rc marker output record pr head live_head lookup_failed
   FM_AUTO_CLOSE_REFUSED_ID=''
   FM_AUTO_CLOSE_REFUSAL_RECORD=''
   for meta in "$STATE"/*.meta; do
@@ -2573,12 +2573,28 @@ auto_close_finished_records() {
         continue
         ;;
     esac
+    head=$(fm_meta_get "$meta" pr_head)
+    pr=$(fm_meta_get "$meta" pr)
+    lookup_failed=0
+    if fm_pr_url_parse "$pr" && [ "$FM_PR_PROVIDER" = github ] \
+      && grep -Fx "REFUSED: ship task $id still has open, unmerged PR $pr." "$output" >/dev/null; then
+      if live_head=$(fm_run_timed 10 gh pr view "$pr" --json headRefOid --jq .headRefOid 2>/dev/null) \
+        && fm_pr_head_valid "$live_head"; then
+        head=$live_head
+      else
+        lookup_failed=1
+      fi
+    fi
+    if [ "$lookup_failed" = 1 ] && [ -f "$marker" ] && [ ! -L "$marker" ]; then
+      rm -f -- "$output" "$record"
+      continue
+    fi
     # The record is the refusal's identity: exit code, PR head, and reason. The
     # guard's queued-wakes warning comes and goes with queue state, not with the
     # refusal, so it stays out of the record or an unchanged refusal would look new.
     {
       printf 'exit=%s\n' "$rc"
-      printf 'pr_head=%s\n' "$(fm_meta_get "$meta" pr_head)"
+      printf 'pr_head=%s\n' "$head"
       grep -v -e '^WARNING: queued wakes pending' \
         -e '^NOTICE: wake rows held by the live supervision branch' "$output" || true
     } > "$record" || {

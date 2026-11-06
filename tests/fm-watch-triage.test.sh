@@ -6659,15 +6659,24 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
 #!/usr/bin/env bash
 case_dir=$(cd "$(dirname "$0")/.." && pwd)
 cat "$case_dir/advisory" >&2
-printf 'REFUSED: ship task x still has open, unmerged PR https://github.com/example/repo/pull/1\n' >&2
+printf 'REFUSED: ship task refused still has open, unmerged PR https://github.com/example/repo/pull/1.\n' >&2
 cat "$case_dir/reason" >&2
 exit 1
 SH
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case_dir=$(cd "$(dirname "$0")/.." && pwd)
+cat "$case_dir/forge-head"
+SH
+  chmod +x "$fakebin/gh"
+  printf '%040d\n' 0 > "$dir/forge-head"
   : > "$dir/advisory"
   printf 'REFUSED: waiting for merge\n' > "$dir/reason"
   printf 'done: report ready\n' > "$state/refused.status"
   fm_write_meta "$state/refused.meta" \
     'kind=scout' \
+    'pr=https://github.com/example/repo/pull/1' \
+    'pr_head=0000000000000000000000000000000000000000' \
     'backend=tmux' \
     "project=$dir/project" \
     "worktree=$dir/missing-worktree" \
@@ -6744,7 +6753,7 @@ SH
 
   # A different PR head is a new refusal and must fire again.
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
-  printf 'pr_head=%s\n' "$(printf 'a%.0s' $(seq 1 40))" >> "$state/refused.meta"
+  printf '%040d\n' 1 > "$dir/forge-head"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
     FM_HEARTBEAT=1 "$WATCH" > "$out.head" &
@@ -6756,6 +6765,7 @@ SH
     || fail "a new PR head did not queue a fresh refusal wake"
   ack_drain_err "$state" "$drain_err.head" || fail "could not acknowledge new-head refusal wake"
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  printf '%s\n' 'WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.' > "$dir/advisory"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
     FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 "$WATCH" > "$out.advisories" &
@@ -6783,7 +6793,18 @@ SH
       "$state/.auto-close-refusal-refused" >/dev/null \
       || { reap "$pid"; fail "refusal record retained a removed queue advisory"; }
   done
-  reap "$pid"
+  printf 'invalid\n' > "$dir/forge-head"
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "failed head lookup re-surfaced an unchanged refusal"; }
+  [ ! -s "$state/.wake-queue" ] \
+    || { reap "$pid"; fail "failed head lookup queued a refusal"; }
+  printf '%040d\n' 2 > "$dir/forge-head"
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "recovered head lookup did not wake the watcher"; }
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out.recovered" 2> "$drain_err.recovered" \
+    || fail "drain after recovered head lookup failed"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out.recovered" || true)" = 1 ] \
+    || fail "recovered head lookup did not queue exactly one refusal"
+  ack_drain_err "$state" "$drain_err.recovered" || fail "could not acknowledge recovered refusal"
   pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
