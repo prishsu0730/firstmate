@@ -14,6 +14,7 @@ disable_project_settings: true
 # pointer so gate instructions cannot become a second prose policy.
 document:
   instructions: |
+    Never use captain or any other direct address to the operator in commit messages; name the thing changed instead.
     Read docs/documentation-audiences.md and its machine-consumed
     docs/documentation-audiences.json inventory before changing documentation.
     Apply the knowledge-placement policy in

@@ -27,10 +27,9 @@
 # optional conventional-commit scope and breaking-change ! before the colon.
 # Refusal diagnostics shell-escape subjects containing control bytes so those
 # bytes cannot act as terminal controls; only the first message line is a subject.
-# Commit messages (subject and body) also refuse a case-insensitive whole-word
-# direct address "captain"; hyphenated, underscored, dotted, and slash-joined
-# tokens such as captain-hold and data/captain.md are exempt only when the
-# joining punctuation has a letter or digit on both sides.
+# Commit messages (subject and body) also refuse a direct address; the word
+# list is owned by bin/fm-commit-address-lib.sh, which
+# bin/fm-commit-address-check.sh also applies before push.
 # Refusals name the short SHA and JSON-escape the subject and SHA for safety.
 # Each verification attempt reads all commit pages and requires the last commit
 # to match that attempt's verified head; unreadable or incomplete subjects, or
@@ -215,6 +214,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-commit-address-lib.sh
+. "$SCRIPT_DIR/fm-commit-address-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
 # shellcheck source=bin/fm-merge-outcome-lib.sh
@@ -531,9 +532,10 @@ github_refuse_mixed_refactor_commits() {
     echo "error: could not read the complete GitHub pull request commit subjects at the verified head before merging" >&2
     return 1
   fi
-  if ! addresses=$(printf '%s' "$json" | jq -r '
+  # shellcheck disable=SC2016 # jq, not the shell, expands $re.
+  if ! addresses=$(printf '%s' "$json" | jq -r --arg re "$FM_COMMIT_ADDRESS_RE" '
       add | .[]
-      | select(.commit.message | test("(^|[^[:alnum:]_./-]|(^|[^[:alnum:]])[_./-])captain(?![[:alnum:]]|[_./-][[:alnum:]])"; "i"))
+      | select(.commit.message | test($re; "i"))
       | if (.sha | type) != "string" then error("invalid commit SHA") else . end
       | "\(.sha[0:8] | tojson) \(.commit.message | split("\n")[0] | tojson)"' 2>/dev/null); then
     echo "error: could not inspect GitHub pull request commit messages before merging" >&2

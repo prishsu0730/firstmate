@@ -1501,6 +1501,21 @@ test_ship_scaffold_carries_the_scope_map_section() {
   pass "ship scaffolds carry the Scope map section and scouts do not"
 }
 
+test_ship_scaffold_carries_the_commit_wording_check() {
+  local home id brief mode
+  home="$TMP_ROOT/commit-wording-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-wording-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode "$mode" >/dev/null 2>&1 \
+      || fail "fm-brief.sh --mode $mode exited non-zero"
+    brief="$home/data/$id/brief.md"
+    assert_grep '# Commit wording' "$brief" "$mode ship brief lacks the Commit wording section"
+    assert_grep "bin/fm-commit-address-check.sh" "$brief" "$mode ship brief does not name the pre-push check"
+  done
+  pass "ship scaffolds name the pre-push commit wording check"
+}
+
 test_crewmate_scaffolds_forbid_pool_administration() {
   local home id brief mode ship_rule scout_rule
   home="$TMP_ROOT/pool-admin-home"
@@ -1734,6 +1749,7 @@ test_branch_prefix_value_is_validated
 test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_ship_scaffold_carries_the_scope_map_section
+test_ship_scaffold_carries_the_commit_wording_check
 test_allowed_files_flag_adds_only_a_section
 test_allowed_files_flag_is_validated
 test_a_leftover_state_marker_refuses_the_brief

@@ -19,6 +19,9 @@
 # The default (no explicit-path) path also runs bin/fm-lint-workflows.sh so a
 # malformed GitHub workflow, including a self-broken ci.yml, fails locally
 # before merge instead of only failing to run as CI.
+# It also runs bin/fm-commit-address-check.sh, including when no lint targets
+# changed. --base-ref selects its base; otherwise GITHUB_BASE_REF selects
+# origin/<base> when set, or the check chooses its own default.
 #
 # With no explicit paths, the file set and source-following posture depend
 # on context:
@@ -107,6 +110,7 @@
 #   fm-lint.sh --fast [path]...       local lint with extended analysis disabled
 #   fm-lint.sh <path>...               lint explicit roots with the same config
 #   fm-lint.sh --jobs <1|2> [path]...  override concurrent worker count
+#   fm-lint.sh --base-ref <ref>        select the commit wording check's base
 #   fm-lint.sh --partition <1of2|2of2> lint one canonical CI partition (see fallback above)
 #   fm-lint.sh --telemetry <path> ...  write a quiet metrics snapshot
 #   fm-lint.sh --required-version      print the ShellCheck pin
@@ -716,8 +720,14 @@ ANALYSIS_MODE=full
 PARTITION=
 PARTITION_REQUESTED=0
 LIST_FILES=0
+BASE_REF=${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF}
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --base-ref)
+      [ "$#" -ge 2 ] && [ -n "$2" ] || { printf 'fm-lint.sh: --base-ref requires a ref.\n' >&2; exit 2; }
+      BASE_REF=$2
+      shift 2
+      ;;
     --jobs)
       [ "$#" -ge 2 ] || { printf 'fm-lint.sh: --jobs requires 1 or 2.\n' >&2; exit 2; }
       JOBS=$2
@@ -934,11 +944,16 @@ else
   printf 'fm-lint.sh: full ShellCheck extended analysis enabled\n' >&2
 fi
 
+address_rc=0
+if [ "$EXPLICIT_PATHS" -eq 0 ]; then
+  "$SELF_DIR/fm-commit-address-check.sh" ${BASE_REF:+"$BASE_REF"} || address_rc=$?
+fi
+
 if [ "$CHANGED_MODE" -eq 1 ] && [ "$ROOT_COUNT" -eq 0 ]; then
   printf 'fm-lint.sh: no changed lint targets\n'
-  overall_rc=0
-  fm_lint_run_backend_purity || overall_rc=$?
-  fm_lint_run_workflows || overall_rc=$?
+  overall_rc=$address_rc
+  fm_lint_run_backend_purity || { rc=$?; [ "$overall_rc" -ne 0 ] || overall_rc=$rc; }
+  fm_lint_run_workflows || { rc=$?; [ "$overall_rc" -ne 0 ] || overall_rc=$rc; }
   exit "$overall_rc"
 fi
 
@@ -1229,7 +1244,7 @@ fi
 
 # Replay both stable shards in deterministic order and select the first nonzero
 # shard status. ShellCheck processes every root in a shard after earlier findings.
-overall_rc=0
+overall_rc=$address_rc
 worker=0
 while [ "$worker" -lt "$SHARD_COUNT" ]; do
   output="$OUTPUT_DIR/shard.$worker"

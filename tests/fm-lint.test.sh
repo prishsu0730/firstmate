@@ -243,6 +243,16 @@ fm_lint_stub_git() {
   cat > "$fakebin/git" <<'SH'
 #!/usr/bin/env bash
 case "$*" in
+  "rev-parse --git-dir")
+    printf '.git\n'
+    exit 0
+    ;;
+  "rev-parse --verify --quiet "*)
+    exit 0
+    ;;
+  "rev-list "*)
+    exit 0
+    ;;
   "rev-parse --is-inside-work-tree")
     [ "${FM_TEST_GIT_INSIDE_WORKTREE:-1}" = 1 ] || exit 1
     printf 'true\n'
@@ -798,6 +808,7 @@ test_changed_mode_hides_cross_file_codes_that_ci_still_sees() {
   mkdir -p "$test_root/bin/backends" "$test_root/tests" "$test_root/.github/workflows"
   lint="$test_root/bin/fm-lint.sh"
   cp "$LINT" "$lint"
+  cp "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$test_root/bin/"
   cp "$ROOT/bin/fm-lint-workflows.sh" "$test_root/bin/"
   cp "$ROOT"/.github/workflows/* "$test_root/.github/workflows/"
   printf '#!/usr/bin/env bash\nexit 0\n' > "$test_root/bin/backends/noop.sh"
@@ -1152,8 +1163,12 @@ test_rejects_direct_beads_cli_invocations() {
   fakebin=$(fm_fakebin "$tmp")
   log="$tmp/shellcheck.log"
   mkdir -p "$tmp/repo/bin/backends" "$tmp/repo/tests"
+  fm_git_init_commit "$tmp/repo"
+  git -C "$tmp/repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$tmp/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
   lint_copy="$tmp/repo/bin/fm-lint.sh"
   cp "$LINT" "$lint_copy"
+  cp "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$tmp/repo/bin/"
   cat > "$tmp/repo/bin/fm-lint-workflows.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1189,7 +1204,7 @@ SH
   do
     printf '#!/usr/bin/env bash\n%s\n' "$invocation" > "$tmp/repo/bin/direct-beads.sh"
     rc=0
-    out=$(cd "$tmp/repo" && CI=true PATH="$fakebin:$PATH" "$lint_copy" 2>&1) || rc=$?
+    out=$(cd "$tmp/repo" && CI=true GITHUB_BASE_REF=main PATH="$fakebin:$PATH" "$lint_copy" 2>&1) || rc=$?
     [ "$rc" -ne 0 ] || fail "lint accepted a direct Beads CLI invocation: $invocation"
     assert_contains "$out" "direct Beads CLI invocation bypasses tasks-axi" \
       "lint did not identify the backend-boundary violation: $invocation"
@@ -1886,9 +1901,13 @@ test_sidecar_result_exit_reflects_final_status() {
   log="$tmp/shellcheck.log"
   telemetry="$tmp/lint.tsv"
   roots_log="$tmp/lint.roots.tsv"
+  fm_git_init_commit "$tmp/repo"
+  git -C "$tmp/repo" update-ref refs/remotes/origin/main HEAD
+  git -C "$tmp/repo" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
   mkdir -p "$tmp/repo/bin/backends" "$tmp/repo/tests" "$tmp/repo/.github/workflows"
   cp "$LINT" "$tmp/repo/bin/fm-lint.sh"
   cp "$ROOT/bin/fm-timeout-lib.sh" "$tmp/repo/bin/fm-timeout-lib.sh"
+  cp "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$tmp/repo/bin/"
   cat > "$tmp/repo/bin/fm-lint-workflows.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1908,7 +1927,7 @@ SH
   # Every ShellCheck root passes, then the backend-purity check fails the run:
   # the retained records must carry that final status, not the clean lint exit.
   rc=0
-  out=$(cd "$tmp/repo" && CI=true PATH="$fakebin:$PATH" \
+  out=$(cd "$tmp/repo" && CI=true GITHUB_BASE_REF=main PATH="$fakebin:$PATH" \
     "$tmp/repo/bin/fm-lint.sh" --telemetry "$telemetry" 2>&1) || rc=$?
   [ "$rc" -eq 1 ] || fail "a backend-purity failure did not fail the lint run (exit $rc)"$'\n'"$out"
   assert_contains "$out" "direct Beads CLI invocation bypasses tasks-axi" \
@@ -2026,6 +2045,35 @@ SH
   pass "seeded dispatcher, adapter, production-owner, and test-local diagnostics preserve parity"
 }
 
+test_commit_address_gate() {
+  local tmp repo fakebin rc out
+  tmp=$(fm_test_tmproot fm-lint-address)
+  repo="$tmp/repo"
+  fm_git_init_commit "$repo"
+  mkdir -p "$repo/bin" "$repo/tests"
+  cp "$ROOT/bin/fm-lint.sh" "$ROOT/bin/fm-timeout-lib.sh" "$ROOT/bin/fm-commit-address-check.sh" "$ROOT/bin/fm-commit-address-lib.sh" "$repo/bin/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$repo/bin/fm-lint-workflows.sh"
+  chmod +x "$repo/bin/fm-lint-workflows.sh"
+  fakebin=$(fm_fakebin "$tmp")
+  fm_lint_stub_shellcheck "$fakebin" "$tmp/stub.log"
+  git -C "$repo" branch release
+  git -C "$repo" checkout -q -b work
+  printf 'Documentation update\n' >> "$repo/README.md"
+  git -C "$repo" add README.md
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q -m 'docs: captain note'
+  rc=0
+  out=$(cd "$repo" && CI='' GITHUB_ACTIONS='' PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
+  [ "$rc" -eq 1 ] || fail "lint missed offending commit (exit $rc): $out"
+  assert_contains "$out" "no changed lint targets" "docs-only run did not reach the empty target path"
+  assert_contains "$out" "direct address" "docs-only run failed for a reason other than the commit message"
+  git -C "$repo" -c user.name=T -c user.email=t@example.invalid commit -q --amend -m 'docs: update note'
+  rc=0
+  out=$(cd "$repo" && CI='' GITHUB_ACTIONS='' PATH="$fakebin:$PATH" "$repo/bin/fm-lint.sh" --base-ref release 2>&1) || rc=$?
+  [ "$rc" -eq 0 ] || fail "lint rejected clean commit (exit $rc): $out"
+  pass "lint checks final commits against the named base"
+}
+
+test_commit_address_gate
 test_help_reports_the_complete_interface
 test_list_files_reports_the_shell_inventory
 test_canonical_partitions_preserve_full_lint
