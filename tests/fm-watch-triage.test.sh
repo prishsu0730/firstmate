@@ -6687,11 +6687,19 @@ SH
   # The completion report was already presented; exercise refusal delivery
   # without an independent heartbeat backstop wake for that report.
   mark_heartbeat_surfaced "$state" "$state/refused.status"
-  mkdir "$state/.wake-queue"
+  printf 'invalid\n' > "$dir/forge-head"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    FM_HEARTBEAT=1 "$WATCH" > "$out.failed" 2>&1 &
+    FM_HEARTBEAT=1 "$WATCH" > "$out.initial-failure" 2>&1 &
   pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "initial failed head lookup woke the watcher"; }
+  [ ! -e "$state/.auto-close-refusal-refused" ] \
+    || { reap "$pid"; fail "initial failed head lookup wrote a marker"; }
+  [ ! -s "$state/.wake-queue" ] \
+    || { reap "$pid"; fail "initial failed head lookup queued a refusal"; }
+  mkdir "$state/.wake-queue"
+  printf '%040d\n' 0 > "$dir/forge-head"
   wait_for_exit "$pid" 100 || fail "queue failure did not stop the watcher"
   [ ! -e "$state/.auto-close-refusal-refused" ] \
     || fail "unqueued refusal armed suppression"

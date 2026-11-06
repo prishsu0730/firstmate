@@ -2585,7 +2585,7 @@ auto_close_finished_records() {
         lookup_failed=1
       fi
     fi
-    if [ "$lookup_failed" = 1 ] && [ -f "$marker" ] && [ ! -L "$marker" ]; then
+    if [ "$lookup_failed" = 1 ]; then
       rm -f -- "$output" "$record"
       continue
     fi
