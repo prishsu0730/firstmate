@@ -70,6 +70,30 @@
 #     endpoint.agent_alive is populated for local secondmates only, where it is
 #     useful return-channel supervision data; remote secondmates use "unknown"
 #     without a probe, and other tasks use "not_checked".
+#   free_slots[]: {project,free,ready_task_ids[]} for declared capacity projects
+#     with a readable clone under this home's projects root, positive remaining
+#     capacity, and eligible queued work in this home's backlog.
+#     Declaration lookup and cross-home occupancy use fm-project-capacity-lib.sh's
+#     root-home configuration, project identity, and positive release proof rules.
+#     Occupancy is sampled sequentially with fresh release checks, independently
+#     of the bounded concurrent task observations; this is not a slot reservation.
+#     Each release check is bounded to two seconds; timeout retains occupancy.
+#     ready_task_ids contains at most three structured queued ship/scout ids in
+#     backlog order, matching the project name, with no hold bucket, reason, or
+#     kind, no unresolved blockers, and no future hold_until date.
+#     Undeclared projects, missing clones, full projects, and projects without
+#     eligible work are omitted; an absent state directory yields an empty list.
+#     Unavailable or unreadable capacity configuration and skipped declarations
+#     produce warnings; an occupancy read failure aborts the snapshot.
+#     Spawn admission still rechecks capacity.
+#     tests/fm-fleet-capacity.test.sh covers this projection.
+#   stale_capacity_holders[]: {id,age_seconds} for this home's captured tasks
+#     whose last status event is more than 86400 seconds old and whose id is
+#     returned as an occupant of a declared project with a readable local clone.
+#     Unknown ages and secondmates are excluded.
+#     IDs are deduplicated.
+#     Occupancy is checked for eligible queued work or an old non-secondmate
+#     task, so stale holders can appear even when free_slots is empty.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json
@@ -237,6 +261,38 @@ esac
 . "$SCRIPT_DIR/fm-merge-authority-lib.sh"
 # shellcheck source=bin/fm-hold-reason-lib.sh
 . "$SCRIPT_DIR/fm-hold-reason-lib.sh"
+# shellcheck source=bin/fm-project-capacity-lib.sh
+# shellcheck source=bin/fm-wake-lib.sh
+# shellcheck disable=SC1091
+. "$SCRIPT_DIR/fm-project-capacity-lib.sh"
+
+free_slots_json() {
+  local project capacity names=() json='[]' ready_json live config project_dir lock old_json holders
+  [ -d "$STATE" ] || { printf '[]'; return 0; }
+  # shellcheck source=bin/fm-wake-lib.sh
+  # shellcheck disable=SC1091
+  . "$SCRIPT_DIR/fm-wake-lib.sh"
+  config=$(fm_project_capacity_config_dir "$FM_HOME" "$CONFIG") || { printf '%s\n' '{"message":"capacity configuration unavailable"}' >> "$FREE_SLOT_WARNINGS_FILE"; printf '[]'; return 0; }
+  fm_project_capacity_lookup "$config" '' || { printf '%s\n' '{"message":"capacity configuration unreadable"}' >> "$FREE_SLOT_WARNINGS_FILE"; printf '[]'; return 0; }
+  [ -n "$FM_PROJECT_CAPACITY_ANY" ] || { printf '[]'; return 0; }
+  names=("${FM_PROJECT_CAPACITY_NAMES[@]}")
+  for project in "${names[@]}"; do
+    fm_project_capacity_lookup "$config" "$project" || { jq -cn --arg project "$project" '{message:("capacity declaration skipped: " + $project)}' >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
+    capacity=$FM_PROJECT_CAPACITY
+    project_dir=$(CDPATH='' cd -- "$PROJECTS/$project" 2>/dev/null && pwd -P) || { jq -cn --arg project "$project" '{message:("declared project has no clone: " + $project)}' >> "$FREE_SLOT_WARNINGS_FILE"; continue; }
+    ready_json=$(jq -c --arg project "$project" '[.records[]? | select(.structured == true and .state == "queued" and .repo == $project and (.kind == "ship" or .kind == "scout") and .hold_bucket == null and .hold_reason == null and .hold_kind == null and ((.unresolved_blocker_ids // []) | length) == 0 and (.hold_until == null or .hold_until <= $today)) | .id] | .[0:3]' --arg today "$SNAPSHOT_TODAY" "$BACKLOG_JSON_FILE")
+    old_json=$(jq -c '[.[] | select(.kind != "secondmate" and ((.paths.status_log.last_event.age_seconds // 0) > 86400)) | {id,age_seconds:.paths.status_log.last_event.age_seconds}]' "$TASKS_JSON_FILE")
+    [ "$ready_json" != '[]' ] || [ "$old_json" != '[]' ] || continue
+    lock=$(fm_treehouse_project_lock_path "$project_dir") || return 1
+    fm_project_capacity_occupants "$lock" "$project_dir" "$STATE" '' 2 || return 1
+    live=$FM_PROJECT_CAPACITY_OCCUPANTS
+    holders=$FM_PROJECT_CAPACITY_OCCUPANT_IDS
+    jq -c --arg holders "$holders" '.[] | select(.id as $id | ($holders | split(", ") | index($id)) != null)' <<<"$old_json" >> "$STALE_HOLDERS_JSON_FILE" || return 1
+    [ "$ready_json" != '[]' ] && [ "$live" -lt "$capacity" ] || continue
+    json=$(jq -c --arg project "$project" --argjson free "$((capacity - live))" --argjson ids "$ready_json" '. + [{project:$project,free:$free,ready_task_ids:$ids}]' <<<"$json")
+  done
+  printf '%s' "$json"
+}
 
 usage() {
   cat <<'EOF'
@@ -2039,6 +2095,15 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary backlog file write failed" >&2; exit 1; }
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
+FREE_SLOTS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slots.json"
+FREE_SLOT_WARNINGS_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.jsonl"
+: > "$FREE_SLOT_WARNINGS_FILE"
+STALE_HOLDERS_JSON_FILE="$JSON_TRANSPORT_DIR/stale-holders.json"
+printf '' > "$STALE_HOLDERS_JSON_FILE"
+free_slots_json > "$FREE_SLOTS_JSON_FILE" \
+  || { echo "fm-fleet-snapshot: free-slot projection failed" >&2; exit 1; }
+FREE_SLOT_WARNINGS_JSON_FILE="$JSON_TRANSPORT_DIR/free-slot-warnings.json"
+jq -s '.' "$FREE_SLOT_WARNINGS_FILE" > "$FREE_SLOT_WARNINGS_JSON_FILE"
 
 CONTRIBUTIONS_JSON_FILE="$JSON_TRANSPORT_DIR/contributions.json"
 CONTRIBUTION_TASKS_JSON=$(contribution_tasks_json) \
@@ -2076,6 +2141,9 @@ jq -n \
   --arg projects "$PROJECTS" \
   --slurpfile backlog "$BACKLOG_JSON_FILE" \
   --slurpfile tasks "$TASKS_JSON_FILE" \
+  --slurpfile stale_holders "$STALE_HOLDERS_JSON_FILE" \
+  --slurpfile free_slots "$FREE_SLOTS_JSON_FILE" \
+  --slurpfile warnings "$FREE_SLOT_WARNINGS_JSON_FILE" \
   --slurpfile main_inventory "$MAIN_INVENTORY_JSON_FILE" \
   --slurpfile contributions "$CONTRIBUTIONS_JSON_FILE" \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
@@ -2097,6 +2165,9 @@ jq -n \
      roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
+     free_slots:$free_slots[0],
+     warnings:$warnings[0],
+     stale_capacity_holders:($stale_holders | unique_by(.id)),
      main_inventory:$main_inventory,
      contributions:$contributions[0],
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),

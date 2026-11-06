@@ -1089,6 +1089,7 @@ A clone of that origin under a different directory name finds no declaration and
 When every place is held, `bin/fm-spawn.sh` launches nothing, creates no record, leaves the backlog item queued, prints one `deferred:` line naming the holders, and exits 75, so Firstmate dispatches the item again once a place frees.
 A malformed or unreadable file refuses every fresh ship or scout spawn until it is fixed, rather than guessing the intended limit, and so does a local home's state directory or task record that cannot be read while counting a capped project's holders.
 Firstmate cannot see which part of a worker's execution uses the resource, so the tightest resource every worker needs should decide the limit.
+`bin/fm-fleet-view.sh` shows available declared capacity with eligible queued work, capacity warnings, and holders with no status news for over a day; the [`bin/fm-fleet-snapshot.sh` header](../bin/fm-fleet-snapshot.sh) owns the projection's eligibility, bounds, and failure behavior.
 [`bin/fm-project-capacity-lib.sh`](../bin/fm-project-capacity-lib.sh) owns the file format, what holds a place, and why concurrent spawns cannot both take the last one.
 
 ## Crew dispatch profiles (config/crew-dispatch.json)
