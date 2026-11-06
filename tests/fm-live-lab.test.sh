@@ -19,6 +19,9 @@ TRUST="$ROOT/bin/fm-claude-trust.sh"
 
 live_lab_cleanup() {
   local dir pid marker
+  if [ -f "${LEAK_LAB:-}/.fm-live-lab" ]; then
+    "$LIVE_LAB" down "$LEAK_LAB" >&2 || true
+  fi
   for marker in "$TMP_ROOT/orphan-child" "$TMP_ROOT/late-child" "$TMP_ROOT/reused-child"; do
     [ ! -s "$marker" ] || printf '%s\n' "$(<"$marker")" >> "$TMP_ROOT/pids"
   done
@@ -895,3 +898,57 @@ out=$(CLAUDE_CONFIG_DIR="$T/config" "$TRUST" --lab-home "$T/home" 2>&1)
 expect_code 1 "$?" "a symlinked marker is refused"
 assert_contains "$out" "is a symlink" "the refusal names the symlink"
 pass "fm-claude-trust.sh --lab-home trusts only a marked lab primary checkout"
+
+# ---- lab run never writes into the caller's real firstmate state -------------
+# The caller runs with a distinct real home whose FM_STATE_OVERRIDE, FM_DATA_OVERRIDE
+# and FM_HOME point at it. Automated lab setup with a gated worker must leave that real
+# home byte-for-byte unchanged, and the lab's own brief and worker record must exist
+# so the test cannot pass by never running the lab path.
+REAL="$TMP_ROOT/real-fm-home"
+mkdir -p "$REAL/state" "$REAL/data" "$REAL/config"
+printf 'real status\n' > "$REAL/state/existing.status"
+snap_tree() {
+  (cd "$1" && { find . | LC_ALL=C sort; find . -type f -exec shasum -a 256 {} + | LC_ALL=C sort; })
+}
+REAL_BEFORE=$(snap_tree "$REAL")
+LEAKSRC="$TMP_ROOT/leak-source"
+mkdir -p "$LEAKSRC"
+cp -R "$ROOT/bin" "$LEAKSRC/bin"
+cp "$ROOT/AGENTS.md" "$LEAKSRC/AGENTS.md"
+cat > "$LEAKSRC/bin/fm-tasks-axi.sh" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+cat > "$LEAKSRC/bin/fm-spawn.sh" <<'SH'
+#!/usr/bin/env bash
+id=$1
+tmux new-window -d -t firstmate: -n "fm-$id" -c "$FM_HOME" \
+  "printf 'paused [at=%s]: waiting on gate file %s to exist\\n' \"\$(date +%s)\" '$FM_HOME/data/$id/gate' > '$FM_HOME/state/$id.status'; exec sleep 600" || exit 1
+printf 'window=firstmate:fm-%s\nkind=ship\nworktree=%s/projects/notes\n' "$id" "$FM_HOME" > "$FM_HOME/state/$id.meta"
+for (( n=0; n<50; n++ )); do
+  [ ! -s "$FM_HOME/state/$id.status" ] || exit 0
+  sleep 0.1
+done
+exit 1
+SH
+chmod +x "$LEAKSRC/bin/fm-tasks-axi.sh" "$LEAKSRC/bin/fm-spawn.sh"
+git -C "$LEAKSRC" init -q -b main
+git -C "$LEAKSRC" add -A
+git -C "$LEAKSRC" -c user.name=t -c user.email=t@example.invalid commit -qm leak-source
+LEAK_LAB="$TMP_ROOT/leak-lab"
+out=$(FM_HOME="$REAL" FM_STATE_OVERRIDE="$REAL/state" FM_DATA_OVERRIDE="$REAL/data" \
+  FM_CONFIG_OVERRIDE="$REAL/config" FM_ROOT_OVERRIDE="$REAL" \
+  SHELL=/bin/sh PATH="$TMP_ROOT/stub-bin:$PATH" \
+  "$LIVE_LAB" up --harness claude --worker --source "$LEAKSRC" --timeout 0 "$LEAK_LAB" 2>&1)
+expect_code 1 "$?" "the stand-in primary leaves readiness unanswered: $out"
+assert_contains "$out" "primary: claude" "up launched the primary after registering the gated worker"
+assert_contains "$out" "fail probe: no LABREADY-" "up completed startup and ran final readiness checks"
+leak_worker_id=$(sed -n 's/^worker_id=//p' "$LEAK_LAB/.fm-live-lab")
+echo "ok - skipped: live worker gate check requires an authenticated Claude harness; this automated fixture uses stand-ins"
+assert_absent "$LEAK_LAB/home/data/$leak_worker_id/gate" "the worker's gate remains closed"
+leak_brief=$(<"$LEAK_LAB/home/data/$leak_worker_id/brief.md" 2>/dev/null) || fail "the lab path generated no worker brief: $out"
+assert_not_contains "$leak_brief" "$REAL" "the lab's brief never names the caller's real state or data home"
+assert_equals "$REAL_BEFORE" "$(snap_tree "$REAL")" "automated lab setup writes nothing into the real state home: $out"
+out=$("$LIVE_LAB" down "$LEAK_LAB" 2>&1)
+expect_code 0 "$?" "down cleans the leak-proof lab: $out"
+pass "automated lab setup and brief generation leave the caller's real firstmate state untouched"
