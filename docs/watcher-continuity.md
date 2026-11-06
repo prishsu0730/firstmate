@@ -137,7 +137,7 @@ The teardown's merge, landed-work, and safety checks remain the final authority 
 The watcher never forces that cleanup.
 When teardown refuses, it preserves the task and queues an actionable check wake naming the record once per unchanged refusal.
 Across heartbeats and watcher restarts, the watcher compares the teardown exit code, PR head, and combined output excluding queue-state advisories.
-For an open GitHub PR refusal, it looks up the live PR head and falls back to the recorded head if the lookup fails.
+For an open GitHub PR refusal, it looks up the live PR head and defers the notice until the lookup succeeds, leaving the suppression marker untouched on failure.
 A new head or changed refusal queues a fresh wake.
 It records suppression only after the wake is successfully queued, so a failed queue append remains retryable.
 Successful teardown, whether automatic or manual, clears suppression so a reused task ID can notify again.
