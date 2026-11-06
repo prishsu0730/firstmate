@@ -19,6 +19,9 @@ TRUST="$ROOT/bin/fm-claude-trust.sh"
 
 live_lab_cleanup() {
   local dir pid marker
+  if [ -f "${LEAK_LAB:-}/.fm-live-lab" ]; then
+    "$LIVE_LAB" down "$LEAK_LAB" >&2 || true
+  fi
   for marker in "$TMP_ROOT/orphan-child" "$TMP_ROOT/late-child" "$TMP_ROOT/reused-child"; do
     [ ! -s "$marker" ] || printf '%s\n' "$(<"$marker")" >> "$TMP_ROOT/pids"
   done
