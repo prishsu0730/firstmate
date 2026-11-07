@@ -195,11 +195,13 @@
 # description refuses. The proof is the log
 # <data>/<task-id>/red-green.log, holding one marker line per test run followed
 # by that run's captured output:
-# `<pr-url>|<commit-sha>|<test-id>|red|<exit-code>` or the same with `green`.
+# `<pr-url>|<commit-sha>|<test-id>|red|<exit-code>|<test-command>` or the same with `green`.
 # The merge needs one test id, free of whitespace, with a red line at the pull
 # request's pre-fix ancestor and a nonzero exit, and a later green line at the exact head
 # this run verified and exit 0, each followed by at least one non-blank output
-# line before the next marker; any other line is captured output and is ignored.
+# line before the next marker, using the same nonempty test command for both.
+# Exit 126 or 127 and output containing `command not found` or `no tests found`
+# invalidate a run, regardless of case.
 # The merge base is read live from the forge; other red commits must be verified
 # as ancestors of the head in the task's local worktree.
 # A push gives the pull request a new head and voids the green run.
@@ -1543,22 +1545,23 @@ require_red_green_log() {
     candidates=$(awk -F'|' -v url="$URL" -v head="$head" '
       function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
       function settle() {
-        if (pending != "" && output) {
-          if (pending_kind == "red") red[pending SUBSEP pending_sha] = 1
-          else for (key in red) { split(key, parts, SUBSEP); if (parts[1] == pending) print parts[2] " " pending }
+        if (pending != "" && output && !invalid) {
+          if (pending_kind == "red") red[pending SUBSEP pending_command SUBSEP pending_sha] = 1
+          else for (key in red) { split(key, parts, SUBSEP); if (parts[1] == pending && parts[2] == pending_command) print parts[3] " " pending }
         }
-        pending = ""; output = 0
+        pending = ""; output = 0; invalid = 0
       }
-      NF == 5 && (trim($4) == "red" || trim($4) == "green") {
+      NF == 6 && (trim($4) == "red" || trim($4) == "green") {
         settle()
         if (trim($1) != url) next
         sha = tolower(trim($2)); t = trim($3); kind = trim($4); code = trim($5)
-        if (t == "" || t ~ /[[:space:]]/ || code !~ /^[0-9]+$/) next
+        pending_command = trim($6)
+        if (t == "" || t ~ /[[:space:]]/ || pending_command == "" || code !~ /^[0-9]+$/ || code + 0 == 126 || code + 0 == 127) next
         if (kind == "red" && sha ~ /^[0-9a-f]+$/ && length(sha) == 40 && sha != head && code + 0 != 0) { pending = t; pending_kind = "red"; pending_sha = sha }
         if (kind == "green" && sha == head && code + 0 == 0) { pending = t; pending_kind = "green" }
         next
       }
-      /[^[:space:]]/ { if (pending != "") output = 1 }
+      /[^[:space:]]/ { if (pending != "") { output = 1; if (tolower($0) ~ /command not found|no tests found/) invalid = 1 } }
       END {
         settle()
       }
@@ -1584,7 +1587,7 @@ EOF
   fi
   printf 'error: refusing to merge %s: task %s is a bug fix with no red/green evidence in %s: no test failed at an ancestor (merge base %s) and then passed at head %s\n' \
     "$URL" "$ID" "$log" "$base" "$FM_PR_MERGE_HEAD" >&2
-  printf 'run the same test on the old code and on the fix, and append each run as one marker line followed by its captured output: %s|%s|<test-id>|red|<nonzero exit> and %s|%s|<test-id>|green|0\n' \
+  printf 'run the same test on the old code and on the fix, and append each run as one marker line followed by its captured output: %s|%s|<test-id>|red|<nonzero exit>|<test-command> and %s|%s|<test-id>|green|0|<test-command>\n' \
     "$URL" "$base" "$URL" "$FM_PR_MERGE_HEAD" >&2
   echo 'a push after the green run gives the pull request a new head and voids it; a rebase can void the red run' >&2
   return 1

@@ -5013,9 +5013,9 @@ write_bug_fix_brief() {
 # Append one run to the task's evidence log: its marker, then captured output.
 # Args: case_dir task_id url sha test_id phase exit [output]
 add_red_green_run() {
-  local case_dir=$1 id=$2 url=$3 sha=$4 test_id=$5 phase=$6 code=$7 out=${8-ran $5}
+  local case_dir=$1 id=$2 url=$3 sha=$4 test_id=$5 phase=$6 code=$7 out=${8-ran $5} command=${9-$5}
   mkdir -p "$case_dir/home/data/$id"
-  printf '%s|%s|%s|%s|%s\n' "$url" "$sha" "$test_id" "$phase" "$code" >> "$case_dir/home/data/$id/red-green.log"
+  printf '%s|%s|%s|%s|%s|%s\n' "$url" "$sha" "$test_id" "$phase" "$code" "$command" >> "$case_dir/home/data/$id/red-green.log"
   [ -z "$out" ] || printf '%s\n' "$out" >> "$case_dir/home/data/$id/red-green.log"
 }
 
@@ -5157,6 +5157,39 @@ test_red_green_runs_must_be_at_the_base_and_head() {
 }
 
 test_red_green_exit_codes_and_output_must_prove_the_runs() {
+  local phase code output
+  make_red_green_case red-green-command-mismatch
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 'FAIL' 'test one'
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 'PASS' 'test two'
+  merge_red_green_case
+  assert_red_green_refusal red-green-command-mismatch
+
+  for phase in red green; do
+    for code in 126 127; do
+      make_red_green_case "red-green-$phase-$code"
+      if [ "$phase" = red ]; then
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red "$code"
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+      else
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green "$code"
+      fi
+      merge_red_green_case
+      assert_red_green_refusal "red-green-$phase-$code"
+    done
+    for output in 'command not found' 'no tests found'; do
+      make_red_green_case "red-green-$phase-output"
+      if [ "$phase" = red ]; then
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 "$output"
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+      else
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 "$output"
+      fi
+      merge_red_green_case
+      assert_red_green_refusal "red-green-$phase-output"
+    done
+  done
   make_red_green_case red-green-red-passed
   add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 0
   add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0

@@ -656,6 +656,8 @@ Risk tiers: {RISK_TIERS}
 Type: {TYPE}
 Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)
 
+For a bug fix, run the red test before fixing and save it to the task's red-green.log, then append the green run after the fix; see the bin/fm-pr-merge.sh header for the format.
+
 Before dispatch, classify every implementation change as LOCAL, COMPONENT, FLOW, or SYSTEM; name affected shared components, styles, state, assets, or routes; and match verification: LOCAL targeted screen check, COMPONENT every known usage, FLOW the end-to-end flow, SYSTEM full first-use regression.
 Set code review risk and execution risk independently as Low, Medium, High, or Critical, with a one-line reason covering impact, blast radius, reversibility, evidence, and permissions.
 Use one review depth per PR by consequence: No Greptile (LOW) no-mistakes only; Base (MEDIUM) one fresh reviewer; Plus (HIGH) two independent passes then synthesis; Apex (CRITICAL) four specialist passes then synthesis; never stack depths.
