@@ -1551,11 +1551,13 @@ require_red_green_log() {
         }
         pending = ""; output = 0; invalid = 0
       }
-      NF == 6 && (trim($4) == "red" || trim($4) == "green") {
+      NF >= 6 && (trim($4) == "red" || trim($4) == "green") {
         settle()
         if (trim($1) != url) next
         sha = tolower(trim($2)); t = trim($3); kind = trim($4); code = trim($5)
-        pending_command = trim($6)
+        pending_command = $0
+        for (i = 0; i < 5; i++) sub(/^[^|]*\|/, "", pending_command)
+        pending_command = trim(pending_command)
         if (t == "" || t ~ /[[:space:]]/ || pending_command == "" || code !~ /^[0-9]+$/ || code + 0 == 126 || code + 0 == 127) next
         if (kind == "red" && sha ~ /^[0-9a-f]+$/ && length(sha) == 40 && sha != head && code + 0 != 0) { pending = t; pending_kind = "red"; pending_sha = sha }
         if (kind == "green" && sha == head && code + 0 == 0) { pending = t; pending_kind = "green" }

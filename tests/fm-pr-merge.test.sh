@@ -5111,6 +5111,12 @@ test_red_green_allows_a_valid_pair() {
   assert_grep "compare/main...$RG_HEAD" "$CASE/gh.log" \
     "red-green-valid: the merge base was not read for the verified head"
 
+  make_red_green_case red-green-piped-command
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 'FAIL' 'npm test | tee output.log'
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 'PASS' 'npm test | tee output.log'
+  merge_red_green_case
+  assert_red_green_merged red-green-piped-command
+
   make_red_green_case red-green-valid-forms 'BugFix'
   upper_base=abcabcabcabcabcabcabcabcabcabcabcabcabca
   printf '{"merge_base_commit":{"sha":"%s"}}\n' "$upper_base" > "$CASE/github-compare.json"
