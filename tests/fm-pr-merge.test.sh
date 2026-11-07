@@ -236,6 +236,11 @@ case "${1:-} ${2:-}" in
         cat "$FM_TEST_GH_VIEW_JSON"
         exit 0
         ;;
+      *" --json body "*)
+        [ -f "${FM_TEST_GH_BODY:-}" ] || exit 1
+        jq -n --rawfile body "$FM_TEST_GH_BODY" '{body: $body}'
+        exit 0
+        ;;
     esac
     ;;
   "pr merge")
@@ -436,6 +441,7 @@ write_mr_json() {
   local head=$MR_HEAD pipeline_sha=$MR_HEAD pipeline_status=success pipeline=present
   local merge_when_pipeline_succeeds=false merge_after=null
   local base_sha=$MR_BASE
+  local description='Root cause: the fixture names its cause.'
   shift
   for kv in "$@"; do
     key=${kv%%=*}
@@ -452,6 +458,7 @@ write_mr_json() {
       merge_when_pipeline_succeeds) merge_when_pipeline_succeeds=$value ;;
       merge_after) merge_after=$value ;;
       base_sha) base_sha=$value ;;
+      description) description=$value ;;
       *) fail "write_mr_json: unknown field '$key'" ;;
     esac
   done
@@ -463,6 +470,7 @@ write_mr_json() {
   printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s,' \
     "$discussions" "$head" "$pipeline" >> "$file"
   printf '"diff_refs":{"base_sha":"%s"},' "$base_sha" >> "$file"
+  printf '"description":"%s",' "$description" >> "$file"
   printf '"merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
     "$merge_when_pipeline_succeeds" "$merge_after" >> "$file"
 }
@@ -529,6 +537,7 @@ run_pr_merge() {
   FM_TEST_GH_HEAD="$case_dir/github-head" \
   FM_TEST_GH_COMMITS="$case_dir/github-commits" \
   FM_TEST_GH_COMPARE="$case_dir/github-compare.json" \
+  FM_TEST_GH_BODY="$case_dir/github-body.md" \
   FM_TEST_GH_RUNS="$case_dir/github-runs.json" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
@@ -5017,6 +5026,7 @@ make_red_green_case() {
   add_gh_mocks "$CASE" "$RG_HEAD"
   write_bug_fix_brief "$CASE" task-x1 "${2:-bug fix}"
   printf '{"status":"ahead","merge_base_commit":{"sha":"%s"}}\n' "$RG_BASE" > "$CASE/github-compare.json"
+  printf '%s\n' '## Summary' 'Fixes the bug.' '' '- **Root cause:** the parser dropped the last line.' > "$CASE/github-body.md"
 }
 
 merge_red_green_case() {
@@ -5230,6 +5240,72 @@ test_red_green_gitlab_reads_the_merge_base() {
   pass "fm-pr-merge applies the red/green gate to a GitLab merge request at its merge base"
 }
 
+test_bug_fix_needs_a_root_cause_line() {
+  local body n=0
+  for body in '' 'Root cause:' 'The root cause: is unknown' 'Cause: the parser'; do
+    n=$((n + 1))
+    make_red_green_case "root-cause-missing-$n"
+    printf '%s\n' '## Summary' "$body" > "$CASE/github-body.md"
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+    merge_red_green_case
+    expect_code 1 "$RC" "root-cause-missing-$n: valid red/green evidence without a Root cause line must refuse"
+    assert_grep 'Root cause: <one sentence>' "$CASE/stderr" "root-cause-missing-$n: the refusal did not name the line"
+    assert_no_grep 'pr merge' "$CASE/gh.log" "root-cause-missing-$n: the merge reached the forge"
+  done
+
+  for body in 'Root cause: the parser dropped the last line.' '> root CAUSE: a stale cache' '### Root cause: off by one'; do
+    n=$((n + 1))
+    make_red_green_case "root-cause-present-$n"
+    printf '%s\n' "$body" > "$CASE/github-body.md"
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+    merge_red_green_case
+    assert_red_green_merged "root-cause-present-$n"
+  done
+
+  make_red_green_case root-cause-unreadable
+  mv "$CASE/github-body.md" "$CASE/github-body.md.gone"
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  expect_code 1 "$RC" "root-cause-unreadable: an unreadable description must refuse"
+  assert_grep 'description could not be read' "$CASE/stderr" "root-cause-unreadable: the refusal did not say why"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "root-cause-unreadable: the merge reached the forge"
+
+  make_red_green_case root-cause-not-waived
+  printf '%s\n' 'no cause here' > "$CASE/github-body.md"
+  merge_red_green_case --allow-red red-green-evidence
+  expect_code 1 "$RC" "root-cause-not-waived: the red/green waiver must not skip the Root cause line"
+  assert_grep 'Root cause: <one sentence>' "$CASE/stderr" "root-cause-not-waived: the refusal did not name the line"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "root-cause-not-waived: the merge reached the forge"
+
+  CASE=$(make_case root-cause-not-a-bug-fix)
+  add_gh_mocks "$CASE" "$RG_HEAD"
+  write_bug_fix_brief "$CASE" task-x1 feature
+  merge_red_green_case
+  assert_red_green_merged root-cause-not-a-bug-fix
+  pass "a bug fix needs a Root cause line in its description, even with red/green evidence or its waiver"
+}
+
+test_root_cause_line_gitlab() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case root-cause-gitlab description='Fixes it.')
+  write_bug_fix_brief "$case_dir" task-x1 'bug fix'
+  add_red_green_run "$case_dir" task-x1 "$MR_URL" "$MR_BASE" t1 red 1
+  add_red_green_run "$case_dir" task-x1 "$MR_URL" "$MR_HEAD" t1 green 0
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "root-cause-gitlab: a description with no Root cause line must refuse"
+  assert_grep 'Root cause: <one sentence>' "$case_dir/stderr" "root-cause-gitlab: the refusal did not name the line"
+  assert_no_grep 'mr merge' "$case_dir/glab.log" "root-cause-gitlab: the merge reached the forge"
+  pass "fm-pr-merge reads the Root cause line from a GitLab merge request description"
+}
+
+test_bug_fix_needs_a_root_cause_line
+test_root_cause_line_gitlab
 test_red_green_refuses_a_bug_fix_with_no_log
 test_red_green_refuses_red_only
 test_red_green_refuses_mismatched_test_ids

@@ -181,13 +181,18 @@
 # the base has no merge queue, and GitLab gets a final --auto-merge=false.
 # bin/fm-brief.sh owns the `Review tier:` line and the depths it names.
 #
-# A bug fix is also refused until a saved log proves one test failed on the old
-# code and passed on the fix. The brief classifies the pull request: a
+# A bug fix is also refused until its live description names the cause and a
+# saved log proves one test failed on the old code and passed on the fix.
+# The brief classifies the pull request: a
 # `Type: bug fix` line in its `## Risk and review` section (also bug-fix,
 # bugfix, or fix, case-insensitive) makes it a bug fix; no Type line, or one of
 # feat, feature, docs, chore, refactor, test, ci, build, perf, style, or revert,
 # leaves the merge untouched by this gate. A repeated or unrecognised Type line
-# refuses rather than falling to "not a bug fix". The proof is the log
+# refuses rather than falling to "not a bug fix". The cause is one line of the
+# pull request body or merge request description, read live, that starts with
+# `Root cause:` (case-insensitive, after any list, quote, heading, or emphasis
+# marks) and carries text after the colon; a missing line or an unreadable
+# description refuses. The proof is the log
 # <data>/<task-id>/red-green.log, holding one marker line per test run followed
 # by that run's captured output:
 # `<pr-url>|<commit-sha>|<test-id>|red|<exit-code>` or the same with `green`.
@@ -201,8 +206,9 @@
 # base moves only when the branch is rebased, which rightly voids the red run.
 # A push gives the pull request a new head and voids the green run.
 # An unreadable log, brief, or merge base refuses. The one waiver is the
-# existing attended check waiver: --allow-red red-green-evidence names this gate
-# as its waived check, so it is refused while the away-posture record exists
+# existing attended check waiver: --allow-red red-green-evidence names the
+# red/green log as its waived check, never the Root cause line, so it is refused
+# while the away-posture record exists
 # and, like --allow-red itself, does not exist on GitLab. No other flag,
 # including --attended-override, skips this gate.
 #
@@ -1472,9 +1478,60 @@ read_merge_base() {
 # record format and the one waiver.
 RED_GREEN_WAIVER_NAME='red-green-evidence'
 require_red_green_evidence() {
-  local log="$DATA/$ID/red-green.log" head base result
+  local status=0
   read_bug_fix_type "$DATA/$ID/brief.md" || return 1
   [ "$RED_GREEN_BUG_FIX" = true ] || return 0
+  require_root_cause_line || status=1
+  require_red_green_log || status=1
+  return "$status"
+}
+
+# The live pull request or merge request description: prints it, or returns 1.
+# An empty description reads as empty, not as unreadable.
+read_pr_body() {
+  local json
+  case "$PROVIDER" in
+    github)
+      json=$(gh pr view "$URL" --json body 2>/dev/null) || return 1
+      printf '%s' "$json" | jq -er 'if type == "object" and ((.body // "") | type) == "string"
+        then (.body // "") else error("no body") end' 2>/dev/null
+      ;;
+    gitlab)
+      json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) || return 1
+      printf '%s' "$json" | jq -er 'if type == "object" and ((.description // "") | type) == "string"
+        then (.description // "") else error("no description") end' 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# A bug fix names its cause before it merges: the live description must hold a
+# line reading `Root cause: <sentence>`; the header owns the accepted form. The
+# red/green waiver does not cover this line.
+require_root_cause_line() {
+  local body
+  if ! body=$(read_pr_body); then
+    echo "error: refusing to merge $URL: task $ID is a bug fix, and its description could not be read from the forge to check its Root cause line" >&2
+    return 1
+  fi
+  if printf '%s\n' "$body" | awk '
+      {
+        line = tolower($0)
+        sub(/^[[:space:]>*_#-]+/, "", line)
+        if (line ~ /^root cause[*_]*:[*_]*[[:space:]]*[^[:space:]*_]/) found = 1
+      }
+      END { exit found ? 0 : 1 }'; then
+    printf 'verified: bug fix %s names its root cause\n' "$URL" >&2
+    return 0
+  fi
+  printf 'error: refusing to merge %s: task %s is a bug fix, and its description has no "Root cause: <one sentence>" line; no cause sentence, no fix - add the line to the description and retry\n' \
+    "$URL" "$ID" >&2
+  return 1
+}
+
+# The red/green evidence check of a bug fix, with its one waiver.
+require_red_green_log() {
+  local log="$DATA/$ID/red-green.log" head base result
   if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "${ALLOW_RED[0]}" = "$RED_GREEN_WAIVER_NAME" ]; then
     printf 'waived: red/green evidence for bug fix %s by attended --allow-red %s\n' "$URL" "$RED_GREEN_WAIVER_NAME" >&2
     return 0
