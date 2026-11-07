@@ -3259,7 +3259,7 @@ esac
 }
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
-    echo "error: $BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}; fill ## Captain's intent, ## Firstmate spec, and ## Risk and review before spawn" >&2
+    echo "error: $BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}; fill ## Captain's intent, ## Firstmate spec, and ## Risk and review before spawn" >&2
     exit 1
   fi
   if ! fm_brief_task_content_valid "$BRIEF"; then

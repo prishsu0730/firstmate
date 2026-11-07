@@ -197,13 +197,11 @@
 # by that run's captured output:
 # `<pr-url>|<commit-sha>|<test-id>|red|<exit-code>` or the same with `green`.
 # The merge needs one test id, free of whitespace, with a red line at the pull
-# request's merge base and a nonzero exit, and a green line at the exact head
+# request's pre-fix ancestor and a nonzero exit, and a later green line at the exact head
 # this run verified and exit 0, each followed by at least one non-blank output
 # line before the next marker; any other line is captured output and is ignored.
-# The base commit is the merge base, read live from the forge (GitHub's compare
-# merge_base_commit, GitLab's diff_refs.base_sha at the verified head), not the
-# base branch tip: the tip moves with every unrelated merge, while the merge
-# base moves only when the branch is rebased, which rightly voids the red run.
+# The merge base is read live from the forge; other red commits must be verified
+# as ancestors of the head in the task's local worktree.
 # A push gives the pull request a new head and voids the green run.
 # An unreadable log, brief, or merge base refuses. No flag skips this gate.
 #
@@ -1472,7 +1470,7 @@ read_merge_base() {
 # that gate already proved readable, and before the away record is held so its
 # forge read happens outside that lock. A pull request the brief classifies as a
 # bug fix merges only when <data>/<task>/red-green.log proves one test failed on
-# the merge base and passed at the head this run verified; the header owns the
+# an ancestor and passed at the head this run verified; the header owns the
 # record format.
 require_red_green_evidence() {
   local status=0
@@ -1528,7 +1526,7 @@ require_root_cause_line() {
 
 # The red/green evidence check of a bug fix.
 require_red_green_log() {
-  local log="$DATA/$ID/red-green.log" head base result
+  local log="$DATA/$ID/red-green.log" head base result candidates sha test_id wt
   head=$(printf '%s' "$FM_PR_MERGE_HEAD" | tr '[:upper:]' '[:lower:]')
   if ! base=$(read_merge_base); then
     echo "error: refusing to merge $URL: task $ID is a bug fix, and the merge base of its head $FM_PR_MERGE_HEAD could not be read from the forge to check its red/green evidence" >&2
@@ -1542,11 +1540,12 @@ require_red_green_log() {
     fi
     # A marker counts only when captured output follows it before the next
     # marker, so the log carries the run it claims and not a bare assertion.
-    result=$(awk -F'|' -v url="$URL" -v base="$base" -v head="$head" '
+    candidates=$(awk -F'|' -v url="$URL" -v head="$head" '
       function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
       function settle() {
         if (pending != "" && output) {
-          if (pending_kind == "red") red[pending] = 1; else green[pending] = 1
+          if (pending_kind == "red") red[pending SUBSEP pending_sha] = 1
+          else for (key in red) { split(key, parts, SUBSEP); if (parts[1] == pending) print parts[2] " " pending }
         }
         pending = ""; output = 0
       }
@@ -1555,31 +1554,39 @@ require_red_green_log() {
         if (trim($1) != url) next
         sha = tolower(trim($2)); t = trim($3); kind = trim($4); code = trim($5)
         if (t == "" || t ~ /[[:space:]]/ || code !~ /^[0-9]+$/) next
-        if (kind == "red" && sha == base && code + 0 != 0) { pending = t; pending_kind = "red" }
+        if (kind == "red" && sha ~ /^[0-9a-f]+$/ && length(sha) == 40 && sha != head && code + 0 != 0) { pending = t; pending_kind = "red"; pending_sha = sha }
         if (kind == "green" && sha == head && code + 0 == 0) { pending = t; pending_kind = "green" }
         next
       }
       /[^[:space:]]/ { if (pending != "") output = 1 }
       END {
         settle()
-        for (t in red) if (t in green) { print "ok " t; exit }
-        print "missing"
       }
     ' "$log") || {
       echo "error: refusing to merge $URL: the red/green evidence log of task $ID could not be read: $log" >&2
       return 1
     }
+    wt=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
+    while read -r sha test_id; do
+      [ -n "$sha" ] || continue
+      if [ "$sha" = "$base" ] || { [ -n "$wt" ] && git -C "$wt" merge-base --is-ancestor "$sha" "$head" 2>/dev/null; }; then
+        result="ok $test_id"
+        break
+      fi
+    done <<EOF
+$candidates
+EOF
   fi
   if [ "${result%% *}" = ok ]; then
-    printf 'verified: bug fix %s has red/green evidence for test %s (red at merge base %s, green at head %s)\n' \
-      "$URL" "${result#ok }" "$base" "$FM_PR_MERGE_HEAD" >&2
+    printf 'verified: bug fix %s has red/green evidence for test %s (red at %s, green at head %s)\n' \
+      "$URL" "${result#ok }" "$sha" "$FM_PR_MERGE_HEAD" >&2
     return 0
   fi
-  printf 'error: refusing to merge %s: task %s is a bug fix with no red/green evidence in %s: no test failed at merge base %s and passed at head %s\n' \
+  printf 'error: refusing to merge %s: task %s is a bug fix with no red/green evidence in %s: no test failed at an ancestor (merge base %s) and then passed at head %s\n' \
     "$URL" "$ID" "$log" "$base" "$FM_PR_MERGE_HEAD" >&2
   printf 'run the same test on the old code and on the fix, and append each run as one marker line followed by its captured output: %s|%s|<test-id>|red|<nonzero exit> and %s|%s|<test-id>|green|0\n' \
     "$URL" "$base" "$URL" "$FM_PR_MERGE_HEAD" >&2
-  echo 'a push after the green run gives the pull request a new head and voids it; a rebase moves the merge base and voids the red run' >&2
+  echo 'a push after the green run gives the pull request a new head and voids it; a rebase can void the red run' >&2
   return 1
 }
 

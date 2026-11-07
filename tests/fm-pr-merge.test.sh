@@ -5068,6 +5068,28 @@ test_red_green_refuses_red_only() {
   pass "fm-pr-merge refuses a bug fix whose log holds only the red run"
 }
 
+test_red_green_order_and_branch_ancestor() {
+  local base red head
+  make_red_green_case red-green-reversed
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  merge_red_green_case
+  assert_red_green_refusal red-green-reversed
+
+  make_red_green_case red-green-branch-ancestor
+  base=$(git -C "$CASE/wt" rev-parse HEAD)
+  git -C "$CASE/wt" commit --allow-empty -qm buggy
+  red=$(git -C "$CASE/wt" rev-parse HEAD)
+  git -C "$CASE/wt" commit --allow-empty -qm fixed
+  head=$(git -C "$CASE/wt" rev-parse HEAD)
+  write_github_live_json "$CASE" "$head"
+  printf '{"merge_base_commit":{"sha":"%s"}}\n' "$base" > "$CASE/github-compare.json"
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$red" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$head" t1 green 0
+  merge_red_green_case
+  assert_red_green_merged red-green-branch-ancestor
+}
+
 test_red_green_refuses_mismatched_test_ids() {
   make_red_green_case red-green-mismatch
   add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" tests/a.test.sh red 1
@@ -5309,6 +5331,7 @@ test_bug_fix_needs_a_root_cause_line
 test_root_cause_line_gitlab
 test_red_green_refuses_a_bug_fix_with_no_log
 test_red_green_refuses_red_only
+test_red_green_order_and_branch_ancestor
 test_red_green_refuses_mismatched_test_ids
 test_red_green_allows_a_valid_pair
 test_red_green_leaves_other_types_untouched
