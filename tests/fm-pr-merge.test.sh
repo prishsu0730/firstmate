@@ -75,7 +75,7 @@ write_review_tier_brief() {
   mkdir -p "$case_dir/home/data/$id"
   printf '%s\n' '# Task' '## Captain'"'"'s intent' 'ship it' '' '## Risk and review' \
     'Blast radius: COMPONENT' 'Risk tiers: code review risk Medium; execution risk Low' \
-    "Review tier: $tier (No Greptile / Base / Plus / Apex)" \
+    "Type: feature" "Review tier: $tier (No Greptile / Base / Plus / Apex)" \
     > "$case_dir/home/data/$id/brief.md"
 }
 
@@ -4421,7 +4421,7 @@ test_file_boundary_lost_list_refuses() {
   assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-lost: the merge reached the forge"
 
   printf '%s\n' '# Task' 'no boundary here' '## Risk and review' \
-    'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$case_dir/home/data/task-x1/brief.md"
+    'Type: feature' 'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$case_dir/home/data/task-x1/brief.md"
   run_required_case "$case_dir" 48
   expect_code 0 "$RC" "boundary-lost: a brief with no boundary line is a task with no boundary (stderr: $(cat "$case_dir/stderr"))"
   pass "fm-pr-merge refuses a lost boundary record, and leaves a never-bounded task alone"
@@ -5007,7 +5007,7 @@ RG_OTHER=7207207207207207207207207207207207207207
 write_bug_fix_brief() {
   local case_dir=$1 id=$2 type=$3
   write_review_tier_brief "$case_dir" "$id" LOW
-  printf '%s\n' "Type: $type" >> "$case_dir/home/data/$id/brief.md"
+  python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace("Type: feature\n", "Type: " + sys.argv[2] + "\n"))' "$case_dir/home/data/$id/brief.md" "$type"
 }
 
 # Append one run to the task's evidence log: its marker, then captured output.
@@ -5101,15 +5101,11 @@ test_red_green_allows_a_valid_pair() {
 
 test_red_green_leaves_other_types_untouched() {
   local type n=0
-  for type in none feature docs Chore refactor; do
+  for type in feature docs Chore refactor; do
     n=$((n + 1))
     CASE=$(make_case "red-green-other-$n")
     add_gh_mocks "$CASE" "$RG_HEAD"
-    if [ "$type" = none ]; then
-      write_review_tier_brief "$CASE" task-x1 LOW
-    else
-      write_bug_fix_brief "$CASE" task-x1 "$type"
-    fi
+    write_bug_fix_brief "$CASE" task-x1 "$type"
     merge_red_green_case
     assert_red_green_merged "red-green-other-$type"
     assert_no_grep 'compare/' "$CASE/gh.log" "red-green-other-$type: a non-bug-fix read the merge base"
@@ -5156,6 +5152,12 @@ test_red_green_exit_codes_and_output_must_prove_the_runs() {
   add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
   merge_red_green_case
   assert_red_green_refusal red-green-no-output
+  make_red_green_case red-green-other-marker
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 ''
+  add_red_green_run "$CASE" task-x1 https://github.com/example/repo/pull/621 "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-other-marker
   pass "fm-pr-merge needs a failing red exit, a passing green exit, and captured output for each run"
 }
 
@@ -5173,6 +5175,13 @@ test_red_green_unreadable_inputs_refuse() {
   merge_red_green_case
   assert_red_green_refusal red-green-base-unreadable
   assert_grep 'merge base' "$CASE/stderr" "red-green-base-unreadable: the refusal did not name the merge base"
+
+  make_red_green_case red-green-type-missing
+  sed -i.bak '/^Type:/d' "$CASE/home/data/task-x1/brief.md"
+  merge_red_green_case
+  expect_code 1 "$RC" "red-green-type-missing: missing Type must refuse"
+  assert_grep 'no Type line' "$CASE/stderr" "red-green-type-missing: refusal must name Type"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-type-missing: merge reached forge"
 
   make_red_green_case red-green-type-unknown 'bug'
   merge_red_green_case
@@ -5204,16 +5213,8 @@ test_red_green_waiver_is_the_attended_allow_red() {
 
   make_red_green_case red-green-waived
   merge_red_green_case --allow-red red-green-evidence
-  assert_red_green_merged red-green-waived
-  assert_grep 'waived: red/green evidence' "$CASE/stderr" "red-green-waived: the waiver was not reported"
-
-  make_red_green_case red-green-waiver-away
-  write_away_record "$CASE" --words 'merge task-x1 when green'
-  merge_red_green_case --allow-red red-green-evidence
-  expect_code 2 "$RC" "red-green-waiver-away: the waiver must be refused while away"
-  assert_grep '--allow-red is attended-only' "$CASE/stderr" "red-green-waiver-away: refusal did not name attended-only"
-  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-waiver-away: the merge reached the forge"
-  pass "only the attended --allow-red red-green-evidence waiver skips the red/green gate"
+  assert_red_green_refusal red-green-waived
+  pass "merge flags cannot waive red/green evidence"
 }
 
 test_red_green_gitlab_reads_the_merge_base() {
@@ -5285,7 +5286,7 @@ test_bug_fix_needs_a_root_cause_line() {
   write_bug_fix_brief "$CASE" task-x1 feature
   merge_red_green_case
   assert_red_green_merged root-cause-not-a-bug-fix
-  pass "a bug fix needs a Root cause line in its description, even with red/green evidence or its waiver"
+  pass "a bug fix needs a Root cause line in its description, even with red/green evidence"
 }
 
 test_root_cause_line_gitlab() {

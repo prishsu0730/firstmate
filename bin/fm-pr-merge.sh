@@ -185,7 +185,7 @@
 # saved log proves one test failed on the old code and passed on the fix.
 # The brief classifies the pull request: a
 # `Type: bug fix` line in its `## Risk and review` section (also bug-fix,
-# bugfix, or fix, case-insensitive) makes it a bug fix; no Type line, or one of
+# bugfix, or fix, case-insensitive) makes it a bug fix; one of
 # feat, feature, docs, chore, refactor, test, ci, build, perf, style, or revert,
 # leaves the merge untouched by this gate. A repeated or unrecognised Type line
 # refuses rather than falling to "not a bug fix". The cause is one line of the
@@ -205,12 +205,7 @@
 # base branch tip: the tip moves with every unrelated merge, while the merge
 # base moves only when the branch is rebased, which rightly voids the red run.
 # A push gives the pull request a new head and voids the green run.
-# An unreadable log, brief, or merge base refuses. The one waiver is the
-# existing attended check waiver: --allow-red red-green-evidence names the
-# red/green log as its waived check, never the Root cause line, so it is refused
-# while the away-posture record exists
-# and, like --allow-red itself, does not exist on GitLab. No other flag,
-# including --attended-override, skips this gate.
+# An unreadable log, brief, or merge base refuses. No flag skips this gate.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -1429,7 +1424,10 @@ read_bug_fix_type() {
   fi
   section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
   lines=$(printf '%s\n' "$section" | grep '^Type:' || true)
-  [ -n "$lines" ] || return 0
+  if [ -z "$lines" ]; then
+    echo "error: refusing to merge $URL: the brief of task $ID has no Type line under '## Risk and review'; set one in $brief" >&2
+    return 1
+  fi
   if [ "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')" -gt 1 ]; then
     echo "error: refusing to merge $URL: the brief of task $ID has more than one Type line under '## Risk and review', so whether it is a bug fix is ambiguous; keep exactly one in $brief" >&2
     return 1
@@ -1475,8 +1473,7 @@ read_merge_base() {
 # forge read happens outside that lock. A pull request the brief classifies as a
 # bug fix merges only when <data>/<task>/red-green.log proves one test failed on
 # the merge base and passed at the head this run verified; the header owns the
-# record format and the one waiver.
-RED_GREEN_WAIVER_NAME='red-green-evidence'
+# record format.
 require_red_green_evidence() {
   local status=0
   read_bug_fix_type "$DATA/$ID/brief.md" || return 1
@@ -1507,7 +1504,7 @@ read_pr_body() {
 
 # A bug fix names its cause before it merges: the live description must hold a
 # line reading `Root cause: <sentence>`; the header owns the accepted form. The
-# red/green waiver does not cover this line.
+# description must be readable.
 require_root_cause_line() {
   local body
   if ! body=$(read_pr_body); then
@@ -1529,13 +1526,9 @@ require_root_cause_line() {
   return 1
 }
 
-# The red/green evidence check of a bug fix, with its one waiver.
+# The red/green evidence check of a bug fix.
 require_red_green_log() {
   local log="$DATA/$ID/red-green.log" head base result
-  if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "${ALLOW_RED[0]}" = "$RED_GREEN_WAIVER_NAME" ]; then
-    printf 'waived: red/green evidence for bug fix %s by attended --allow-red %s\n' "$URL" "$RED_GREEN_WAIVER_NAME" >&2
-    return 0
-  fi
   head=$(printf '%s' "$FM_PR_MERGE_HEAD" | tr '[:upper:]' '[:lower:]')
   if ! base=$(read_merge_base); then
     echo "error: refusing to merge $URL: task $ID is a bug fix, and the merge base of its head $FM_PR_MERGE_HEAD could not be read from the forge to check its red/green evidence" >&2
@@ -1557,8 +1550,9 @@ require_red_green_log() {
         }
         pending = ""; output = 0
       }
-      NF == 5 && trim($1) == url && (trim($4) == "red" || trim($4) == "green") {
+      NF == 5 && (trim($4) == "red" || trim($4) == "green") {
         settle()
+        if (trim($1) != url) next
         sha = tolower(trim($2)); t = trim($3); kind = trim($4); code = trim($5)
         if (t == "" || t ~ /[[:space:]]/ || code !~ /^[0-9]+$/) next
         if (kind == "red" && sha == base && code + 0 != 0) { pending = t; pending_kind = "red" }

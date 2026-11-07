@@ -8,7 +8,7 @@
 # report, decision, or PR the ask refers to, without added speaker labels or
 # direct address) and `{FIRSTMATE_SPEC}`
 # under `## Firstmate spec` (build instructions, which are never the captain's
-# intent), plus `## Risk and review`, whose three placeholders record the
+# intent), plus `## Risk and review`, whose four placeholders record the
 # task's blast radius, risk tiers, and review tier. bin/fm-dod-lib.sh owns the
 # no-mistakes `--intent` contract the first two subsections feed;
 # bin/fm-spawn.sh refuses leftover placeholders and a
@@ -653,6 +653,7 @@ A report without a recorded read commit needs fresh verification before dispatch
 ## Risk and review
 Blast radius: {BLAST_RADIUS}
 Risk tiers: {RISK_TIERS}
+Type: {TYPE}
 Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)
 
 Before dispatch, classify every implementation change as LOCAL, COMPONENT, FLOW, or SYSTEM; name affected shared components, styles, state, assets, or routes; and match verification: LOCAL targeted screen check, COMPONENT every known usage, FLOW the end-to-end flow, SYSTEM full first-use regression.
