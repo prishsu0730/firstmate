@@ -467,12 +467,14 @@ write_mr_json() {
   fi
   printf '{"iid":7,"state":"%s","detailed_merge_status":"%s","has_conflicts":%s,' \
     "$state" "$detail" "$conflicts" > "$file"
-  printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s,' \
-    "$discussions" "$head" "$pipeline" >> "$file"
-  printf '"diff_refs":{"base_sha":"%s"},' "$base_sha" >> "$file"
-  printf '"description":"%s",' "$description" >> "$file"
-  printf '"merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
-    "$merge_when_pipeline_succeeds" "$merge_after" >> "$file"
+  {
+    printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s,' \
+      "$discussions" "$head" "$pipeline"
+    printf '"diff_refs":{"base_sha":"%s"},' "$base_sha"
+    printf '"description":"%s",' "$description"
+    printf '"merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
+      "$merge_when_pipeline_succeeds" "$merge_after"
+  } >> "$file"
 }
 
 # make_gitlab_case <name> [<field>=<value> ...]: a case dir with both forge
