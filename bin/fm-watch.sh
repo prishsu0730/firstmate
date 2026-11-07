@@ -2573,9 +2573,14 @@ auto_close_finished_records() {
         continue
         ;;
     esac
+    # The record is the refusal's identity: exit code, PR head, and reason. The
+    # guard's queued-wakes warning comes and goes with queue state, not with the
+    # refusal, so it stays out of the record or an unchanged refusal would look new.
     {
       printf 'exit=%s\n' "$rc"
-      cat "$output"
+      printf 'pr_head=%s\n' "$(fm_meta_get "$meta" pr_head)"
+      grep -v -e '^WARNING: queued wakes pending' \
+        -e '^NOTICE: wake rows held by the live supervision branch' "$output" || true
     } > "$record" || {
       rm -f -- "$output" "$record"
       FM_AUTO_CLOSE_REFUSED_ID=$id
