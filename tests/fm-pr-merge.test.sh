@@ -4998,7 +4998,7 @@ test_review_required_async_refuses() {
 test_review_required_async_refuses
 
 # The red/green evidence gate: a brief typed as a bug fix merges only when its
-# saved log proves one test failed at the merge base and passed at the head.
+# saved log proves one test failed on a pre-fix ancestor and passed at the head.
 RG_URL=https://github.com/example/repo/pull/620
 RG_HEAD=6206206206206206206206206206206206206206
 RG_BASE=5205205205205205205205205205205205205205
@@ -5140,7 +5140,15 @@ test_red_green_leaves_other_types_untouched() {
     assert_red_green_merged "red-green-other-$type"
     assert_no_grep 'compare/' "$CASE/gh.log" "red-green-other-$type: a non-bug-fix read the merge base"
   done
-  pass "fm-pr-merge leaves a pull request that is not typed as a bug fix untouched"
+  CASE=$(make_case red-green-legacy-no-type)
+  add_gh_mocks "$CASE" "$RG_HEAD"
+  write_bug_fix_brief "$CASE" task-x1 feature
+  sed -i.bak '/^Type:/d' "$CASE/home/data/task-x1/brief.md"
+  merge_red_green_case
+  assert_red_green_merged red-green-legacy-no-type
+  assert_grep 'has no Type line' "$CASE/stderr" "red-green-legacy-no-type: the merge did not warn about the missing Type line"
+  assert_no_grep 'compare/' "$CASE/gh.log" "red-green-legacy-no-type: a brief with no Type read the merge base"
+  pass "fm-pr-merge leaves a pull request that is not typed as a bug fix untouched, and warns when a legacy brief has no Type line"
 }
 
 test_red_green_runs_must_be_at_the_base_and_head() {
@@ -5186,7 +5194,7 @@ test_red_green_exit_codes_and_output_must_prove_the_runs() {
       assert_red_green_refusal "red-green-$phase-$code"
     done
     for output in 'command not found' 'no tests found'; do
-      make_red_green_case "red-green-$phase-output"
+      make_red_green_case "red-green-$phase-output-${output%% *}"
       if [ "$phase" = red ]; then
         add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 "$output"
         add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
@@ -5195,7 +5203,7 @@ test_red_green_exit_codes_and_output_must_prove_the_runs() {
         add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 "$output"
       fi
       merge_red_green_case
-      assert_red_green_refusal "red-green-$phase-output"
+      assert_red_green_refusal "red-green-$phase-output-${output%% *}"
     done
   done
   make_red_green_case red-green-red-passed
@@ -5239,12 +5247,12 @@ test_red_green_unreadable_inputs_refuse() {
   assert_red_green_refusal red-green-base-unreadable
   assert_grep 'merge base' "$CASE/stderr" "red-green-base-unreadable: the refusal did not name the merge base"
 
-  make_red_green_case red-green-type-missing
-  sed -i.bak '/^Type:/d' "$CASE/home/data/task-x1/brief.md"
+  make_red_green_case red-green-type-placeholder '{TYPE}'
   merge_red_green_case
-  expect_code 1 "$RC" "red-green-type-missing: missing Type must refuse"
-  assert_grep 'no Type line' "$CASE/stderr" "red-green-type-missing: refusal must name Type"
-  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-type-missing: merge reached forge"
+  expect_code 1 "$RC" "red-green-type-placeholder: an unfilled Type placeholder must refuse"
+  assert_grep 'Type line of task task-x1 is not recognised' "$CASE/stderr" \
+    "red-green-type-placeholder: the refusal did not name the Type line"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-type-placeholder: the merge reached the forge"
 
   make_red_green_case red-green-type-unknown 'bug'
   merge_red_green_case

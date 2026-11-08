@@ -187,8 +187,10 @@
 # `Type: bug fix` line in its `## Risk and review` section (also bug-fix,
 # bugfix, or fix, case-insensitive) makes it a bug fix; one of
 # feat, feature, docs, chore, refactor, test, ci, build, perf, style, or revert,
-# leaves the merge untouched by this gate. A repeated or unrecognised Type line
-# refuses rather than falling to "not a bug fix". The cause is one line of the
+# leaves the merge untouched by this gate. A brief with no Type line at all
+# predates the classification and merges as not a bug fix with a warning; a
+# repeated or unrecognised Type line, including an unfilled `{TYPE}`
+# placeholder, refuses rather than falling to "not a bug fix". The cause is one line of the
 # pull request body or merge request description, read live, that starts with
 # `Root cause:` (case-insensitive, after any list, quote, heading, or emphasis
 # marks) and carries text after the colon; a missing line or an unreadable
@@ -1425,8 +1427,8 @@ read_bug_fix_type() {
   section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
   lines=$(printf '%s\n' "$section" | grep '^Type:' || true)
   if [ -z "$lines" ]; then
-    echo "error: refusing to merge $URL: the brief of task $ID has no Type line under '## Risk and review'; set one in $brief" >&2
-    return 1
+    echo "warning: the brief of task $ID has no Type line under '## Risk and review', so $URL merges as not a bug fix; add 'Type: bug fix' to $brief if it is one" >&2
+    return 0
   fi
   if [ "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')" -gt 1 ]; then
     echo "error: refusing to merge $URL: the brief of task $ID has more than one Type line under '## Risk and review', so whether it is a bug fix is ambiguous; keep exactly one in $brief" >&2

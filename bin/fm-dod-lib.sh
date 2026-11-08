@@ -88,7 +88,7 @@
 # refers to is written into it as substance, never left as a pointer.
 # bin/fm-brief.sh scaffolds those two `# Task` subsections plus `## Risk and
 # review`; bin/fm-spawn.sh and bin/fm-promote.sh refuse leftover `{TASK}` /
-# `{FIRSTMATE_SPEC}` / `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{REVIEW_TIER}` placeholders
+# `{FIRSTMATE_SPEC}` / `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{TYPE}` / `{REVIEW_TIER}` placeholders
 # and a `## Captain's intent` line opening with a Captain label or address
 # through the helpers below. Other mentions of `--intent` point here rather than
 # restating the rule.
