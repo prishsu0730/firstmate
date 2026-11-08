@@ -656,7 +656,7 @@ Risk tiers: {RISK_TIERS}
 Type: {TYPE}
 Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)
 
-For a bug fix, run the red test before fixing and save it to the task's red-green.log, then append the green run after the fix; see the bin/fm-pr-merge.sh header for the format.
+@RED_GREEN_CAPTURE@
 
 Before dispatch, classify every implementation change as LOCAL, COMPONENT, FLOW, or SYSTEM; name affected shared components, styles, state, assets, or routes; and match verification: LOCAL targeted screen check, COMPONENT every known usage, FLOW the end-to-end flow, SYSTEM full first-use regression.
 Set code review risk and execution risk independently as Low, Medium, High, or Critical, with a one-line reason covering impact, blast radius, reversibility, evidence, and permissions.
@@ -667,6 +667,11 @@ Only regressions and unmet agreed requirements block delivery.
 Every finding carries severity, file:line, reproduction, consequence, fix, and regression test.
 EOF
 TASK_SECTION=${TASK_SECTION%$'\n'}
+# Expanded here because the task section is a literal heredoc; splicing by
+# prefix and suffix keeps the line literal on bash 3.2 and 5.2 alike, where a
+# pattern replacement would keep quotes or read & specially.
+RED_GREEN_LINE="For a bug fix, record the proof in \`$DATA/$ID/red-green.log\` after the pipeline finishes and the PR URL exists: append the red run of the test at the PR's merge base (before the fix), then the green run of the same test command at the final PR head; a later push voids the green run, and the \`$FM_ROOT/bin/fm-pr-merge.sh\` header owns the line format."
+TASK_SECTION="${TASK_SECTION%%@RED_GREEN_CAPTURE@*}$RED_GREEN_LINE${TASK_SECTION#*@RED_GREEN_CAPTURE@}"
 
 # One shared string keeps the ship and scout infrastructure rule identical.
 # Rule 2 governs file edits, so it does not prohibit pool administration.
