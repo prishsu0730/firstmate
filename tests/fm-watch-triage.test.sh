@@ -6647,8 +6647,17 @@ test_heartbeat_auto_closes_a_local_main_ship() {
   pass "a heartbeat tears down a ship already merged into local main"
 }
 
+wait_suppressed_more() {  # <state> <pid> <since-count>
+  local state=$1 pid=$2 since=$3 i=0
+  while [ "$i" -lt 100 ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    [ "$(grep -c 'suppressed unchanged automatic finished-task teardown refusal' "$state/.watch-triage.log" 2>/dev/null || true)" -gt "$since" ] && return 0
+    sleep 0.1; i=$((i+1))
+  done
+  return 1
+}
 test_heartbeat_surfaces_one_auto_close_refusal() {
-  local dir state fakebin out pid sig drain_out drain_err advisory
+  local dir state fakebin out pid sig drain_out drain_err advisory since
   local WATCH
   dir=$(make_case heartbeat-auto-close-refusal); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"
@@ -6690,7 +6699,7 @@ SH
   printf 'invalid\n' > "$dir/forge-head"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    FM_HEARTBEAT=1 "$WATCH" > "$out.initial-failure" 2>&1 &
+    FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 "$WATCH" > "$out.initial-failure" 2>&1 &
   pid=$!
   wait_poll_cycle "$state" "$pid" \
     || { reap "$pid"; fail "initial failed head lookup woke the watcher"; }
@@ -6783,7 +6792,8 @@ SH
     'NOTICE: wake rows held by the live supervision branch - it presents and acknowledges them; do not drain them from here.' \
     'WARNING: queued wakes pending - left untouched because this session lacks verified fleet-lock ownership.'; do
     printf '%s\n' "$advisory" > "$dir/advisory"
-    wait_poll_cycle "$state" "$pid" \
+    since=$(grep -c 'suppressed unchanged automatic finished-task teardown refusal' "$state/.watch-triage.log" 2>/dev/null || true)
+    wait_suppressed_more "$state" "$pid" "$since" \
       || { reap "$pid"; fail "queue advisory re-surfaced an unchanged refusal"; }
     grep -Fx "$advisory" "$out.advisories" >/dev/null \
       || { reap "$pid"; fail "controlled teardown did not emit the queue advisory"; }
@@ -6793,7 +6803,8 @@ SH
       "$state/.auto-close-refusal-refused" >/dev/null \
       || { reap "$pid"; fail "refusal record retained a queue advisory"; }
     : > "$dir/advisory"
-    wait_poll_cycle "$state" "$pid" \
+    since=$(grep -c 'suppressed unchanged automatic finished-task teardown refusal' "$state/.watch-triage.log" 2>/dev/null || true)
+    wait_suppressed_more "$state" "$pid" "$since" \
       || { reap "$pid"; fail "removing the queue advisory re-surfaced an unchanged refusal"; }
     [ ! -s "$state/.wake-queue" ] \
       || { reap "$pid"; fail "removing the queue advisory re-queued an unchanged refusal"; }
