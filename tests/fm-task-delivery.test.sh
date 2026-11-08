@@ -59,6 +59,7 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=${content//'{FIRSTMATE_SPEC}'/$spec}
   content=${content//'{BLAST_RADIUS}'/'LOCAL; only the named task files; targeted screen check.'}
   content=${content//'{RISK_TIERS}'/'Code review Low and execution Low; isolated, reversible, and evidenced.'}
+  content=${content//'{TYPE}'/feature}
   content=${content//'{REVIEW_TIER}'/'No Greptile; no-mistakes only.'}
   printf '%s\n' "$content" > "$file"
 }
@@ -586,7 +587,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode no-mistakes --yolo off)
   status=$?
   [ "$status" -ne 0 ] || fail "spawn of an unfilled ship brief should exit non-zero"
-  assert_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
+  assert_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}" \
     "unfilled ship spawn did not name the leftover placeholders"
   assert_contains "$out" "## Captain's intent" \
     "unfilled ship spawn did not name the intent subsection to fill"
@@ -609,6 +610,19 @@ EOF
   assert_contains "$out" "## Risk and review" "unfilled risk spawn did not name the risk section"
   assert_absent "$home/state/$id.meta" "unfilled risk spawn wrote task metadata"
 
+  id=delivery-unfilled-type
+  FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
+    || fail "type-unfilled brief should still scaffold"
+  fill_brief_subsections "$home/data/$id/brief.md" \
+    "Fill everything but the Type line." "Exercise only the Type placeholder refusal."
+  sed 's/^Type: feature$/Type: {TYPE}/' "$home/data/$id/brief.md" > "$home/data/$id/brief.typed"
+  mv "$home/data/$id/brief.typed" "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "spawn with an unfilled Type placeholder should exit non-zero"
+  assert_contains "$out" "{TYPE}" "unfilled Type spawn did not name the Type placeholder"
+  assert_absent "$home/state/$id.meta" "unfilled Type spawn wrote task metadata"
+
   id=delivery-filled-ship
   FM_HOME="$home" "$BRIEF" "$id" proj --mode direct-PR >/dev/null 2>&1 \
     || fail "filled-ship brief should scaffold"
@@ -616,7 +630,7 @@ EOF
     "Fix replacement of \`{TASK}\` in Herdr briefs." \
     "Keep literal \`{FIRSTMATE_SPEC}\` examples intact."
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
-  assert_not_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
+  assert_not_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}" \
     "a filled ship brief mentioning placeholder tokens was refused as unfilled"
   assert_not_contains "$out" "must contain nonempty" \
     "a filled ship brief mentioning placeholder tokens failed content validation"
@@ -642,7 +656,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
   assert_not_contains "$out" "must contain nonempty" \
     "fenced example headings made a filled legacy Task fail validation"
-  assert_not_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
+  assert_not_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}" \
     "fenced example headings made a filled legacy Task look unfilled"
 
   id=delivery-legacy-no-mistakes
@@ -737,7 +751,7 @@ EOF
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --scout)
   status=$?
   [ "$status" -ne 0 ] || fail "spawn of an unfilled scout brief should exit non-zero"
-  assert_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}" \
+  assert_contains "$out" "still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}" \
     "unfilled scout spawn did not name the leftover placeholders"
   assert_absent "$home/state/$id.meta" "unfilled scout spawn wrote task metadata"
 

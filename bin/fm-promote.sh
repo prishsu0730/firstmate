@@ -244,7 +244,7 @@ PROMOTE_FORGE_WORDS=
 
 SCOUT_BRIEF="$DATA/$ID/brief.md"
 if fm_brief_task_placeholders_present "$SCOUT_BRIEF"; then
-  echo "error: $SCOUT_BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}; preserve the original ask in ## Captain's intent and fill the scout-time ## Firstmate spec and ## Risk and review; promotion generates a separate ship-time spec" >&2
+  echo "error: $SCOUT_BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}; preserve the original ask in ## Captain's intent and fill the scout-time ## Firstmate spec and ## Risk and review; promotion generates a separate ship-time spec" >&2
   exit 1
 fi
 if ! fm_brief_task_content_valid "$SCOUT_BRIEF"; then

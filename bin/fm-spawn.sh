@@ -20,7 +20,7 @@
 #   registry entry the parser refuses stops the spawn rather than launching on a
 #   guessed posture. A
 #   ship or scout spawn also refuses leftover `{TASK}` / `{FIRSTMATE_SPEC}` /
-#   `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{REVIEW_TIER}`
+#   `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{TYPE}` / `{REVIEW_TIER}`
 #   placeholders, an empty Task, an incomplete pair of Task subsections, or a
 #   `## Captain's intent` line opening with a Captain label or address.
 #   Every ship or scout spawn renders `launch-brief.md`; for a no-mistakes ship
@@ -3259,7 +3259,7 @@ esac
 }
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
-    echo "error: $BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, or {REVIEW_TIER}; fill ## Captain's intent, ## Firstmate spec, and ## Risk and review before spawn" >&2
+    echo "error: $BRIEF still contains {TASK}, {FIRSTMATE_SPEC}, {BLAST_RADIUS}, {RISK_TIERS}, {TYPE}, or {REVIEW_TIER}; fill ## Captain's intent, ## Firstmate spec, and ## Risk and review before spawn" >&2
     exit 1
   fi
   if ! fm_brief_task_content_valid "$BRIEF"; then

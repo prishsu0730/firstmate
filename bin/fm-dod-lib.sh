@@ -88,7 +88,7 @@
 # refers to is written into it as substance, never left as a pointer.
 # bin/fm-brief.sh scaffolds those two `# Task` subsections plus `## Risk and
 # review`; bin/fm-spawn.sh and bin/fm-promote.sh refuse leftover `{TASK}` /
-# `{FIRSTMATE_SPEC}` / `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{REVIEW_TIER}` placeholders
+# `{FIRSTMATE_SPEC}` / `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{TYPE}` / `{REVIEW_TIER}` placeholders
 # and a `## Captain's intent` line opening with a Captain label or address
 # through the helpers below. Other mentions of `--intent` point here rather than
 # restating the rule.
@@ -235,6 +235,7 @@ fm_brief_task_placeholders_present() {  # <file>
   [ "$(printf '%s' "$spec" | tr -d '[:space:]')" = '{FIRSTMATE_SPEC}' ] && return 0
   printf '%s\n' "$risk" | grep -Fqx 'Blast radius: {BLAST_RADIUS}' && return 0
   printf '%s\n' "$risk" | grep -Fqx 'Risk tiers: {RISK_TIERS}' && return 0
+  printf '%s\n' "$risk" | grep -Fqx 'Type: {TYPE}' && return 0
   printf '%s\n' "$risk" | grep -Fqx 'Review tier: {REVIEW_TIER} (No Greptile / Base / Plus / Apex)' && return 0
   return 1
 }

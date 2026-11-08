@@ -25,6 +25,7 @@ MR_PROJECT_URL="https://$MR_HOST/$MR_PATH"
 MR_URL="$MR_PROJECT_URL/-/merge_requests/7"
 MR_HEAD=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MR_STALE_HEAD=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+MR_BASE=dddddddddddddddddddddddddddddddddddddddd
 
 JQ_BIN=$(command -v jq) || fail "these tests read glab's JSON with the real jq, which was not found"
 REAL_MV=$(command -v mv) || fail "these tests need mv to simulate a failed poll publish"
@@ -74,7 +75,7 @@ write_review_tier_brief() {
   mkdir -p "$case_dir/home/data/$id"
   printf '%s\n' '# Task' '## Captain'"'"'s intent' 'ship it' '' '## Risk and review' \
     'Blast radius: COMPONENT' 'Risk tiers: code review risk Medium; execution risk Low' \
-    "Review tier: $tier (No Greptile / Base / Plus / Apex)" \
+    "Type: feature" "Review tier: $tier (No Greptile / Base / Plus / Apex)" \
     > "$case_dir/home/data/$id/brief.md"
 }
 
@@ -235,6 +236,11 @@ case "${1:-} ${2:-}" in
         cat "$FM_TEST_GH_VIEW_JSON"
         exit 0
         ;;
+      *" --json body "*)
+        [ -f "${FM_TEST_GH_BODY:-}" ] || exit 1
+        jq -n --rawfile body "$FM_TEST_GH_BODY" '{body: $body}'
+        exit 0
+        ;;
     esac
     ;;
   "pr merge")
@@ -275,6 +281,11 @@ case "${1:-} ${2:-}" in
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
+      *" repos/"*"/compare/"*)
+        [ -f "${FM_TEST_GH_COMPARE:-}" ] || exit 1
+        cat "$FM_TEST_GH_COMPARE"
+        exit 0
+        ;;
       *"/pulls/"*"/commits?per_page=100"*)
         head=$(cat "$FM_TEST_GH_HEAD")
         if [ -n "${FM_TEST_GH_COMMITS_JSON:-}" ]; then
@@ -429,6 +440,8 @@ write_mr_json() {
   local state=opened detail=mergeable conflicts=false discussions=true
   local head=$MR_HEAD pipeline_sha=$MR_HEAD pipeline_status=success pipeline=present
   local merge_when_pipeline_succeeds=false merge_after=null
+  local base_sha=$MR_BASE
+  local description='Root cause: the fixture names its cause.'
   shift
   for kv in "$@"; do
     key=${kv%%=*}
@@ -444,6 +457,8 @@ write_mr_json() {
       pipeline) pipeline=$value ;;
       merge_when_pipeline_succeeds) merge_when_pipeline_succeeds=$value ;;
       merge_after) merge_after=$value ;;
+      base_sha) base_sha=$value ;;
+      description) description=$value ;;
       *) fail "write_mr_json: unknown field '$key'" ;;
     esac
   done
@@ -452,10 +467,14 @@ write_mr_json() {
   fi
   printf '{"iid":7,"state":"%s","detailed_merge_status":"%s","has_conflicts":%s,' \
     "$state" "$detail" "$conflicts" > "$file"
-  printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s,' \
-    "$discussions" "$head" "$pipeline" >> "$file"
-  printf '"merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
-    "$merge_when_pipeline_succeeds" "$merge_after" >> "$file"
+  {
+    printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s,' \
+      "$discussions" "$head" "$pipeline"
+    printf '"diff_refs":{"base_sha":"%s"},' "$base_sha"
+    printf '"description":"%s",' "$description"
+    printf '"merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
+      "$merge_when_pipeline_succeeds" "$merge_after"
+  } >> "$file"
 }
 
 # make_gitlab_case <name> [<field>=<value> ...]: a case dir with both forge
@@ -519,6 +538,8 @@ run_pr_merge() {
   FM_TEST_GH_MERGEABLE_CALLS="$case_dir/mergeable-calls" \
   FM_TEST_GH_HEAD="$case_dir/github-head" \
   FM_TEST_GH_COMMITS="$case_dir/github-commits" \
+  FM_TEST_GH_COMPARE="$case_dir/github-compare.json" \
+  FM_TEST_GH_BODY="$case_dir/github-body.md" \
   FM_TEST_GH_RUNS="$case_dir/github-runs.json" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
@@ -4402,7 +4423,7 @@ test_file_boundary_lost_list_refuses() {
   assert_no_grep 'pr merge' "$case_dir/gh.log" "boundary-lost: the merge reached the forge"
 
   printf '%s\n' '# Task' 'no boundary here' '## Risk and review' \
-    'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$case_dir/home/data/task-x1/brief.md"
+    'Type: feature' 'Review tier: LOW (No Greptile / Base / Plus / Apex)' > "$case_dir/home/data/task-x1/brief.md"
   run_required_case "$case_dir" 48
   expect_code 0 "$RC" "boundary-lost: a brief with no boundary line is a task with no boundary (stderr: $(cat "$case_dir/stderr"))"
   pass "fm-pr-merge refuses a lost boundary record, and leaves a never-bounded task alone"
@@ -4975,3 +4996,396 @@ test_review_required_async_refuses() {
 }
 
 test_review_required_async_refuses
+
+# The red/green evidence gate: a brief typed as a bug fix merges only when its
+# saved log proves one test failed on a pre-fix ancestor and passed at the head.
+RG_URL=https://github.com/example/repo/pull/620
+RG_HEAD=6206206206206206206206206206206206206206
+RG_BASE=5205205205205205205205205205205205205205
+RG_OTHER=7207207207207207207207207207207207207207
+
+# A brief carrying a Type line beside the LOW tier, so only this gate can refuse.
+# Args: case_dir task_id type_text
+write_bug_fix_brief() {
+  local case_dir=$1 id=$2 type=$3
+  write_review_tier_brief "$case_dir" "$id" LOW
+  python3 -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); p.write_text(p.read_text().replace("Type: feature\n", "Type: " + sys.argv[2] + "\n"))' "$case_dir/home/data/$id/brief.md" "$type"
+}
+
+# Append one run to the task's evidence log: its marker, then captured output.
+# Args: case_dir task_id url sha test_id phase exit [output]
+add_red_green_run() {
+  local case_dir=$1 id=$2 url=$3 sha=$4 test_id=$5 phase=$6 code=$7 out=${8-ran $5} command=${9-$5}
+  mkdir -p "$case_dir/home/data/$id"
+  printf '%s|%s|%s|%s|%s|%s\n' "$url" "$sha" "$test_id" "$phase" "$code" "$command" >> "$case_dir/home/data/$id/red-green.log"
+  [ -z "$out" ] || printf '%s\n' "$out" >> "$case_dir/home/data/$id/red-green.log"
+}
+
+# A GitHub bug-fix case whose forge reports RG_BASE as the merge base. Sets CASE.
+# Args: case_name [type_text]
+make_red_green_case() {
+  CASE=$(make_case "$1")
+  add_gh_mocks "$CASE" "$RG_HEAD"
+  write_bug_fix_brief "$CASE" task-x1 "${2:-bug fix}"
+  printf '{"status":"ahead","merge_base_commit":{"sha":"%s"}}\n' "$RG_BASE" > "$CASE/github-compare.json"
+  printf '%s\n' '## Summary' 'Fixes the bug.' '' '- **Root cause:** the parser dropped the last line.' > "$CASE/github-body.md"
+}
+
+merge_red_green_case() {
+  set +e
+  run_pr_merge "$CASE" task-x1 "$RG_URL" "$@" > "$CASE/stdout" 2> "$CASE/stderr"
+  RC=$?
+  set -e
+}
+
+assert_red_green_refusal() {
+  local label=$1
+  expect_code 1 "$RC" "$label: the merge must refuse (stderr: $(cat "$CASE/stderr"))"
+  assert_grep 'red/green' "$CASE/stderr" "$label: the refusal did not name the red/green evidence"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "$label: the merge reached the forge"
+}
+
+assert_red_green_merged() {
+  local label=$1
+  expect_code 0 "$RC" "$label: the merge must proceed (stderr: $(cat "$CASE/stderr"))"
+  assert_logged_gh_merge "$CASE" 620 example/repo --squash
+}
+
+test_red_green_refuses_a_bug_fix_with_no_log() {
+  make_red_green_case red-green-no-log
+  merge_red_green_case
+  assert_red_green_refusal red-green-no-log
+  assert_grep "$RG_URL|$RG_BASE|<test-id>|red|<nonzero exit>" "$CASE/stderr" \
+    "red-green-no-log: the refusal did not name the red line to record"
+  assert_grep "$RG_URL|$RG_HEAD|<test-id>|green|0" "$CASE/stderr" \
+    "red-green-no-log: the refusal did not name the green line to record"
+  pass "fm-pr-merge refuses a bug fix that has no red/green evidence log"
+}
+
+test_red_green_refuses_red_only() {
+  make_red_green_case red-green-red-only
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" tests/x.test.sh red 1
+  merge_red_green_case
+  assert_red_green_refusal red-green-red-only
+  pass "fm-pr-merge refuses a bug fix whose log holds only the red run"
+}
+
+test_red_green_order_and_branch_ancestor() {
+  local base red head
+  make_red_green_case red-green-reversed
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  merge_red_green_case
+  assert_red_green_refusal red-green-reversed
+
+  make_red_green_case red-green-branch-ancestor
+  base=$(git -C "$CASE/wt" rev-parse HEAD)
+  git -C "$CASE/wt" commit --allow-empty -qm buggy
+  red=$(git -C "$CASE/wt" rev-parse HEAD)
+  git -C "$CASE/wt" commit --allow-empty -qm fixed
+  head=$(git -C "$CASE/wt" rev-parse HEAD)
+  write_github_live_json "$CASE" "$head"
+  printf '{"merge_base_commit":{"sha":"%s"}}\n' "$base" > "$CASE/github-compare.json"
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$red" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$head" t1 green 0
+  merge_red_green_case
+  assert_red_green_merged red-green-branch-ancestor
+}
+
+test_red_green_refuses_mismatched_test_ids() {
+  make_red_green_case red-green-mismatch
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" tests/a.test.sh red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" tests/b.test.sh green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-mismatch
+  pass "fm-pr-merge refuses red and green runs of different tests"
+}
+
+test_red_green_allows_a_valid_pair() {
+  local upper_base
+  make_red_green_case red-green-valid
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" tests/x.test.sh red 1 'FAIL: x'
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" tests/x.test.sh green 0 'PASS: x'
+  merge_red_green_case
+  assert_red_green_merged red-green-valid
+  assert_grep 'red/green evidence for test tests/x.test.sh' "$CASE/stderr" \
+    "red-green-valid: the merge did not report the verified test"
+  assert_grep "compare/main...$RG_HEAD" "$CASE/gh.log" \
+    "red-green-valid: the merge base was not read for the verified head"
+
+  make_red_green_case red-green-piped-command
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 'FAIL' 'npm test | tee output.log'
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 'PASS' 'npm test | tee output.log'
+  merge_red_green_case
+  assert_red_green_merged red-green-piped-command
+
+  make_red_green_case red-green-valid-forms 'BugFix'
+  upper_base=abcabcabcabcabcabcabcabcabcabcabcabcabca
+  printf '{"merge_base_commit":{"sha":"%s"}}\n' "$upper_base" > "$CASE/github-compare.json"
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$(printf '%s' "$upper_base" | tr a-f A-F)" t1 red 2
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_merged red-green-valid-forms
+  pass "fm-pr-merge merges a bug fix with a red run at the merge base and a green run at the head"
+}
+
+test_red_green_leaves_other_types_untouched() {
+  local type n=0
+  for type in feature docs Chore refactor; do
+    n=$((n + 1))
+    CASE=$(make_case "red-green-other-$n")
+    add_gh_mocks "$CASE" "$RG_HEAD"
+    write_bug_fix_brief "$CASE" task-x1 "$type"
+    merge_red_green_case
+    assert_red_green_merged "red-green-other-$type"
+    assert_no_grep 'compare/' "$CASE/gh.log" "red-green-other-$type: a non-bug-fix read the merge base"
+  done
+  CASE=$(make_case red-green-legacy-no-type)
+  add_gh_mocks "$CASE" "$RG_HEAD"
+  write_bug_fix_brief "$CASE" task-x1 feature
+  sed -i.bak '/^Type:/d' "$CASE/home/data/task-x1/brief.md"
+  merge_red_green_case
+  assert_red_green_merged red-green-legacy-no-type
+  assert_grep 'has no Type line' "$CASE/stderr" "red-green-legacy-no-type: the merge did not warn about the missing Type line"
+  assert_no_grep 'compare/' "$CASE/gh.log" "red-green-legacy-no-type: a brief with no Type read the merge base"
+  pass "fm-pr-merge leaves a pull request that is not typed as a bug fix untouched, and warns when a legacy brief has no Type line"
+}
+
+test_red_green_runs_must_be_at_the_base_and_head() {
+  make_red_green_case red-green-red-not-at-base
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_OTHER" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-red-not-at-base
+
+  make_red_green_case red-green-old-head
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_OTHER" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-old-head
+
+  make_red_green_case red-green-other-pr
+  add_red_green_run "$CASE" task-x1 https://github.com/example/repo/pull/621 "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 https://github.com/example/repo/pull/621 "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-other-pr
+  pass "fm-pr-merge counts only runs of this pull request at its merge base and its verified head"
+}
+
+test_red_green_exit_codes_and_output_must_prove_the_runs() {
+  local phase code output
+  make_red_green_case red-green-command-mismatch
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 'FAIL' 'test one'
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 'PASS' 'test two'
+  merge_red_green_case
+  assert_red_green_refusal red-green-command-mismatch
+
+  for phase in red green; do
+    for code in 126 127; do
+      make_red_green_case "red-green-$phase-$code"
+      if [ "$phase" = red ]; then
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red "$code"
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+      else
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green "$code"
+      fi
+      merge_red_green_case
+      assert_red_green_refusal "red-green-$phase-$code"
+    done
+    for output in 'command not found' 'no tests found'; do
+      make_red_green_case "red-green-$phase-output-${output%% *}"
+      if [ "$phase" = red ]; then
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 "$output"
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+      else
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+        add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0 "$output"
+      fi
+      merge_red_green_case
+      assert_red_green_refusal "red-green-$phase-output-${output%% *}"
+    done
+  done
+  make_red_green_case red-green-red-passed
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 0
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-red-passed
+
+  make_red_green_case red-green-green-failed
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 1
+  merge_red_green_case
+  assert_red_green_refusal red-green-green-failed
+
+  make_red_green_case red-green-no-output
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 ''
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-no-output
+  make_red_green_case red-green-other-marker
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1 ''
+  add_red_green_run "$CASE" task-x1 https://github.com/example/repo/pull/621 "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-other-marker
+  pass "fm-pr-merge needs a failing red exit, a passing green exit, and captured output for each run"
+}
+
+test_red_green_unreadable_inputs_refuse() {
+  make_red_green_case red-green-log-unreadable
+  mkdir "$CASE/home/data/task-x1/red-green.log"
+  merge_red_green_case
+  assert_red_green_refusal red-green-log-unreadable
+  assert_grep 'cannot be read' "$CASE/stderr" "red-green-log-unreadable: the refusal did not say why"
+
+  make_red_green_case red-green-base-unreadable
+  printf '%s\n' '{"message":"Not Found"}' > "$CASE/github-compare.json"
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  assert_red_green_refusal red-green-base-unreadable
+  assert_grep 'merge base' "$CASE/stderr" "red-green-base-unreadable: the refusal did not name the merge base"
+
+  make_red_green_case red-green-type-placeholder '{TYPE}'
+  merge_red_green_case
+  expect_code 1 "$RC" "red-green-type-placeholder: an unfilled Type placeholder must refuse"
+  assert_grep 'Type line of task task-x1 is not recognised' "$CASE/stderr" \
+    "red-green-type-placeholder: the refusal did not name the Type line"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-type-placeholder: the merge reached the forge"
+
+  make_red_green_case red-green-type-unknown 'bug'
+  merge_red_green_case
+  expect_code 1 "$RC" "red-green-type-unknown: an unrecognised Type must refuse"
+  assert_grep 'Type line of task task-x1 is not recognised' "$CASE/stderr" \
+    "red-green-type-unknown: the refusal did not name the Type line"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-type-unknown: the merge reached the forge"
+
+  make_red_green_case red-green-type-repeated
+  printf '%s\n' 'Type: feature' >> "$CASE/home/data/task-x1/brief.md"
+  merge_red_green_case
+  expect_code 1 "$RC" "red-green-type-repeated: a repeated Type must refuse"
+  assert_grep 'more than one Type line' "$CASE/stderr" "red-green-type-repeated: the refusal did not say why"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "red-green-type-repeated: the merge reached the forge"
+  pass "fm-pr-merge refuses a bug fix whose log, merge base, or Type line cannot be read"
+}
+
+test_red_green_waiver_is_the_attended_allow_red() {
+  make_red_green_case red-green-override
+  set +e
+  run_pr_merge "$CASE" task-x1 "$RG_URL" --attended-override -- --admin > "$CASE/stdout" 2> "$CASE/stderr"
+  RC=$?
+  set -e
+  assert_red_green_refusal red-green-override
+
+  make_red_green_case red-green-other-waiver
+  merge_red_green_case --allow-red ci
+  assert_red_green_refusal red-green-other-waiver
+
+  make_red_green_case red-green-waived
+  merge_red_green_case --allow-red red-green-evidence
+  assert_red_green_refusal red-green-waived
+  pass "merge flags cannot waive red/green evidence"
+}
+
+test_red_green_gitlab_reads_the_merge_base() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case red-green-gitlab)
+  write_bug_fix_brief "$case_dir" task-x1 'bug fix'
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "red-green-gitlab: a bug fix with no log must refuse"
+  assert_grep 'red/green' "$case_dir/stderr" "red-green-gitlab: the refusal did not name the evidence"
+  assert_grep "$MR_BASE" "$case_dir/stderr" "red-green-gitlab: the refusal did not name the merge base"
+  assert_no_grep 'mr merge' "$case_dir/glab.log" "red-green-gitlab: the merge reached the forge"
+
+  add_red_green_run "$case_dir" task-x1 "$MR_URL" "$MR_BASE" t1 red 1
+  add_red_green_run "$case_dir" task-x1 "$MR_URL" "$MR_HEAD" t1 green 0
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 0 "$rc" "red-green-gitlab: valid evidence must allow the merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_grep 'mr merge 7' "$case_dir/glab.log" "red-green-gitlab: the merge did not run"
+  pass "fm-pr-merge applies the red/green gate to a GitLab merge request at its merge base"
+}
+
+test_bug_fix_needs_a_root_cause_line() {
+  local body n=0
+  for body in '' 'Root cause:' 'The root cause: is unknown' 'Cause: the parser'; do
+    n=$((n + 1))
+    make_red_green_case "root-cause-missing-$n"
+    printf '%s\n' '## Summary' "$body" > "$CASE/github-body.md"
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+    merge_red_green_case
+    expect_code 1 "$RC" "root-cause-missing-$n: valid red/green evidence without a Root cause line must refuse"
+    assert_grep 'Root cause: <one sentence>' "$CASE/stderr" "root-cause-missing-$n: the refusal did not name the line"
+    assert_no_grep 'pr merge' "$CASE/gh.log" "root-cause-missing-$n: the merge reached the forge"
+  done
+
+  for body in 'Root cause: the parser dropped the last line.' '> root CAUSE: a stale cache' '### Root cause: off by one'; do
+    n=$((n + 1))
+    make_red_green_case "root-cause-present-$n"
+    printf '%s\n' "$body" > "$CASE/github-body.md"
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+    add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+    merge_red_green_case
+    assert_red_green_merged "root-cause-present-$n"
+  done
+
+  make_red_green_case root-cause-unreadable
+  mv "$CASE/github-body.md" "$CASE/github-body.md.gone"
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_BASE" t1 red 1
+  add_red_green_run "$CASE" task-x1 "$RG_URL" "$RG_HEAD" t1 green 0
+  merge_red_green_case
+  expect_code 1 "$RC" "root-cause-unreadable: an unreadable description must refuse"
+  assert_grep 'description could not be read' "$CASE/stderr" "root-cause-unreadable: the refusal did not say why"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "root-cause-unreadable: the merge reached the forge"
+
+  make_red_green_case root-cause-not-waived
+  printf '%s\n' 'no cause here' > "$CASE/github-body.md"
+  merge_red_green_case --allow-red red-green-evidence
+  expect_code 1 "$RC" "root-cause-not-waived: the red/green waiver must not skip the Root cause line"
+  assert_grep 'Root cause: <one sentence>' "$CASE/stderr" "root-cause-not-waived: the refusal did not name the line"
+  assert_no_grep 'pr merge' "$CASE/gh.log" "root-cause-not-waived: the merge reached the forge"
+
+  CASE=$(make_case root-cause-not-a-bug-fix)
+  add_gh_mocks "$CASE" "$RG_HEAD"
+  write_bug_fix_brief "$CASE" task-x1 feature
+  merge_red_green_case
+  assert_red_green_merged root-cause-not-a-bug-fix
+  pass "a bug fix needs a Root cause line in its description, even with red/green evidence"
+}
+
+test_root_cause_line_gitlab() {
+  local case_dir rc
+  case_dir=$(make_gitlab_case root-cause-gitlab description='Fixes it.')
+  write_bug_fix_brief "$case_dir" task-x1 'bug fix'
+  add_red_green_run "$case_dir" task-x1 "$MR_URL" "$MR_BASE" t1 red 1
+  add_red_green_run "$case_dir" task-x1 "$MR_URL" "$MR_HEAD" t1 green 0
+  set +e
+  run_pr_merge "$case_dir" task-x1 "$MR_URL" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+  expect_code 1 "$rc" "root-cause-gitlab: a description with no Root cause line must refuse"
+  assert_grep 'Root cause: <one sentence>' "$case_dir/stderr" "root-cause-gitlab: the refusal did not name the line"
+  assert_no_grep 'mr merge' "$case_dir/glab.log" "root-cause-gitlab: the merge reached the forge"
+  pass "fm-pr-merge reads the Root cause line from a GitLab merge request description"
+}
+
+test_bug_fix_needs_a_root_cause_line
+test_root_cause_line_gitlab
+test_red_green_refuses_a_bug_fix_with_no_log
+test_red_green_refuses_red_only
+test_red_green_order_and_branch_ancestor
+test_red_green_refuses_mismatched_test_ids
+test_red_green_allows_a_valid_pair
+test_red_green_leaves_other_types_untouched
+test_red_green_runs_must_be_at_the_base_and_head
+test_red_green_exit_codes_and_output_must_prove_the_runs
+test_red_green_unreadable_inputs_refuse
+test_red_green_waiver_is_the_attended_allow_red
+test_red_green_gitlab_reads_the_merge_base

@@ -181,6 +181,34 @@
 # the base has no merge queue, and GitLab gets a final --auto-merge=false.
 # bin/fm-brief.sh owns the `Review tier:` line and the depths it names.
 #
+# A bug fix is also refused until its live description names the cause and a
+# saved log proves one test failed on the old code and passed on the fix.
+# The brief classifies the pull request: a
+# `Type: bug fix` line in its `## Risk and review` section (also bug-fix,
+# bugfix, or fix, case-insensitive) makes it a bug fix; one of
+# feat, feature, docs, chore, refactor, test, ci, build, perf, style, or revert,
+# leaves the merge untouched by this gate. A brief with no Type line at all
+# predates the classification and merges as not a bug fix with a warning; a
+# repeated or unrecognised Type line, including an unfilled `{TYPE}`
+# placeholder, refuses rather than falling to "not a bug fix". The cause is one line of the
+# pull request body or merge request description, read live, that starts with
+# `Root cause:` (case-insensitive, after any list, quote, heading, or emphasis
+# marks) and carries text after the colon; a missing line or an unreadable
+# description refuses. The proof is the log
+# <data>/<task-id>/red-green.log, holding one marker line per test run followed
+# by that run's captured output:
+# `<pr-url>|<commit-sha>|<test-id>|red|<exit-code>|<test-command>` or the same with `green`.
+# The merge needs one test id, free of whitespace, with a red line at the pull
+# request's pre-fix ancestor and a nonzero exit, and a later green line at the exact head
+# this run verified and exit 0, each followed by at least one non-blank output
+# line before the next marker, using the same nonempty test command for both.
+# Exit 126 or 127 and output containing `command not found` or `no tests found`
+# invalidate a run, regardless of case.
+# The merge base is read live from the forge; other red commits must be verified
+# as ancestors of the head in the task's local worktree.
+# A push gives the pull request a new head and voids the green run.
+# An unreadable log, brief, or merge base refuses. No flag skips this gate.
+#
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
 # URL, nor --sha or --match-head-commit because the head comes only from the
@@ -1384,6 +1412,191 @@ require_review_tier() {
   return 1
 }
 
+# Whether the task's brief classifies this pull request as a bug fix: sets
+# RED_GREEN_BUG_FIX to true or false, or reports why the type cannot be read and
+# returns 1. The `Type:` line is read from the brief's own `## Risk and review`
+# section, like the review tier; the header owns the accepted values.
+RED_GREEN_BUG_FIX=false
+read_bug_fix_type() {
+  local brief=$1 section lines value
+  RED_GREEN_BUG_FIX=false
+  if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
+    echo "error: refusing to merge $URL: the brief of task $ID cannot be read at $brief, so whether it is a bug fix is unknown" >&2
+    return 1
+  fi
+  section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
+  lines=$(printf '%s\n' "$section" | grep '^Type:' || true)
+  if [ -z "$lines" ]; then
+    echo "warning: the brief of task $ID has no Type line under '## Risk and review', so $URL merges as not a bug fix; add 'Type: bug fix' to $brief if it is one" >&2
+    return 0
+  fi
+  if [ "$(printf '%s\n' "$lines" | wc -l | tr -d ' ')" -gt 1 ]; then
+    echo "error: refusing to merge $URL: the brief of task $ID has more than one Type line under '## Risk and review', so whether it is a bug fix is ambiguous; keep exactly one in $brief" >&2
+    return 1
+  fi
+  value=$(printf '%s' "${lines#Type:}" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//')
+  case "$value" in
+    'bug fix'|bug-fix|bugfix|fix) RED_GREEN_BUG_FIX=true ;;
+    feat|feature|docs|chore|refactor|test|ci|build|perf|style|revert) ;;
+    *)
+      echo "error: refusing to merge $URL: the Type line of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set it to 'Type: bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor in $brief" >&2
+      return 1
+      ;;
+  esac
+}
+
+# The merge base of this pull request, read live from the forge for the head
+# this run verified: prints it, or returns 1. The header owns why the merge
+# base, and not the base branch tip, is the base commit.
+read_merge_base() {
+  local json base_path base
+  case "$PROVIDER" in
+    github)
+      [ -n "$FM_PR_GITHUB_BASE" ] || return 1
+      base_path=$(github_urlencode_path_segment "$FM_PR_GITHUB_BASE")
+      json=$(gh api "repos/$PR_OWNER/$PR_REPO/compare/$base_path...$FM_PR_MERGE_HEAD" 2>/dev/null) || return 1
+      base=$(printf '%s' "$json" | jq -r '.merge_base_commit.sha // ""' 2>/dev/null) || return 1
+      ;;
+    gitlab)
+      json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) || return 1
+      base=$(printf '%s' "$json" | jq -r --arg head "$FM_PR_MERGE_HEAD" '
+        if (.sha // "") == $head then (.diff_refs.base_sha // "") else error("head moved") end' 2>/dev/null) \
+        || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  base=$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')
+  fm_pr_head_valid "$base" || return 1
+  printf '%s\n' "$base"
+}
+
+# The red/green refusal, run after the review-tier gate so it reads the brief
+# that gate already proved readable, and before the away record is held so its
+# forge read happens outside that lock. A pull request the brief classifies as a
+# bug fix merges only when <data>/<task>/red-green.log proves one test failed on
+# an ancestor and passed at the head this run verified; the header owns the
+# record format.
+require_red_green_evidence() {
+  local status=0
+  read_bug_fix_type "$DATA/$ID/brief.md" || return 1
+  [ "$RED_GREEN_BUG_FIX" = true ] || return 0
+  require_root_cause_line || status=1
+  require_red_green_log || status=1
+  return "$status"
+}
+
+# The live pull request or merge request description: prints it, or returns 1.
+# An empty description reads as empty, not as unreadable.
+read_pr_body() {
+  local json
+  case "$PROVIDER" in
+    github)
+      json=$(gh pr view "$URL" --json body 2>/dev/null) || return 1
+      printf '%s' "$json" | jq -er 'if type == "object" and ((.body // "") | type) == "string"
+        then (.body // "") else error("no body") end' 2>/dev/null
+      ;;
+    gitlab)
+      json=$(GITLAB_HOST="$FM_PR_HOST" glab mr view "$PR_NUMBER" -R "$PROJECT_URL" -F json 2>/dev/null) || return 1
+      printf '%s' "$json" | jq -er 'if type == "object" and ((.description // "") | type) == "string"
+        then (.description // "") else error("no description") end' 2>/dev/null
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# A bug fix names its cause before it merges: the live description must hold a
+# line reading `Root cause: <sentence>`; the header owns the accepted form. The
+# description must be readable.
+require_root_cause_line() {
+  local body
+  if ! body=$(read_pr_body); then
+    echo "error: refusing to merge $URL: task $ID is a bug fix, and its description could not be read from the forge to check its Root cause line" >&2
+    return 1
+  fi
+  if printf '%s\n' "$body" | awk '
+      {
+        line = tolower($0)
+        sub(/^[[:space:]>*_#-]+/, "", line)
+        if (line ~ /^root cause[*_]*:[*_]*[[:space:]]*[^[:space:]*_]/) found = 1
+      }
+      END { exit found ? 0 : 1 }'; then
+    printf 'verified: bug fix %s names its root cause\n' "$URL" >&2
+    return 0
+  fi
+  printf 'error: refusing to merge %s: task %s is a bug fix, and its description has no "Root cause: <one sentence>" line; no cause sentence, no fix - add the line to the description and retry\n' \
+    "$URL" "$ID" >&2
+  return 1
+}
+
+# The red/green evidence check of a bug fix.
+require_red_green_log() {
+  local log="$DATA/$ID/red-green.log" head base result candidates sha test_id wt
+  head=$(printf '%s' "$FM_PR_MERGE_HEAD" | tr '[:upper:]' '[:lower:]')
+  if ! base=$(read_merge_base); then
+    echo "error: refusing to merge $URL: task $ID is a bug fix, and the merge base of its head $FM_PR_MERGE_HEAD could not be read from the forge to check its red/green evidence" >&2
+    return 1
+  fi
+  result=missing
+  if [ -e "$log" ] || [ -L "$log" ]; then
+    if [ ! -f "$log" ] || [ ! -r "$log" ]; then
+      echo "error: refusing to merge $URL: the red/green evidence log of task $ID cannot be read: $log" >&2
+      return 1
+    fi
+    # A marker counts only when captured output follows it before the next
+    # marker, so the log carries the run it claims and not a bare assertion.
+    candidates=$(awk -F'|' -v url="$URL" -v head="$head" '
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+      function settle() {
+        if (pending != "" && output && !invalid) {
+          if (pending_kind == "red") red[pending SUBSEP pending_command SUBSEP pending_sha] = 1
+          else for (key in red) { split(key, parts, SUBSEP); if (parts[1] == pending && parts[2] == pending_command) print parts[3] " " pending }
+        }
+        pending = ""; output = 0; invalid = 0
+      }
+      NF >= 6 && (trim($4) == "red" || trim($4) == "green") {
+        settle()
+        if (trim($1) != url) next
+        sha = tolower(trim($2)); t = trim($3); kind = trim($4); code = trim($5)
+        pending_command = $0
+        for (i = 0; i < 5; i++) sub(/^[^|]*\|/, "", pending_command)
+        pending_command = trim(pending_command)
+        if (t == "" || t ~ /[[:space:]]/ || pending_command == "" || code !~ /^[0-9]+$/ || code + 0 == 126 || code + 0 == 127) next
+        if (kind == "red" && sha ~ /^[0-9a-f]+$/ && length(sha) == 40 && sha != head && code + 0 != 0) { pending = t; pending_kind = "red"; pending_sha = sha }
+        if (kind == "green" && sha == head && code + 0 == 0) { pending = t; pending_kind = "green" }
+        next
+      }
+      /[^[:space:]]/ { if (pending != "") { output = 1; if (tolower($0) ~ /command not found|no tests found/) invalid = 1 } }
+      END {
+        settle()
+      }
+    ' "$log") || {
+      echo "error: refusing to merge $URL: the red/green evidence log of task $ID could not be read: $log" >&2
+      return 1
+    }
+    wt=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
+    while read -r sha test_id; do
+      [ -n "$sha" ] || continue
+      if [ "$sha" = "$base" ] || { [ -n "$wt" ] && git -C "$wt" merge-base --is-ancestor "$sha" "$head" 2>/dev/null; }; then
+        result="ok $test_id"
+        break
+      fi
+    done <<EOF
+$candidates
+EOF
+  fi
+  if [ "${result%% *}" = ok ]; then
+    printf 'verified: bug fix %s has red/green evidence for test %s (red at %s, green at head %s)\n' \
+      "$URL" "${result#ok }" "$sha" "$FM_PR_MERGE_HEAD" >&2
+    return 0
+  fi
+  printf 'error: refusing to merge %s: task %s is a bug fix with no red/green evidence in %s: no test failed at an ancestor (merge base %s) and then passed at head %s\n' \
+    "$URL" "$ID" "$log" "$base" "$FM_PR_MERGE_HEAD" >&2
+  printf 'run the same test on the old code and on the fix, and append each run as one marker line followed by its captured output: %s|%s|<test-id>|red|<nonzero exit>|<test-command> and %s|%s|<test-id>|green|0|<test-command>\n' \
+    "$URL" "$base" "$URL" "$FM_PR_MERGE_HEAD" >&2
+  echo 'a push after the green run gives the pull request a new head and voids it; a rebase can void the red run' >&2
+  return 1
+}
+
 FM_PR_MERGE_AUTHORITY=
 # The authority read. bin/fm-merge-authority-lib.sh owns what the away-posture
 # record's presence means; this function owns what a merge run may do about it,
@@ -1674,6 +1887,7 @@ case "$PROVIDER" in
     fi
     require_file_boundary || exit 1
     require_review_tier || exit 1
+    require_red_green_evidence || exit 1
     # The away record is locked first, so this last presence and authority read
     # and the forge command below share one live-owner critical section.
     hold_away_record_for_merge || exit 1
@@ -1727,6 +1941,7 @@ case "$PROVIDER" in
     gitlab_verify_mergeable || exit 1
     require_file_boundary || exit 1
     require_review_tier || exit 1
+    require_red_green_evidence || exit 1
     # --sha binds the merge to the head this run verified, so a push that lands
     # in between is refused by GitLab instead of merged unverified. --yes only
     # skips the interactive confirmation, which no supervised run can answer;

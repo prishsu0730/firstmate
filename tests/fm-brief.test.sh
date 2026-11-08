@@ -1516,6 +1516,28 @@ test_ship_scaffold_carries_the_commit_wording_check() {
   pass "ship scaffolds name the pre-push commit wording check"
 }
 
+test_ship_scaffold_names_the_red_green_proof_paths() {
+  local home id brief
+  home="$TMP_ROOT/red-green-paths-home"
+  mkdir -p "$home/data"
+  id="brief-red-green"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode no-mistakes >/dev/null 2>&1 \
+    || fail "fm-brief.sh --mode no-mistakes exited non-zero"
+  brief="$home/data/$id/brief.md"
+  assert_grep "\`$home/data/$id/red-green.log\`" "$brief" \
+    "ship brief does not name the task's literal red-green.log path"
+  assert_grep "\`$ROOT/bin/fm-pr-merge.sh\` header owns the line format" "$brief" \
+    "ship brief does not name the expanded fm-pr-merge.sh path"
+  assert_grep "red run of the test at the PR's merge base" "$brief" \
+    "ship brief does not place the red run at the merge base"
+  assert_grep "green run of the same test command at the final PR head" "$brief" \
+    "ship brief does not place the green run at the final PR head"
+  assert_grep "after the pipeline finishes and the PR URL exists" "$brief" \
+    "ship brief does not say the proof is recorded once the PR URL exists"
+  assert_no_grep "@RED_GREEN_CAPTURE@" "$brief" "ship brief kept the unexpanded red-green marker"
+  pass "ship scaffolds name the expanded red-green proof paths and when to record each run"
+}
+
 test_crewmate_scaffolds_forbid_pool_administration() {
   local home id brief mode ship_rule scout_rule
   home="$TMP_ROOT/pool-admin-home"
@@ -1750,6 +1772,7 @@ test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_ship_scaffold_carries_the_scope_map_section
 test_ship_scaffold_carries_the_commit_wording_check
+test_ship_scaffold_names_the_red_green_proof_paths
 test_allowed_files_flag_adds_only_a_section
 test_allowed_files_flag_is_validated
 test_a_leftover_state_marker_refuses_the_brief
