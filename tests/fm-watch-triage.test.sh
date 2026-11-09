@@ -6647,13 +6647,45 @@ test_heartbeat_auto_closes_a_local_main_ship() {
   pass "a heartbeat tears down a ship already merged into local main"
 }
 
+wait_suppressed_more() {  # <state> <pid> <since-count>
+  local state=$1 pid=$2 since=$3 i=0
+  while [ "$i" -lt 100 ]; do
+    kill -0 "$pid" 2>/dev/null || return 1
+    [ "$(grep -c 'suppressed unchanged automatic finished-task teardown refusal' "$state/.watch-triage.log" 2>/dev/null || true)" -gt "$since" ] && return 0
+    sleep 0.1; i=$((i+1))
+  done
+  return 1
+}
 test_heartbeat_surfaces_one_auto_close_refusal() {
-  local dir state fakebin out pid sig drain_out drain_err marker
+  local dir state fakebin out pid sig drain_out drain_err advisory since
+  local WATCH
   dir=$(make_case heartbeat-auto-close-refusal); state="$dir/state"; fakebin="$dir/fakebin"
   out="$dir/watch.out"; drain_out="$dir/drain.out"
+  # Keep the real watcher and its libraries, controlling only teardown output.
+  cp -R "$ROOT/bin" "$dir/bin"
+  WATCH="$dir/bin/fm-watch.sh"
+  cat > "$dir/bin/fm-teardown.sh" <<'SH'
+#!/usr/bin/env bash
+case_dir=$(cd "$(dirname "$0")/.." && pwd)
+cat "$case_dir/advisory" >&2
+printf 'REFUSED: ship task refused still has open, unmerged PR https://github.com/example/repo/pull/1.\n' >&2
+cat "$case_dir/reason" >&2
+exit 1
+SH
+  cat > "$fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+case_dir=$(cd "$(dirname "$0")/.." && pwd)
+cat "$case_dir/forge-head"
+SH
+  chmod +x "$fakebin/gh"
+  printf '%040d\n' 0 > "$dir/forge-head"
+  : > "$dir/advisory"
+  printf 'REFUSED: waiting for merge\n' > "$dir/reason"
   printf 'done: report ready\n' > "$state/refused.status"
   fm_write_meta "$state/refused.meta" \
     'kind=scout' \
+    'pr=https://github.com/example/repo/pull/1' \
+    'pr_head=0000000000000000000000000000000000000000' \
     'backend=tmux' \
     "project=$dir/project" \
     "worktree=$dir/missing-worktree" \
@@ -6664,11 +6696,19 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
   # The completion report was already presented; exercise refusal delivery
   # without an independent heartbeat backstop wake for that report.
   mark_heartbeat_surfaced "$state" "$state/refused.status"
-  mkdir "$state/.wake-queue"
+  printf 'invalid\n' > "$dir/forge-head"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    FM_HEARTBEAT=1 "$WATCH" > "$out.failed" 2>&1 &
+    FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 "$WATCH" > "$out.initial-failure" 2>&1 &
   pid=$!
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "initial failed head lookup woke the watcher"; }
+  [ ! -e "$state/.auto-close-refusal-refused" ] \
+    || { reap "$pid"; fail "initial failed head lookup wrote a marker"; }
+  [ ! -s "$state/.wake-queue" ] \
+    || { reap "$pid"; fail "initial failed head lookup queued a refusal"; }
+  mkdir "$state/.wake-queue"
+  printf '%040d\n' 0 > "$dir/forge-head"
   wait_for_exit "$pid" 100 || fail "queue failure did not stop the watcher"
   [ ! -e "$state/.auto-close-refusal-refused" ] \
     || fail "unqueued refusal armed suppression"
@@ -6713,9 +6753,8 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || fail "drain after watcher recovery failed"
   ack_drain_err "$state" "$drain_err.recovery" || fail "could not acknowledge watcher recovery wake"
 
-  marker="$state/.auto-close-refusal-refused"
-  [ -f "$marker" ] || fail "automatic teardown refusal did not persist its reason"
-  printf 'exit=1\nREFUSED: changed fixture reason\n' > "$marker"
+  [ -f "$state/.auto-close-refusal-refused" ] || fail "automatic teardown refusal did not persist its reason"
+  printf 'REFUSED: changed fixture reason\n' > "$dir/reason"
   rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
   PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
     FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
@@ -6728,6 +6767,63 @@ test_heartbeat_surfaces_one_auto_close_refusal() {
     || fail "changed automatic teardown refusal did not queue a second wake"
   ack_drain_err "$state" "$drain_err.changed" \
     || fail "could not acknowledge changed automatic teardown refusal wake"
+
+  # A different PR head is a new refusal and must fire again.
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  printf '%040d\n' 1 > "$dir/forge-head"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out.head" &
+  pid=$!
+  wait_for_exit "$pid" 100 || fail "a refusal on a new PR head did not wake the watcher"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out.head" 2> "$drain_err.head" \
+    || fail "drain after new-head refusal failed"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out.head" || true)" = 1 ] \
+    || fail "a new PR head did not queue a fresh refusal wake"
+  ack_drain_err "$state" "$drain_err.head" || fail "could not acknowledge new-head refusal wake"
+  rm -f "$state/.last-heartbeat" "$state/.heartbeat-streak"
+  printf '%s\n' 'WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.' > "$dir/advisory"
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 FM_HEARTBEAT_MAX=1 "$WATCH" > "$out.advisories" &
+  pid=$!
+  for advisory in \
+    'WARNING: queued wakes pending - drain them with bin/fm-wake-drain.sh before anything else.' \
+    'NOTICE: wake rows held by the live supervision branch - it presents and acknowledges them; do not drain them from here.' \
+    'WARNING: queued wakes pending - left untouched because this session lacks verified fleet-lock ownership.'; do
+    printf '%s\n' "$advisory" > "$dir/advisory"
+    since=$(grep -c 'suppressed unchanged automatic finished-task teardown refusal' "$state/.watch-triage.log" 2>/dev/null || true)
+    wait_suppressed_more "$state" "$pid" "$since" \
+      || { reap "$pid"; fail "queue advisory re-surfaced an unchanged refusal"; }
+    grep -Fx "$advisory" "$out.advisories" >/dev/null \
+      || { reap "$pid"; fail "controlled teardown did not emit the queue advisory"; }
+    [ ! -s "$state/.wake-queue" ] \
+      || { reap "$pid"; fail "queue advisory re-queued an unchanged refusal"; }
+    ! grep -E '^(WARNING: queued wakes pending|NOTICE: wake rows held)' \
+      "$state/.auto-close-refusal-refused" >/dev/null \
+      || { reap "$pid"; fail "refusal record retained a queue advisory"; }
+    : > "$dir/advisory"
+    since=$(grep -c 'suppressed unchanged automatic finished-task teardown refusal' "$state/.watch-triage.log" 2>/dev/null || true)
+    wait_suppressed_more "$state" "$pid" "$since" \
+      || { reap "$pid"; fail "removing the queue advisory re-surfaced an unchanged refusal"; }
+    [ ! -s "$state/.wake-queue" ] \
+      || { reap "$pid"; fail "removing the queue advisory re-queued an unchanged refusal"; }
+    ! grep -E '^(WARNING: queued wakes pending|NOTICE: wake rows held)' \
+      "$state/.auto-close-refusal-refused" >/dev/null \
+      || { reap "$pid"; fail "refusal record retained a removed queue advisory"; }
+  done
+  printf 'invalid\n' > "$dir/forge-head"
+  wait_poll_cycle "$state" "$pid" \
+    || { reap "$pid"; fail "failed head lookup re-surfaced an unchanged refusal"; }
+  [ ! -s "$state/.wake-queue" ] \
+    || { reap "$pid"; fail "failed head lookup queued a refusal"; }
+  printf '%040d\n' 2 > "$dir/forge-head"
+  wait_for_exit "$pid" 100 || { reap "$pid"; fail "recovered head lookup did not wake the watcher"; }
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out.recovered" 2> "$drain_err.recovered" \
+    || fail "drain after recovered head lookup failed"
+  [ "$(grep -Fc 'automatic-finished-teardown-refused' "$drain_out.recovered" || true)" = 1 ] \
+    || fail "recovered head lookup did not queue exactly one refusal"
+  ack_drain_err "$state" "$drain_err.recovered" || fail "could not acknowledge recovered refusal"
   pass "a teardown refusal surfaces once per unchanged reason and re-arms when it changes"
 }
 
