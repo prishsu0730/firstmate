@@ -633,7 +633,7 @@ Portable shard evidence and coverage rules are in [fm-test-portable-shards.md](f
 
 ## Captain Preferences (data/captain.md / data/captain-shared.md)
 
-Domain-local preferences for one captain's fleet live locally in each home's `data/captain.md`; it is gitignored and represented in the session-start context digest after `data/projects.md` and optional `data/secondmates.md` by one pointer line with its size, read command, and read trigger; the digest does not print its body.
+Domain-local preferences for one captain's fleet live locally in each home's gitignored `data/captain.md`; `bin/fm-session-start.sh` owns its digest pointer format and read trigger.
 Before changing it, inspect the current file and curate the matching bullet in place under the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) tiering and archive contract; add a new bullet only for a genuinely new durable preference.
 
 Shared captain preferences that apply across secondmate domains live only in the primary home's optional `data/captain-shared.md`.
@@ -641,7 +641,7 @@ Shared captain preferences that apply across secondmate domains live only in the
 
 ## Operational learnings (data/learnings.md)
 
-Fleet-local operational facts and gotchas live locally in `data/learnings.md`; it is gitignored and represented by a pointer line, like the captain-preference files, in the session-start context digest.
+Fleet-local operational facts and gotchas live locally in the gitignored `data/learnings.md`; `bin/fm-session-start.sh` owns its digest pointer format and read trigger.
 The file is created lazily on first learning and follows the internal [`stow` skill's](../.agents/skills/stow/SKILL.md) aging-tier and cold-archive contract: inspect the current file first and curate it instead of appending forever.
 
 There is no shared learnings file by captain decision.

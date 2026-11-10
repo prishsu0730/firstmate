@@ -517,7 +517,8 @@ strip_axi_help() {
 # and a reason lede cut at 100 characters; a ready row keeps id, repo, and a
 # title lede cut at 70. The listing header is rewritten to name the columns that
 # remain, so no row is ever read against fields it no longer carries. Every cut
-# carries the repo's ` [truncated]` marker, and the full text stays one targeted
+# carries the repo's ` [truncated]` marker; the assembled row is also capped by
+# FM_LINE_CAP_DEFAULT, including identity and dependency fields. Full text stays one targeted
 # read away (bin/fm-tasks-axi.sh show <id> --full), so no row is dropped, only
 # shortened. Lines that are not listing rows (count lines) pass through.
 compact_backlog_rows() {
