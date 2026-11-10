@@ -449,6 +449,10 @@ print_backlog_pointer() {
 # ...)", and "blocked-by: ...". Bracket expressions rather than backslashes,
 # because awk's -v applies escape processing before the regex is ever compiled.
 MANUAL_KEEP_RE='[(]hold|blocked-by:'
+# A held or blocked title line carries repo, kind, date, and hold metadata ahead of
+# its reason, so it gets a wider cap than a plain queued line; a longer one is
+# still cut with the shared marker.
+MANUAL_HELD_LINE_CAP=360
 
 print_backlog_manual_compact() {
   local path=$1 reason=$2 line queued=0
@@ -493,7 +497,9 @@ print_backlog_manual_compact() {
       queued=0
       if [[ "$line" =~ ^##[[:space:]]+Queued[[:space:]]*$ ]]; then queued=1; fi
     fi
-    if [[ "$line" =~ ^[-*][[:space:]]+ ]] && { [ "$queued" -eq 1 ] || [[ "$line" =~ $MANUAL_KEEP_RE ]]; }; then
+    if [[ "$line" =~ ^[-*][[:space:]]+ ]] && [[ "$line" =~ $MANUAL_KEEP_RE ]]; then
+      fm_cap_line "$line" "$MANUAL_HELD_LINE_CAP"
+    elif [[ "$line" =~ ^[-*][[:space:]]+ ]] && [ "$queued" -eq 1 ]; then
       fm_cap_line "$line"
     else
       printf '%s\n' "$line"
@@ -513,8 +519,8 @@ strip_axi_help() {
 # compact_backlog_rows: the hot tier of a held, blocked, or ready listing. It
 # reads one decoded tasks-axi TOON listing and rewrites each row to one capped
 # line that keeps what startup recovery acts on and drops what a full read
-# repeats: a held or blocked row keeps id, blocked_by, hold_kind, hold_until,
-# and a reason lede cut at 100 characters; a ready row keeps id, repo, and a
+# repeats: a held or blocked row keeps id, a title lede cut at 70, blocked_by, hold_kind,
+# hold_until, and a reason lede cut at 100 characters; a ready row keeps id, repo, and a
 # title lede cut at 70. The listing header is rewritten to name the columns that
 # remain, so no row is ever read against fields it no longer carries. Every cut
 # carries the repo's ` [truncated]` marker; the assembled row is also capped by
@@ -537,11 +543,14 @@ compact_backlog_rows() {
       my ($name, $raw) = @_;
       my $v = $raw =~ /^"/ ? $json->decode($raw) : $raw;
       my $cut = ($v =~ s/\n\.\.\. \(truncated.*\z//s);
+      my $max = $cap{$name};
+      # A capped value that needs no cut keeps its exact encoded bytes: a hold
+      # reason is recorded text, and rewriting it would change what was held.
+      return $raw if !$cut && defined($max) && length($v) <= $max;
       $v =~ s/\s+/ /g;
       $v =~ s/^ //;
       $v =~ s/ \z//;
       $v .= $suffix if $cut;
-      my $max = $cap{$name};
       $v = substr($v, 0, $max - length($suffix)) . $suffix
         if defined($max) && length($v) > $max;
       return ($v eq "" || $v =~ /[",\\]/) ? $json->encode($v) : $v;
@@ -552,7 +561,7 @@ compact_backlog_rows() {
         my @names = split /,/, $cols;
         my %pos = map { $names[$_] => $_ } 0 .. $#names;
         my @want = exists $pos{hold_reason}
-          ? qw(id blocked_by hold_kind hold_until hold_reason)
+          ? qw(id title blocked_by hold_kind hold_until hold_reason)
           : qw(id repo title);
         @keep = grep { exists $pos{$_} } @want;
         @idx = map { $pos{$_} } @keep;

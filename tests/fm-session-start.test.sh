@@ -36,6 +36,11 @@ set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
+# A suite run from inside a live session start inherits its stage-file marker, which
+# makes every fixture session start believe the bounding wrapper already exists, so
+# none is applied and the runtime-bound case waits on its hung fake git indefinitely.
+unset FM_SESSION_START_STAGE_FILE
+
 SESSION_START="$ROOT/bin/fm-session-start.sh"
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-session-start-tests)
@@ -2200,9 +2205,9 @@ EOF
     "tasks-axi compact listing omitted the expected structured field header"
   assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
     "tasks-axi compact listing omitted in-flight identity, state, or hold metadata"
-  assert_contains "$out" "held-queued,none,captain,captain choice pending" \
+  assert_contains "$out" "held-queued,Held queued work,none,captain,captain choice pending" \
     "tasks-axi compact listing omitted a held row or its hold metadata"
-  assert_contains "$out" 'blocked-followup,compact-startup,-,-' \
+  assert_contains "$out" 'blocked-followup,Follow compact startup,compact-startup,-,"-"' \
     "tasks-axi compact listing omitted blocked-by metadata"
   assert_not_contains "$out" "held-queued,queued,ship,firstmate,Held queued work" \
     "the held row still carried its state, kind, repo, and title columns"
@@ -2256,9 +2261,9 @@ EOF
   assert_contains "$out" "ready-25,firstmate,Ready item 25" "a ready row was dropped"
 
   # The bound is for dispatchable work only: held and blocked rows stay whole.
-  assert_contains "$out" "held-queued,none,captain,captain choice pending" \
+  assert_contains "$out" "held-queued,Held queued work,none,captain,captain choice pending" \
     "the queued bound swallowed a held row"
-  assert_contains "$out" 'blocked-followup,compact-startup,-,-' \
+  assert_contains "$out" 'blocked-followup,Follow compact startup,compact-startup,-,"-"' \
     "the queued bound swallowed a blocked row"
   assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
     "the queued bound swallowed an in-flight row"
@@ -2320,8 +2325,8 @@ EOF
   printf '%s\n' manual > "$home/config/backlog-backend"
   write_long_body_backlog "$home/data/backlog.md"
 
-  printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
-  printf -- '\n## In flight\n-\t[ ] long-active - %s ACTIVE-METADATA\n* [ ] long-gated - Held (hold: %s)\n## Queued\n-\t[ ] tab-ready - %s\n*\t[ ] star-ready - %s\n' "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
+  printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0500d' 0)" >> "$home/data/backlog.md"
+  printf -- '\n## In flight\n-\t[ ] long-active - %s ACTIVE-METADATA\n* [ ] long-gated - Held (hold: %s)\n## Queued\n-\t[ ] tab-ready - %s\n*\t[ ] star-ready - %s\n' "$(printf '%0300d' 0)" "$(printf '%0500d' 0)" "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
   out=$(FM_SESSION_START_QUEUED_LIMIT=4 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; every queued title line kept and capped; indented task bodies omitted)" \
@@ -2345,13 +2350,15 @@ EOF
   assert_contains "$out" "or data/backlog.md" "manual compact digest omitted the data/backlog.md full-body pointer"
 
   row=$(printf '%s\n' "$out" | grep '^[-] \[ \] long-held')
-  [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "manual held row missing or uncapped"
+  [ -n "$row" ] && [ "${#row}" -le 360 ] || fail "manual held row missing or uncapped"
   assert_contains "$row" '[truncated]' "manual held row omitted its truncation marker"
   assert_contains "$out" 'plain-25 - Plain queued item 25' "manual ready row dropped"
   assert_contains "$out" 'ACTIVE-METADATA' "ordinary in-flight row lost trailing metadata"
   for id in tab-ready star-ready long-gated; do
     row=$(printf '%s\n' "$out" | grep "\[ \] $id -")
-    [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "$id missing or uncapped"
+    cap=220
+    [ "$id" != long-gated ] || cap=360
+    [ -n "$row" ] && [ "${#row}" -le "$cap" ] || fail "$id missing or uncapped"
     assert_contains "$row" '[truncated]' "$id omitted its truncation marker"
   done
   pass "manual backlog rendering keeps and caps every queued title line"
@@ -2367,7 +2374,7 @@ EOF
   make_fake_ps_claude "$fakebin"
   write_long_body_backlog "$home/data/backlog.md"
 
-  printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
+  printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0500d' 0)" >> "$home/data/backlog.md"
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "compact backlog listing (tasks-axi unavailable or incompatible; done rows omitted;" \
@@ -2378,7 +2385,7 @@ EOF
   assert_not_contains "$out" "DONE-ROW-LINE" "unavailable tasks-axi fallback listed a done row at startup"
 
   row=$(printf '%s\n' "$out" | grep '^[-] \[ \] long-held')
-  [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "manual held row missing or uncapped"
+  [ -n "$row" ] && [ "${#row}" -le 360 ] || fail "manual held row missing or uncapped"
   assert_contains "$row" '[truncated]' "manual held row omitted its truncation marker"
   assert_contains "$out" 'plain-25 - Plain queued item 25' "manual ready row dropped"
   pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
