@@ -827,7 +827,7 @@ EOF
 # captain or learnings file: one pointer line names the size, the read command,
 # and when the read is owed, so the digest stays small as those files grow.
 test_context_digest_points_at_populated_files() {
-  local rec root home fakebin out bytes quoted file command result
+  local rec root home fakebin out bytes quoted file command result pointer trigger
   rec=$(new_world "context pointers")
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -843,10 +843,16 @@ EOF
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   printf -v quoted '%q' "$home/data/captain.md"
-  assert_contains "$out" "present, $bytes bytes, 2 lines - NOT printed here. Read it with: cat $quoted" "pointer lost its size or quoted path"
+  assert_contains "$out" "present, $bytes bytes, 2 lines - NOT printed here." "pointer lost its size or quoted path"
   for file in captain.md captain-shared.md learnings.md; do
     printf -v quoted '%q' "$home/data/$file"
     assert_contains "$out" "Read it with: cat $quoted" "pointer lost its quoted path"
+    pointer=$(printf '%s\n' "$out" | grep '^present, ' | grep -F "$file")
+    case "$file" in
+      learnings.md) trigger='Read it once before the first spawn, recovery, or merge of this session.' ;;
+      *) trigger='Read it once before the first reply, brief, or decision it could change.' ;;
+    esac
+    assert_contains "$pointer" "$trigger" "memory read trigger is not on its pointer line"
     command=$(printf '%s\n' "$out" | sed -n "s/^present, .*Read it with: //p" | grep -F "$file")
     result=$(bash -c "$command")
     [ "$result" = "$(cat "$home/data/$file")" ] || fail "pointer command read the wrong file"
@@ -1176,7 +1182,7 @@ EOF
   # ahead of the curated memory a truncated tail is allowed to take.
   [ "$inventory_line" -lt "$context_line" ] \
     || fail "the live-task inventory was buried behind the curated memory files"
-  assert_contains "$out" "NOT printed here. Read it with: cat $home/data/captain.md" \
+  assert_contains "$out" "Read it with: cat $home/data/captain.md" \
     "the ordering fixture did not actually print a memory pointer"
   assert_not_contains "$out" "Captain memory that may be truncated away safely." \
     "the digest printed the captain memory body instead of its pointer line"
@@ -2293,7 +2299,7 @@ EOF
 }
 
 test_backlog_compact_manual_backend_skips_indented_bodies() {
-  local rec root home fakebin out row
+  local rec root home fakebin out row id
   rec=$(new_world backlog-compact-manual)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -2304,6 +2310,7 @@ EOF
   write_long_body_backlog "$home/data/backlog.md"
 
   printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
+  printf -- '\n## In flight\n-\t[ ] long-active - %s ACTIVE-METADATA\n* [ ] long-gated - Held (hold: %s)\n## Queued\n-\t[ ] tab-ready - %s\n*\t[ ] star-ready - %s\n' "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
   out=$(FM_SESSION_START_QUEUED_LIMIT=4 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; every queued title line kept and capped; indented task bodies omitted)" \
@@ -2330,6 +2337,12 @@ EOF
   [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "manual held row missing or uncapped"
   assert_contains "$row" '[truncated]' "manual held row omitted its truncation marker"
   assert_contains "$out" 'plain-25 - Plain queued item 25' "manual ready row dropped"
+  assert_contains "$out" 'ACTIVE-METADATA' "ordinary in-flight row lost trailing metadata"
+  for id in tab-ready star-ready long-gated; do
+    row=$(printf '%s\n' "$out" | grep "\[ \] $id -")
+    [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "$id missing or uncapped"
+    assert_contains "$row" '[truncated]' "$id omitted its truncation marker"
+  done
   pass "manual backlog rendering keeps and caps every queued title line"
 }
 

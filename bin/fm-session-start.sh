@@ -429,8 +429,7 @@ print_file_pointer_or_absent() {
     if [ -s "$path" ]; then
       bytes=$(wc -c < "$path" | tr -d ' ')
       lines=$(wc -l < "$path" | tr -d ' ')
-      printf 'present, %s bytes, %s lines - NOT printed here. Read it with: cat %q\n' "$bytes" "$lines" "$path"
-      printf '%s\n' "$when"
+      printf 'present, %s bytes, %s lines - NOT printed here. %s Read it with: cat %q\n' "$bytes" "$lines" "$when" "$path"
     else
       printf '(present, empty)\n'
     fi
@@ -451,7 +450,7 @@ print_backlog_pointer() {
 MANUAL_KEEP_RE='[(]hold|blocked-by:'
 
 print_backlog_manual_compact() {
-  local path=$1 reason=$2 line
+  local path=$1 reason=$2 line queued=0
   printf 'compact backlog listing (%s; done rows omitted; every in-flight, held, and blocked title line kept; every queued title line kept and capped; indented task bodies omitted)\n' \
     "$reason"
   awk -v keep_re="$MANUAL_KEEP_RE" '
@@ -489,10 +488,15 @@ print_backlog_manual_compact() {
       }
     }
   ' "$path" | fm_hold_reason_decode_stream markdown | while IFS= read -r line; do
-    case "$line" in
-      '- '*|'* '*) fm_cap_line "$line" ;;
-      *) printf '%s\n' "$line" ;;
-    esac
+    if [[ "$line" =~ ^##[[:space:]]+ ]]; then
+      queued=0
+      if [[ "$line" =~ ^##[[:space:]]+Queued[[:space:]]*$ ]]; then queued=1; fi
+    fi
+    if [[ "$line" =~ ^[-*][[:space:]]+ ]] && { [ "$queued" -eq 1 ] || [[ "$line" =~ $MANUAL_KEEP_RE ]]; }; then
+      fm_cap_line "$line"
+    else
+      printf '%s\n' "$line"
+    fi
   done
 }
 
