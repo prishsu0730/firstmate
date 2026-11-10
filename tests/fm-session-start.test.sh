@@ -917,10 +917,10 @@ EOF
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   bytes=$(printf '%s\n' "$out" | wc -c | tr -d ' ')
 
+  assert_within_byte_cap "the session-start digest" "$bytes" "$SESSION_START_DIGEST_BYTE_CAP"
   assert_not_contains "$out" "cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line" \
     "the byte-cap fixture printed a cold-tier body or an uncapped hold reason"
   assert_contains "$out" "held-more-40," "the byte-cap fixture lost a held row"
-  assert_within_byte_cap "the session-start digest" "$bytes" "$SESSION_START_DIGEST_BYTE_CAP"
   expect_over_cap_refused "the session-start digest" "$bytes" $((bytes - 1))
 
   pass "the session-start digest stays under its $SESSION_START_DIGEST_BYTE_CAP byte cap with oversized cold-tier inputs"
@@ -2191,7 +2191,7 @@ EOF
     "tasks-axi compact listing omitted the expected structured field header"
   assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
     "tasks-axi compact listing omitted in-flight identity, state, or hold metadata"
-  assert_contains "$out" 'held-queued,none,captain,"captain choice pending"' \
+  assert_contains "$out" "held-queued,none,captain,captain choice pending" \
     "tasks-axi compact listing omitted a held row or its hold metadata"
   assert_contains "$out" 'blocked-followup,compact-startup,-,-' \
     "tasks-axi compact listing omitted blocked-by metadata"
@@ -2252,7 +2252,7 @@ EOF
     "the bounded queued listing did not disclose an exact remainder and how to see it"
 
   # The bound is for dispatchable work only: held and blocked rows stay whole.
-  assert_contains "$out" 'held-queued,none,captain,"captain choice pending"' \
+  assert_contains "$out" "held-queued,none,captain,captain choice pending" \
     "the queued bound swallowed a held row"
   assert_contains "$out" 'blocked-followup,compact-startup,-,-' \
     "the queued bound swallowed a blocked row"
