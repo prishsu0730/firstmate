@@ -586,8 +586,10 @@ EOF
 
   assert_contains "$out" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)" \
     "session-start digest should label the shared captain file unmistakably"
-  assert_contains "$out" "NOT printed here. Read it with: cat $home/data/captain-shared.md" \
+  assert_contains "$out" "Read it with: cat $home/data/captain-shared.md" \
     "session-start digest should point at the shared file instead of printing it"
+  assert_contains "$out" "Read it once before the first reply, brief, or decision it could change." \
+    "session-start digest should retain the shared file read trigger"
   assert_not_contains "$out" "shared from primary" "session-start digest should not print the shared file body"
   contract=$(printf '%s\n' "$out" | awk '/^READ-ONCE CONTRACT$/ { f = 1 } /^FLEET STATE$/ { f = 0 } f')
   assert_contains "$contract" "data/captain-shared.md" \
