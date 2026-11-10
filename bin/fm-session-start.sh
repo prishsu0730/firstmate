@@ -528,6 +528,7 @@ compact_backlog_rows() {
     binmode STDOUT, ":encoding(UTF-8)";
     my $json = JSON::PP->new->allow_nonref;
     my $suffix = " [truncated]";
+    my $line_cap = shift @ARGV;
     my %cap = (hold_reason => 100, title => 70);
     my @idx;
     my @keep;
@@ -557,13 +558,16 @@ compact_backlog_rows() {
         print "$label\[$count]{", join(",", @keep), "}:\n";
       } elsif (@idx && $line =~ /^  (.*?)\n?$/) {
         my @fields = $1 =~ /("(?:[^"\\]|\\.)*"|[^,]+)/g;
-        print "  ", join(",", map { shape($keep[$_], $fields[$idx[$_]] // "-") } 0 .. $#idx), "\n";
+        my $row = "  " . join(",", map { shape($keep[$_], $fields[$idx[$_]] // "-") } 0 .. $#idx);
+        $row = substr($row, 0, $line_cap - length($suffix)) . $suffix
+          if length($row) > $line_cap;
+        print "$row\n";
       } else {
         @idx = () if $line !~ /^  /;
         print $line;
       }
     }
-  '
+  ' "$FM_LINE_CAP_DEFAULT"
 }
 
 print_backlog_tasks_axi_compact() {

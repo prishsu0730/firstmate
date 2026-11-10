@@ -159,7 +159,7 @@ case "${1:-}" in
     printf 'ready[%s]{id,state,kind,repo,title}:\n' "$ready_count"
     i=1
     while [ "$i" -le "$ready_count" ]; do
-      printf '  ready-%s,queued,ship,firstmate,Ready item %s\n' "$i" "$i"
+      printf '  ready-%s,queued,ship,%s,Ready item %s\n' "$i" "${FM_FAKE_TASKS_AXI_WIDE_FIELD:-firstmate}" "$i"
       i=$((i + 1))
     done
     printf 'ready_public_followups: 0 delivery-ready obligations\n'
@@ -187,8 +187,8 @@ case "${1:-}" in
       *'--state held'*)
         held_count=${FM_FAKE_TASKS_AXI_HELD_COUNT:-1}
         task_header "$held_count"
-        printf '  held-queued,queued,ship,firstmate,Held queued work,none,captain,%s\n' \
-          "${FM_FAKE_TASKS_AXI_HELD_REASON:-captain choice pending}"
+        printf '  held-queued,queued,ship,firstmate,Held queued work,%s,captain,%s\n' \
+          "${FM_FAKE_TASKS_AXI_WIDE_FIELD:-none}" "${FM_FAKE_TASKS_AXI_HELD_REASON:-captain choice pending}"
         i=2
         while [ "$i" -le "$held_count" ]; do
           printf '  held-more-%s,queued,ship,firstmate,Held queued work %s,none,captain,%s\n' \
@@ -198,7 +198,7 @@ case "${1:-}" in
         ;;
       *'--state queued'*'--blocked'*)
         task_header 1
-        printf '%s\n' '  blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"'
+        printf '  blocked-followup,queued,scout,firstmate,Follow compact startup,%s,"-","-"\n' "${FM_FAKE_TASKS_AXI_WIDE_FIELD:-compact-startup}"
         ;;
       *)
         printf '%s\n' 'startup recovery must not request an unfiltered whole-backlog listing' >&2
@@ -2294,6 +2294,17 @@ EOF
   assert_contains "$row" "Captain asked for a long wait, with commas" "the capped hold reason lost its leading words"
   assert_not_contains "$out" "TAIL-OF-LONG-REASON" "the digest printed the tail of a hold reason past its cap"
   [ "${#row}" -le 200 ] || fail "the capped held row is still ${#row} characters wide: $row"
+
+  local wide id
+  wide=$(printf '%0500d' 0)
+  out=$(FM_FAKE_TASKS_AXI_WIDE_FIELD="$wide" FM_FAKE_TASKS_AXI_READY=2 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  for id in held-queued blocked-followup ready-1 ready-2; do
+    row=$(printf '%s\n' "$out" | grep "^  $id,")
+    [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "$id missing or uncapped: $row"
+    assert_contains "$row" ' [truncated]' "$id lacks a truncation marker"
+  done
+  assert_contains "$out" 'bin/fm-tasks-axi.sh show <id> --full' "wide rows lost their full-read pointer"
 
   pass "held and blocked backlog rows are one capped line with a visible truncation marker"
 }
