@@ -65,9 +65,9 @@
 #                       bounded by FM_RECORD_CHECK_TIMEOUT (default 20s).
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
-#   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
-#                       data/captain-shared.md, data/learnings.md: read-only,
-#                       always safe, always runs.
+#   8. context digest - data/projects.md and data/secondmates.md in full;
+#                       pointers for data/captain.md, data/captain-shared.md,
+#                       and data/learnings.md: read-only, always runs.
 #   9. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
@@ -108,8 +108,9 @@
 # budget (config/startup-memory-budget), and is recoverable with one targeted
 # read; live fleet identity - which tasks exist, their windows, worktrees,
 # backends, and endpoint liveness - changes every session and is exactly what
-# recovery depends on. So fleet state goes first and the memory files absorb the
-# truncation. The read-once contract moves ahead of both for the same reason: a
+# recovery depends on. So fleet state goes first, followed by context files and
+# memory pointers rather than memory bodies. The read-once contract moves ahead
+# of both for the same reason: a
 # contract that only arrives after the payload it governs is the first thing a
 # truncated digest loses, and it carries the truncation caveat that keeps it
 # honest when a stage below it never ran.
