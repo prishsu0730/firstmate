@@ -64,7 +64,7 @@ Treat `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` (sect
 - Never reimplement it by separately running its lock, bootstrap, wake-drain, or network components.
 - Run-tier harness surfaces run it at session open and the rest only nudge it, so confirm the digest is present and run it yourself when it is not (`docs/sessionstart-nudge.md`).
 
-Read the complete digest once (when the harness persists it to a file, read that file) and trust it as startup and recovery input; re-read only when a source was reported absent or corrupt, older history is needed, or a targeted workflow must inspect before writing.
+Read the complete digest once (when the harness persists it to a file, read that file) and trust it as startup and recovery input; follow its pointer-line read triggers and targeted-read exceptions under the emitted read-once contract.
 An `ABSENT` captain, shared-captain, secondmate, or learnings file means built-in defaults or nothing registered or captured; rebuild an absent or stale project registry from the clones before dispatch.
 
 If the session lock cannot be acquired and verified, report its exact diagnostic and remain read-only; another active session is only one possible cause.

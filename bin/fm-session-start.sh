@@ -65,9 +65,9 @@
 #                       bounded by FM_RECORD_CHECK_TIMEOUT (default 20s).
 #   7. network checks - the result of the deferred network stage started back at
 #                       step 1, harvested WITHOUT waiting for it.
-#   8. context digest - data/projects.md, data/secondmates.md, data/captain.md,
-#                       data/captain-shared.md, data/learnings.md: read-only,
-#                       always safe, always runs.
+#   8. context digest - data/projects.md and data/secondmates.md in full;
+#                       pointers for data/captain.md, data/captain-shared.md,
+#                       and data/learnings.md: read-only, always runs.
 #   9. closing reminder - prints the context-specific watcher next step; this
 #                       script points back to the emitted harness supervision
 #                       block and deliberately never arms the watcher itself.
@@ -108,8 +108,9 @@
 # budget (config/startup-memory-budget), and is recoverable with one targeted
 # read; live fleet identity - which tasks exist, their windows, worktrees,
 # backends, and endpoint liveness - changes every session and is exactly what
-# recovery depends on. So fleet state goes first and the memory files absorb the
-# truncation. The read-once contract moves ahead of both for the same reason: a
+# recovery depends on. So fleet state goes first, followed by context files and
+# memory pointers rather than memory bodies. The read-once contract moves ahead
+# of both for the same reason: a
 # contract that only arrives after the payload it governs is the first thing a
 # truncated digest loses, and it carries the truncation caveat that keeps it
 # honest when a stage below it never ran.
@@ -147,16 +148,8 @@
 #   - `done` rows are never listed. Retained completion history belongs to the
 #     reporting surfaces (bin/fm-bearings-snapshot.sh, /ahoy), and at startup it
 #     is pure weight - 10 done rows cost 3.3KB in an observed main-home digest.
-#   - Every in-flight, held, and blocked row is listed IN FULL, with its
-#     hold_kind/hold_reason and blocked_by. Those are the rows AGENTS.md
-#     sections 7 and 10 make actionable at startup, so they are never bounded
-#     away.
-#   - Only the plain queued (dispatchable-now) listing is bounded, by
-#     FM_SESSION_START_QUEUED_LIMIT, default 20. Anything it omits is disclosed
-#     with an exact remainder count and the command that shows the rest, so a
-#     deep queue costs a counter rather than kilobytes.
-#     (This replaces FM_SESSION_START_BACKLOG_LIMIT, which bounded the whole
-#     listing indiscriminately and so could drop a held or blocked row.)
+#   - Every in-flight row is listed in full; every held, blocked, and ready
+#     row is kept on one capped line, with full text available on demand.
 # When compatible tasks-axi is selected and available, the shared tasks-axi
 # backend probe remains the compatibility owner and this script asks
 # `tasks-axi list` for the compact identity fields plus blocked_by, hold_kind,
@@ -391,8 +384,6 @@ if fm_tasks_axi_compatible; then TASKS_AXI_COMPATIBLE=1; else TASKS_AXI_COMPATIB
 
 STATUS_TAIL=${FM_SESSION_START_STATUS_TAIL:-5}
 case "$STATUS_TAIL" in ''|*[!0-9]*) STATUS_TAIL=5 ;; esac
-QUEUED_LIMIT=${FM_SESSION_START_QUEUED_LIMIT:-20}
-case "$QUEUED_LIMIT" in ''|*[!0-9]*|0) QUEUED_LIMIT=20 ;; esac
 # One per-task endpoint read may never outlive this bound: a hung backend CLI
 # becomes that task's endpoint: error line instead of the digest's whole
 # runtime budget.
@@ -427,6 +418,27 @@ print_file_or_absent() {
   fi
 }
 
+# print_file_pointer_or_absent <path> <label> <when>: the cold tier of a context
+# file. ABSENT and present-but-empty print exactly as print_file_or_absent does,
+# because both carry meaning (AGENTS.md section 3). A present, non-empty file is
+# not printed: one line gives its size and the exact read command, and <when>
+# says when that read is owed, so the pointer line is the whole trigger.
+print_file_pointer_or_absent() {
+  local path=$1 label=$2 when=$3 bytes lines
+  subsection "$label"
+  if [ -f "$path" ]; then
+    if [ -s "$path" ]; then
+      bytes=$(wc -c < "$path" | tr -d ' ')
+      lines=$(wc -l < "$path" | tr -d ' ')
+      printf 'present, %s bytes, %s lines - NOT printed here. %s Read it with: cat %q\n' "$bytes" "$lines" "$when" "$path"
+    else
+      printf '(present, empty)\n'
+    fi
+  else
+    printf 'ABSENT\n'
+  fi
+}
+
 print_backlog_pointer() {
   printf 'Full task bodies remain available on demand: bin/fm-tasks-axi.sh show <id> --full when compatible tasks-axi is available, or data/backlog.md.\n'
 }
@@ -437,12 +449,16 @@ print_backlog_pointer() {
 # ...)", and "blocked-by: ...". Bracket expressions rather than backslashes,
 # because awk's -v applies escape processing before the regex is ever compiled.
 MANUAL_KEEP_RE='[(]hold|blocked-by:'
+# A held or blocked title line carries repo, kind, date, and hold metadata ahead of
+# its reason, so it gets a wider cap than a plain queued line; a longer one is
+# still cut with the shared marker.
+MANUAL_HELD_LINE_CAP=360
 
 print_backlog_manual_compact() {
-  local path=$1 reason=$2
-  printf 'compact backlog listing (%s; done rows omitted; every in-flight, held, and blocked title line kept; other queued bounded to %s; indented task bodies omitted)\n' \
-    "$reason" "$QUEUED_LIMIT"
-  awk -v max="$QUEUED_LIMIT" -v keep_re="$MANUAL_KEEP_RE" '
+  local path=$1 reason=$2 line queued=0
+  printf 'compact backlog listing (%s; done rows omitted; every in-flight, held, and blocked title line kept; every queued title line kept and capped; indented task bodies omitted)\n' \
+    "$reason"
+  awk -v keep_re="$MANUAL_KEEP_RE" '
     function state_for_heading(line, heading) {
       heading = line
       sub(/^##[[:space:]]+/, "", heading)
@@ -463,7 +479,7 @@ print_backlog_manual_compact() {
     state == "queued" && /^[-*][[:space:]]+/ {
       queued_total++
       if ($0 ~ keep_re) { gated++; print $0; next }
-      if (plain_shown < max) { plain_shown++; print $0 }
+      plain_shown++; print $0
       next
     }
     END {
@@ -473,12 +489,22 @@ print_backlog_manual_compact() {
       } else {
         printf "(shown %d in-flight, %d held or blocked queued, %d of %d other queued title line(s); %d done row(s) omitted)\n", \
           in_flight, gated, plain_shown, plain_total, done_total
-        if (plain_total > plain_shown) {
-          printf "(%d more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)\n", plain_total - plain_shown
-        }
+
       }
     }
-  ' "$path" | fm_hold_reason_decode_stream markdown
+  ' "$path" | fm_hold_reason_decode_stream markdown | while IFS= read -r line; do
+    if [[ "$line" =~ ^##[[:space:]]+ ]]; then
+      queued=0
+      if [[ "$line" =~ ^##[[:space:]]+Queued[[:space:]]*$ ]]; then queued=1; fi
+    fi
+    if [[ "$line" =~ ^[-*][[:space:]]+ ]] && [[ "$line" =~ $MANUAL_KEEP_RE ]]; then
+      fm_cap_line "$line" "$MANUAL_HELD_LINE_CAP"
+    elif [[ "$line" =~ ^[-*][[:space:]]+ ]] && [ "$queued" -eq 1 ]; then
+      fm_cap_line "$line"
+    else
+      printf '%s\n' "$line"
+    fi
+  done
 }
 
 # tasks-axi closes every listing with its own help block. This section composes
@@ -490,53 +516,90 @@ strip_axi_help() {
   awk '/^help\[/ { exit } { print }'
 }
 
-# Bound the dispatchable-now listing without rewriting the tool's own rendering:
-# `tasks-axi ready` rows are the indented lines under its ready[N]{...} header,
-# and every other line it prints (its count, its public-followup line) passes
-# through untouched. Whatever is cut is disclosed exactly.
-print_ready_queued_bounded() {
-  local ready=$1
-  printf '%s\n' "$ready" | awk -v max="$QUEUED_LIMIT" '
-    /^help\[/ { exit }
-    /^ready\[/ { rows = 1; print; next }
-    rows && /^[[:space:]]/ {
-      total++
-      if (shown < max) { print; shown++ }
-      next
+# compact_backlog_rows: the hot tier of a held, blocked, or ready listing. It
+# reads one decoded tasks-axi TOON listing and rewrites each row to one capped
+# line that keeps what startup recovery acts on and drops what a full read
+# repeats: a held or blocked row keeps id, a title lede cut at 70, blocked_by, hold_kind,
+# hold_until, and a reason lede cut at 100 characters; a ready row keeps id, repo, and a
+# title lede cut at 70. The listing header is rewritten to name the columns that
+# remain, so no row is ever read against fields it no longer carries. Every cut
+# carries the repo's ` [truncated]` marker; the assembled row is also capped by
+# FM_LINE_CAP_DEFAULT, including identity and dependency fields. Full text stays one targeted
+# read away (bin/fm-tasks-axi.sh show <id> --full), so no row is dropped, only
+# shortened. Lines that are not listing rows (count lines) pass through.
+compact_backlog_rows() {
+  perl -MJSON::PP -e '
+    use strict;
+    use warnings;
+    binmode STDIN, ":encoding(UTF-8)";
+    binmode STDOUT, ":encoding(UTF-8)";
+    my $json = JSON::PP->new->allow_nonref;
+    my $suffix = " [truncated]";
+    my $line_cap = shift @ARGV;
+    my %cap = (hold_reason => 100, title => 70);
+    my @idx;
+    my @keep;
+    sub shape {
+      my ($name, $raw) = @_;
+      my $v = $raw =~ /^"/ ? $json->decode($raw) : $raw;
+      my $cut = ($v =~ s/\n\.\.\. \(truncated.*\z//s);
+      my $max = $cap{$name};
+      # A capped value that needs no cut keeps its exact encoded bytes: a hold
+      # reason is recorded text, and rewriting it would change what was held.
+      return $raw if !$cut && defined($max) && length($v) <= $max;
+      $v =~ s/\s+/ /g;
+      $v =~ s/^ //;
+      $v =~ s/ \z//;
+      $v .= $suffix if $cut;
+      $v = substr($v, 0, $max - length($suffix)) . $suffix
+        if defined($max) && length($v) > $max;
+      return ($v eq "" || $v =~ /[",\\]/) ? $json->encode($v) : $v;
     }
-    { rows = 0; print }
-    END {
-      if (total > 0) {
-        printf "(shown %d of %d ready queued item(s))\n", shown, total
-        if (total > shown) {
-          printf "(%d more queued - bin/fm-tasks-axi.sh ready)\n", total - shown
-        }
+    while (my $line = <STDIN>) {
+      if ($line =~ /^(\w+)\[(\d+)\]\{([^}]*)\}:\n?$/) {
+        my ($label, $count, $cols) = ($1, $2, $3);
+        my @names = split /,/, $cols;
+        my %pos = map { $names[$_] => $_ } 0 .. $#names;
+        my @want = exists $pos{hold_reason}
+          ? qw(id title blocked_by hold_kind hold_until hold_reason)
+          : qw(id repo title);
+        @keep = grep { exists $pos{$_} } @want;
+        @idx = map { $pos{$_} } @keep;
+        print "$label\[$count]{", join(",", @keep), "}:\n";
+      } elsif (@idx && $line =~ /^  (.*?)\n?$/) {
+        my @fields = $1 =~ /("(?:[^"\\]|\\.)*"|[^,]+)/g;
+        my $row = "  " . join(",", map { shape($keep[$_], $fields[$idx[$_]] // "-") } 0 .. $#idx);
+        $row = substr($row, 0, $line_cap - length($suffix)) . $suffix
+          if length($row) > $line_cap;
+        print "$row\n";
+      } else {
+        @idx = () if $line !~ /^  /;
+        print $line;
       }
     }
-  '
+  ' "$FM_LINE_CAP_DEFAULT"
 }
 
 print_backlog_tasks_axi_compact() {
   local path=$1 in_flight held blocked ready err
   if ! in_flight=$(tasks-axi list --file "$path" --state in_flight --fields "$BACKLOG_FIELDS" 2>&1); then
     err=$in_flight
-  elif ! held=$(tasks-axi list --file "$path" --state held --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! held=$(tasks-axi list --file "$path" --state held --fields "$BACKLOG_FIELDS,hold_until" 2>&1); then
     err=$held
-  elif ! blocked=$(tasks-axi list --file "$path" --state queued --blocked --fields "$BACKLOG_FIELDS" 2>&1); then
+  elif ! blocked=$(tasks-axi list --file "$path" --state queued --blocked --fields "$BACKLOG_FIELDS,hold_until" 2>&1); then
     err=$blocked
   elif ! ready=$(tasks-axi ready --file "$path" 2>&1); then
     err=$ready
   else
-    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to %s; task bodies omitted)\n' \
-      "$QUEUED_LIMIT"
+    printf 'compact backlog listing (tasks-axi; done rows omitted; every in-flight row shown in full; every held and blocked row kept as one line with a capped reason; every ready queued row kept, one capped line each; task bodies omitted; full text: bin/fm-tasks-axi.sh show <id> --full)\n'
     printf '\nin flight:\n'
     printf '%s\n' "$in_flight" | fm_hold_reason_decode_stream | strip_axi_help
     printf '\nheld (captain- or time-gated; an in-flight item that is also held appears in both groups):\n'
-    printf '%s\n' "$held" | fm_hold_reason_decode_stream | strip_axi_help
+    printf '%s\n' "$held" | fm_hold_reason_decode_stream | strip_axi_help | compact_backlog_rows
     printf '\nblocked queued:\n'
-    printf '%s\n' "$blocked" | fm_hold_reason_decode_stream | strip_axi_help
+    printf '%s\n' "$blocked" | fm_hold_reason_decode_stream | strip_axi_help | compact_backlog_rows
     printf '\nready queued (dispatchable now):\n'
-    print_ready_queued_bounded "$ready"
+    printf '%s\n' "$ready" | strip_axi_help | compact_backlog_rows
     return 0
   fi
   printf 'tasks-axi compact listing failed; falling back to title-line rendering.\n'
@@ -903,21 +966,25 @@ fi
 stage read-once
 section "READ-ONCE CONTRACT"
 cat <<'EOF'
-Everything below is printed in full for this session start: every state/*.meta,
-a compact data/backlog.md listing, a bounded tail of every state/*.status,
-data/projects.md, data/secondmates.md, data/captain.md, data/captain-shared.md,
-and data/learnings.md.
+Everything below is printed for this session start: every state/*.meta, a
+compact data/backlog.md listing (in-flight rows in full, every held, blocked,
+and ready row as one capped line), a bounded tail of every state/*.status, and
+data/projects.md and data/secondmates.md in full.
 Do NOT re-read any of them after reading this digest, and do NOT bulk-read
 data/backlog.md or state/*.status: re-reading everything defeats the entire
 point of this command.
+data/captain.md, data/captain-shared.md, and data/learnings.md are the
+exception: they are NOT printed, and each appears as one pointer line with its
+size, its read command, and when that read is owed.
 
 Go to a source directly only when:
+  - a pointer line below names it and its stated read is owed (read each once),
   - this digest flagged it ABSENT (then rebuild or create it per AGENTS.md),
   - its contents looked unparseable or corrupt,
   - an individual full status log is needed for older wake-event history, or a
     status line was capped and its tail matters (each task's full log path is
     printed with its tail),
-  - a full task body is needed (bin/fm-tasks-axi.sh show <id> --full, or data/backlog.md),
+  - a full task body or a capped hold reason is needed (bin/fm-tasks-axi.sh show <id> --full, or data/backlog.md),
   - the backlog listing disclosed omitted queued items and this turn needs them,
   - the NETWORK CHECKS section reported its checks still IN PROGRESS and this
     turn needs their verdict (bin/fm-startup-network.sh report),
@@ -1085,9 +1152,11 @@ stage context
 section "CONTEXT"
 print_file_or_absent "$DATA/projects.md" "data/projects.md"
 print_file_or_absent "$DATA/secondmates.md" "data/secondmates.md"
-print_file_or_absent "$DATA/captain.md" "data/captain.md"
-print_file_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)"
-print_file_or_absent "$DATA/learnings.md" "data/learnings.md"
+CAPTAIN_PREFERENCES_WHEN="Holds the captain's working preferences. Read it once before the first reply, brief, or decision it could change."
+print_file_pointer_or_absent "$DATA/captain.md" "data/captain.md" "$CAPTAIN_PREFERENCES_WHEN"
+print_file_pointer_or_absent "$DATA/captain-shared.md" "data/captain-shared.md (shared, main-authoritative, read-only in secondmate homes)" "$CAPTAIN_PREFERENCES_WHEN"
+print_file_pointer_or_absent "$DATA/learnings.md" "data/learnings.md" \
+  "Holds fleet-local operational facts. Read it once before the first spawn, recovery, or merge of this session."
 
 # --- 9. closing reminder -----------------------------------------------
 stage next-step

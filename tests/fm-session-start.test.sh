@@ -36,6 +36,11 @@ set -u
 # shellcheck source=tests/wake-helpers.sh
 . "$(dirname "${BASH_SOURCE[0]}")/wake-helpers.sh"
 
+# A suite run from inside a live session start inherits its stage-file marker, which
+# makes every fixture session start believe the bounding wrapper already exists, so
+# none is applied and the runtime-bound case waits on its hung fake git indefinitely.
+unset FM_SESSION_START_STAGE_FILE
+
 SESSION_START="$ROOT/bin/fm-session-start.sh"
 BASE_PATH=${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}
 TMP_ROOT=$(fm_test_tmproot fm-session-start-tests)
@@ -113,7 +118,8 @@ SH
 # queued, and the dispatchable ready set) and REFUSES anything the recovery
 # listing must never ask for: a body field, an unfiltered whole-backlog listing,
 # or done rows. FM_FAKE_TASKS_AXI_READY sizes the ready set so the queued bound
-# can be driven past its limit.
+# can be driven past its limit, and FM_FAKE_TASKS_AXI_HELD_COUNT and
+# FM_FAKE_TASKS_AXI_HELD_REASON size the held group and its hold reason.
 make_fake_tasks_axi_compact() {
   local fakebin=$1
   cat > "$fakebin/tasks-axi" <<'SH'
@@ -158,7 +164,7 @@ case "${1:-}" in
     printf 'ready[%s]{id,state,kind,repo,title}:\n' "$ready_count"
     i=1
     while [ "$i" -le "$ready_count" ]; do
-      printf '  ready-%s,queued,ship,firstmate,Ready item %s\n' "$i" "$i"
+      printf '  ready-%s,queued,ship,%s,Ready item %s\n' "$i" "${FM_FAKE_TASKS_AXI_WIDE_FIELD:-firstmate}" "$i"
       i=$((i + 1))
     done
     printf 'ready_public_followups: 0 delivery-ready obligations\n'
@@ -184,12 +190,20 @@ case "${1:-}" in
         printf '%s\n' '  compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending'
         ;;
       *'--state held'*)
-        task_header 1
-        printf '%s\n' '  held-queued,queued,ship,firstmate,Held queued work,none,captain,captain choice pending'
+        held_count=${FM_FAKE_TASKS_AXI_HELD_COUNT:-1}
+        task_header "$held_count"
+        printf '  held-queued,queued,ship,firstmate,Held queued work,%s,captain,%s\n' \
+          "${FM_FAKE_TASKS_AXI_WIDE_FIELD:-none}" "${FM_FAKE_TASKS_AXI_HELD_REASON:-captain choice pending}"
+        i=2
+        while [ "$i" -le "$held_count" ]; do
+          printf '  held-more-%s,queued,ship,firstmate,Held queued work %s,none,captain,%s\n' \
+            "$i" "$i" "${FM_FAKE_TASKS_AXI_HELD_REASON:-captain choice pending}"
+          i=$((i + 1))
+        done
         ;;
       *'--state queued'*'--blocked'*)
         task_header 1
-        printf '%s\n' '  blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"'
+        printf '  blocked-followup,queued,scout,firstmate,Follow compact startup,%s,"-","-"\n' "${FM_FAKE_TASKS_AXI_WIDE_FIELD:-compact-startup}"
         ;;
       *)
         printf '%s\n' 'startup recovery must not request an unfiltered whole-backlog listing' >&2
@@ -814,6 +828,118 @@ EOF
   pass "context digest distinguishes ABSENT, empty-but-present, and populated files"
 }
 
+# The hot tier keeps ABSENT and empty markers but never prints a populated
+# captain or learnings file: one pointer line names the size, the read command,
+# and when the read is owed, so the digest stays small as those files grow.
+test_context_digest_points_at_populated_files() {
+  local rec root home fakebin out bytes quoted file command result pointer trigger
+  rec=$(new_world "context pointers")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+
+  printf 'Captain body line one.\nCaptain body line two.\n' > "$home/data/captain.md"
+  printf 'Shared body line.\n' > "$home/data/captain-shared.md"
+  printf 'Learning body line.\n' > "$home/data/learnings.md"
+  bytes=$(wc -c < "$home/data/captain.md" | tr -d ' ')
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  printf -v quoted '%q' "$home/data/captain.md"
+  assert_contains "$out" "present, $bytes bytes, 2 lines - NOT printed here." "pointer lost its size or quoted path"
+  for file in captain.md captain-shared.md learnings.md; do
+    printf -v quoted '%q' "$home/data/$file"
+    assert_contains "$out" "Read it with: cat $quoted" "pointer lost its quoted path"
+    pointer=$(printf '%s\n' "$out" | grep '^present, ' | grep -F "$file")
+    case "$file" in
+      learnings.md) trigger='Read it once before the first spawn, recovery, or merge of this session.' ;;
+      *) trigger='Read it once before the first reply, brief, or decision it could change.' ;;
+    esac
+    assert_contains "$pointer" "$trigger" "memory read trigger is not on its pointer line"
+    command=$(printf '%s\n' "$out" | sed -n "s/^present, .*Read it with: //p" | grep -F "$file")
+    result=$(bash -c "$command")
+    [ "$result" = "$(cat "$home/data/$file")" ] || fail "pointer command read the wrong file"
+  done
+  assert_contains "$out" "Read it once before the first reply, brief, or decision it could change." \
+    "the captain pointer lost its read trigger"
+  assert_contains "$out" "Read it once before the first spawn, recovery, or merge of this session." \
+    "the learnings pointer lost its read trigger"
+  assert_not_contains "$out" "Captain body line one." "the digest printed the captain.md body"
+  assert_not_contains "$out" "Shared body line." "the digest printed the captain-shared.md body"
+  assert_not_contains "$out" "Learning body line." "the digest printed the learnings.md body"
+
+  pass "context digest points at populated captain and learnings files instead of printing them"
+}
+
+# The digest and AGENTS.md each have a fixed byte ceiling, so growth in either
+# fails here instead of silently taxing every session.
+# The digest ceiling is measured on a fixture whose cold-tier inputs are
+# deliberately huge: long hold reasons, a large dispatchable queue, and oversized
+# captain, shared, and learnings files. Only the hot tier may count against it.
+# Raising a ceiling is a deliberate edit of the constant below, reviewed as such.
+AGENTS_MD_BYTE_CAP=40000
+SESSION_START_DIGEST_BYTE_CAP=24000
+
+# assert_within_byte_cap <label> <actual-bytes> <cap-bytes>
+assert_within_byte_cap() {
+  local label=$1 actual=$2 cap=$3
+  [ "$actual" -le "$cap" ] \
+    || fail "$label is $actual bytes, over its $cap byte cap by $((actual - cap)): shrink it or raise the cap on purpose"
+}
+
+# expect_over_cap_refused <label> <actual-bytes> <cap-bytes>: the red proof. The
+# same check, given a cap below the real size, must refuse.
+expect_over_cap_refused() {
+  local label=$1 actual=$2 cap=$3 status=0
+  (assert_within_byte_cap "$label" "$actual" "$cap") >/dev/null 2>&1 || status=$?
+  [ "$status" -ne 0 ] || fail "the byte-cap check accepted $label at $actual bytes against a $cap byte cap"
+}
+
+test_agents_md_stays_under_its_byte_cap() {
+  local bytes
+  bytes=$(wc -c < "$ROOT/AGENTS.md" | tr -d ' ')
+  assert_within_byte_cap "AGENTS.md" "$bytes" "$AGENTS_MD_BYTE_CAP"
+  expect_over_cap_refused "AGENTS.md" "$bytes" $((bytes - 1))
+
+  pass "AGENTS.md stays under its $AGENTS_MD_BYTE_CAP byte cap and the cap check refuses an over-cap file"
+}
+
+test_session_start_digest_stays_under_its_byte_cap() {
+  local rec root home fakebin out bytes filler i
+  rec=$(new_world digest-byte-cap)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_tasks_axi_compact "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  write_long_body_backlog "$home/data/backlog.md"
+  filler=$(printf 'cold-tier-filler-line %.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20)
+  : > "$home/data/captain.md"
+  : > "$home/data/captain-shared.md"
+  : > "$home/data/learnings.md"
+  i=0
+  while [ "$i" -lt 150 ]; do
+    printf '%s %s\n' "$filler" "$i" | tee -a "$home/data/captain.md" "$home/data/captain-shared.md" >> "$home/data/learnings.md"
+    i=$((i + 1))
+  done
+
+  out=$(FM_FAKE_TASKS_AXI_HELD_COUNT=40 FM_FAKE_TASKS_AXI_READY=90 \
+    FM_FAKE_TASKS_AXI_HELD_REASON="\"$filler $filler $filler\"" \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  bytes=$(printf '%s\n' "$out" | wc -c | tr -d ' ')
+
+  assert_within_byte_cap "the session-start digest" "$bytes" "$SESSION_START_DIGEST_BYTE_CAP"
+  assert_not_contains "$out" "cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line cold-tier-filler-line" \
+    "the byte-cap fixture printed a cold-tier body or an uncapped hold reason"
+  assert_contains "$out" "held-more-40," "the byte-cap fixture lost a held row"
+  expect_over_cap_refused "the session-start digest" "$bytes" $((bytes - 1))
+
+  pass "the session-start digest stays under its $SESSION_START_DIGEST_BYTE_CAP byte cap with oversized cold-tier inputs"
+}
+
 # --- lock refusal: read-only path --------------------------------------------
 
 test_lock_refusal_read_only_path() {
@@ -1061,8 +1187,10 @@ EOF
   # ahead of the curated memory a truncated tail is allowed to take.
   [ "$inventory_line" -lt "$context_line" ] \
     || fail "the live-task inventory was buried behind the curated memory files"
-  assert_contains "$out" "Captain memory that may be truncated away safely." \
-    "the ordering fixture did not actually print a memory file"
+  assert_contains "$out" "Read it with: cat $home/data/captain.md" \
+    "the ordering fixture did not actually print a memory pointer"
+  assert_not_contains "$out" "Captain memory that may be truncated away safely." \
+    "the digest printed the captain memory body instead of its pointer line"
 
   missing_line=$(printf '%s\n' "$out" | grep -n 'MISSING: node' | head -1 | cut -d: -f1)
   [ -n "$missing_line" ] || fail "MISSING diagnostic did not appear at all"
@@ -2071,17 +2199,19 @@ EOF
   out=$(FM_FAKE_TASKS_AXI_LOG="$log" FM_FAKE_TASKS_AXI_READY=3 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; every in-flight, held, and blocked row shown in full; ready queued bounded to 20; task bodies omitted)" \
+  assert_contains "$out" "compact backlog listing (tasks-axi; done rows omitted; every in-flight row shown in full; every held and blocked row kept as one line with a capped reason; every ready queued row kept, one capped line each; task bodies omitted; full text: bin/fm-tasks-axi.sh show <id> --full)" \
     "compatible tasks-axi backend did not render the compact backlog listing"
   assert_contains "$out" "tasks[1]{id,state,kind,repo,title,blocked_by,hold_kind,hold_reason}:" \
     "tasks-axi compact listing omitted the expected structured field header"
   assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
     "tasks-axi compact listing omitted in-flight identity, state, or hold metadata"
-  assert_contains "$out" "held-queued,queued,ship,firstmate,Held queued work,none,captain,captain choice pending" \
+  assert_contains "$out" "held-queued,Held queued work,none,captain,captain choice pending" \
     "tasks-axi compact listing omitted a held row or its hold metadata"
-  assert_contains "$out" 'blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"' \
+  assert_contains "$out" 'blocked-followup,Follow compact startup,compact-startup,-,"-"' \
     "tasks-axi compact listing omitted blocked-by metadata"
-  assert_contains "$out" "ready-3,queued,ship,firstmate,Ready item 3" \
+  assert_not_contains "$out" "held-queued,queued,ship,firstmate,Held queued work" \
+    "the held row still carried its state, kind, repo, and title columns"
+  assert_contains "$out" "ready-3,firstmate,Ready item 3" \
     "tasks-axi compact listing omitted a dispatchable queued row inside the bound"
   assert_not_contains "$out" "OVERSIZED-BODY-LINE" "tasks-axi compact digest leaked an in-flight task body"
   assert_not_contains "$out" "QUEUED-BODY-LINE" "tasks-axi compact digest leaked a queued task body"
@@ -2101,9 +2231,9 @@ EOF
   # filters the listing is built from.
   assert_grep "--state in_flight --fields blocked_by,hold_kind,hold_reason" "$log" \
     "session start did not ask tasks-axi for the in-flight group"
-  assert_grep "--state held --fields blocked_by,hold_kind,hold_reason" "$log" \
+  assert_grep "--state held --fields blocked_by,hold_kind,hold_reason,hold_until" "$log" \
     "session start did not ask tasks-axi for the held group"
-  assert_grep "--state queued --blocked --fields blocked_by,hold_kind,hold_reason" "$log" \
+  assert_grep "--state queued --blocked --fields blocked_by,hold_kind,hold_reason,hold_until" "$log" \
     "session start did not ask tasks-axi for the blocked queued group"
   assert_grep "ready --file $home/data/backlog.md" "$log" \
     "session start did not ask tasks-axi for the dispatchable queued set"
@@ -2111,9 +2241,8 @@ EOF
   pass "compatible tasks-axi backlog rendering drops done rows and keeps every in-flight, held, and blocked row"
 }
 
-# The bound may only ever cut the dispatchable-now listing, and whatever it cuts
-# must be disclosed with an exact count and the command that shows the rest.
-test_backlog_queued_bound_discloses_its_remainder() {
+# Every dispatchable row remains visible even with a legacy limit configured.
+test_backlog_ready_rows_are_not_dropped() {
   local rec root home fakebin out
   rec=$(new_world backlog-queued-bound)
   IFS='|' read -r root home fakebin <<EOF
@@ -2124,30 +2253,69 @@ EOF
   make_fake_ps_claude "$fakebin"
   write_long_body_backlog "$home/data/backlog.md"
 
-  out=$(FM_FAKE_TASKS_AXI_READY=7 FM_SESSION_START_QUEUED_LIMIT=3 \
+  out=$(FM_FAKE_TASKS_AXI_READY=25 FM_SESSION_START_QUEUED_LIMIT=3 \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "ready-3,queued,ship,firstmate,Ready item 3" \
+  assert_contains "$out" "ready-3,firstmate,Ready item 3" \
     "the queued bound dropped a row inside its own limit"
-  assert_not_contains "$out" "ready-4,queued" "the queued bound did not actually bound the ready listing"
-  assert_contains "$out" "(shown 3 of 7 ready queued item(s))" \
-    "the bounded queued listing did not report what it showed"
-  assert_contains "$out" "(4 more queued - bin/fm-tasks-axi.sh ready)" \
-    "the bounded queued listing did not disclose an exact remainder and how to see it"
+  assert_contains "$out" "ready-25,firstmate,Ready item 25" "a ready row was dropped"
 
   # The bound is for dispatchable work only: held and blocked rows stay whole.
-  assert_contains "$out" "held-queued,queued,ship,firstmate,Held queued work,none,captain,captain choice pending" \
+  assert_contains "$out" "held-queued,Held queued work,none,captain,captain choice pending" \
     "the queued bound swallowed a held row"
-  assert_contains "$out" 'blocked-followup,queued,scout,firstmate,Follow compact startup,compact-startup,"-","-"' \
+  assert_contains "$out" 'blocked-followup,Follow compact startup,compact-startup,-,"-"' \
     "the queued bound swallowed a blocked row"
   assert_contains "$out" "compact-startup,in_flight,ship,firstmate,Compact startup digest,none,captain,captain choice pending" \
     "the queued bound swallowed an in-flight row"
 
-  pass "the startup backlog bound cuts only dispatchable queued rows and discloses the remainder exactly"
+  pass "the startup backlog keeps every dispatchable queued row"
+}
+
+# A held or blocked row is one capped line in the digest: the reason is cut at a
+# fixed width with a visible marker, the row itself is never dropped, and the
+# full text stays one command away.
+test_backlog_held_rows_are_one_capped_line() {
+  local rec root home fakebin out long_reason row
+  rec=$(new_world backlog-held-capped)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_tasks_axi_compact "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  write_long_body_backlog "$home/data/backlog.md"
+  long_reason='"Captain asked for a long wait, with commas, and a very long explanation that keeps going well past the width the digest allows for one hold reason: TAIL-OF-LONG-REASON"'
+
+  out=$(FM_FAKE_TASKS_AXI_HELD_REASON="$long_reason" FM_FAKE_TASKS_AXI_READY=2 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+
+  row=$(printf '%s\n' "$out" | grep '^  held-queued,')
+  [ -n "$row" ] || fail "the capped held row was dropped from the digest: $out"
+  [ "$(printf '%s\n' "$row" | wc -l | tr -d ' ')" -eq 1 ] || fail "the held row spans more than one line: $row"
+  case "$row" in
+    *' [truncated]"') ;;
+    *) fail "the capped hold reason did not end with the truncation marker: $row" ;;
+  esac
+  assert_contains "$row" "Captain asked for a long wait, with commas" "the capped hold reason lost its leading words"
+  assert_not_contains "$out" "TAIL-OF-LONG-REASON" "the digest printed the tail of a hold reason past its cap"
+  [ "${#row}" -le 200 ] || fail "the capped held row is still ${#row} characters wide: $row"
+
+  local wide id
+  wide=$(printf '%0500d' 0)
+  out=$(FM_FAKE_TASKS_AXI_WIDE_FIELD="$wide" FM_FAKE_TASKS_AXI_READY=2 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  for id in held-queued blocked-followup ready-1 ready-2; do
+    row=$(printf '%s\n' "$out" | grep "^  $id,")
+    [ -n "$row" ] && [ "${#row}" -le 220 ] || fail "$id missing or uncapped: $row"
+    assert_contains "$row" ' [truncated]' "$id lacks a truncation marker"
+  done
+  assert_contains "$out" 'bin/fm-tasks-axi.sh show <id> --full' "wide rows lost their full-read pointer"
+
+  pass "held and blocked backlog rows are one capped line with a visible truncation marker"
 }
 
 test_backlog_compact_manual_backend_skips_indented_bodies() {
-  local rec root home fakebin out
+  local rec root home fakebin out row id
   rec=$(new_world backlog-compact-manual)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -2157,9 +2325,11 @@ EOF
   printf '%s\n' manual > "$home/config/backlog-backend"
   write_long_body_backlog "$home/data/backlog.md"
 
+  printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0500d' 0)" >> "$home/data/backlog.md"
+  printf -- '\n## In flight\n-\t[ ] long-active - %s ACTIVE-METADATA\n* [ ] long-gated - Held (hold: %s)\n## Queued\n-\t[ ] tab-ready - %s\n*\t[ ] star-ready - %s\n' "$(printf '%0300d' 0)" "$(printf '%0500d' 0)" "$(printf '%0300d' 0)" "$(printf '%0300d' 0)" >> "$home/data/backlog.md"
   out=$(FM_SESSION_START_QUEUED_LIMIT=4 run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
-  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; other queued bounded to 4; indented task bodies omitted)" \
+  assert_contains "$out" "compact backlog listing (manual backend; done rows omitted; every in-flight, held, and blocked title line kept; every queued title line kept and capped; indented task bodies omitted)" \
     "manual backend did not use compact title-line rendering"
   assert_contains "$out" "## In flight" "manual compact rendering omitted the in-flight section heading"
   assert_contains "$out" "- [ ] compact-startup - Compact startup digest" \
@@ -2176,19 +2346,26 @@ EOF
   assert_not_contains "$out" "## Done" "manual compact digest printed the done heading it never fills"
   assert_contains "$out" "- [ ] plain-4 - Plain queued item 4" \
     "manual compact rendering dropped a queued title line inside its bound"
-  assert_not_contains "$out" "- [ ] plain-5 - Plain queued item 5" \
-    "manual compact rendering did not bound its plain queued listing"
-  assert_contains "$out" "(shown 1 in-flight, 2 held or blocked queued, 4 of 25 other queued title line(s); 1 done row(s) omitted)" \
-    "manual compact rendering did not report its bound accounting"
-  assert_contains "$out" "(21 more queued - raise FM_SESSION_START_QUEUED_LIMIT or read data/backlog.md for the rest)" \
-    "manual compact rendering did not disclose an exact queued remainder"
+  assert_contains "$out" "- [ ] plain-25 - Plain queued item 25" "manual rendering dropped a ready row"
   assert_contains "$out" "or data/backlog.md" "manual compact digest omitted the data/backlog.md full-body pointer"
 
-  pass "manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest"
+  row=$(printf '%s\n' "$out" | grep '^[-] \[ \] long-held')
+  [ -n "$row" ] && [ "${#row}" -le 360 ] || fail "manual held row missing or uncapped"
+  assert_contains "$row" '[truncated]' "manual held row omitted its truncation marker"
+  assert_contains "$out" 'plain-25 - Plain queued item 25' "manual ready row dropped"
+  assert_contains "$out" 'ACTIVE-METADATA' "ordinary in-flight row lost trailing metadata"
+  for id in tab-ready star-ready long-gated; do
+    row=$(printf '%s\n' "$out" | grep "\[ \] $id -")
+    cap=220
+    [ "$id" != long-gated ] || cap=360
+    [ -n "$row" ] && [ "${#row}" -le "$cap" ] || fail "$id missing or uncapped"
+    assert_contains "$row" '[truncated]' "$id omitted its truncation marker"
+  done
+  pass "manual backlog rendering keeps and caps every queued title line"
 }
 
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback() {
-  local rec root home fakebin out
+  local rec root home fakebin out row
   rec=$(new_world backlog-compact-unavailable)
   IFS='|' read -r root home fakebin <<EOF
 $rec
@@ -2197,6 +2374,7 @@ EOF
   make_fake_ps_claude "$fakebin"
   write_long_body_backlog "$home/data/backlog.md"
 
+  printf -- '\n## Queued\n- [ ] long-held - Held (hold: %s) (hold-kind: captain)\n' "$(printf '%0500d' 0)" >> "$home/data/backlog.md"
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "compact backlog listing (tasks-axi unavailable or incompatible; done rows omitted;" \
@@ -2206,6 +2384,10 @@ EOF
   assert_not_contains "$out" "OVERSIZED-BODY-LINE" "unavailable tasks-axi fallback leaked an in-flight task body"
   assert_not_contains "$out" "DONE-ROW-LINE" "unavailable tasks-axi fallback listed a done row at startup"
 
+  row=$(printf '%s\n' "$out" | grep '^[-] \[ \] long-held')
+  [ -n "$row" ] && [ "${#row}" -le 360 ] || fail "manual held row missing or uncapped"
+  assert_contains "$row" '[truncated]' "manual held row omitted its truncation marker"
+  assert_contains "$out" 'plain-25 - Plain queued item 25' "manual ready row dropped"
   pass "unavailable or incompatible tasks-axi falls back to compact manual backlog rendering"
 }
 
@@ -3092,6 +3274,9 @@ EOF
 
 test_local_commit_warnings
 test_context_digest_absent_empty_present
+test_context_digest_points_at_populated_files
+test_agents_md_stays_under_its_byte_cap
+test_session_start_digest_stays_under_its_byte_cap
 test_lock_refusal_read_only_path
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock
@@ -3126,7 +3311,8 @@ test_branch_outcome_replay_respects_captain_barrier_and_lease_sweep
 test_non_pi_session_start_leaves_branch_state_untouched
 test_session_start_seeds_the_outcome_display_tail_while_away
 test_backlog_compact_tasks_axi_omits_bodies_and_keeps_metadata
-test_backlog_queued_bound_discloses_its_remainder
+test_backlog_ready_rows_are_not_dropped
+test_backlog_held_rows_are_one_capped_line
 test_backlog_compact_manual_backend_skips_indented_bodies
 test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_fleet_digest_empty_fleet
