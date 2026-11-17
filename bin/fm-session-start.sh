@@ -796,11 +796,23 @@ printf '%s\n' "$LOCK_OUT"
 READ_ONLY=0
 if [ "$LOCK_RC" -ne 0 ]; then
   READ_ONLY=1
+  # A refusal that names a live holder may be stale by the time it is read: the
+  # holder can exit between fm-lock.sh's check and this digest. Say so plainly
+  # with the exact reclaim command; reclaiming stays the operator's call.
+  STALE_HOLDER=$(printf '%s\n' "$LOCK_OUT" | sed -n 's/.*another live firstmate session holds the lock (pid \([0-9][0-9]*\)[,)].*/\1/p' | head -1)
+  if [ -n "$STALE_HOLDER" ] && fm_harness_pid_alive "$STALE_HOLDER"; then
+    STALE_HOLDER=
+  fi
   BAR='●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   {
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - FLEET LOCK OWNERSHIP WAS NOT VERIFIED\n'
     printf '●  %s\n' "$LOCK_OUT"
+    if [ -n "$STALE_HOLDER" ]; then
+      printf '●  STALE LOCK: the recorded holder (pid %s) is no longer running, so this refusal is out of date.\n' "$STALE_HOLDER"
+      printf '●  To reclaim the lock, run: FM_HOME=%q %q\n' "$FM_HOME" "$SCRIPT_DIR/fm-lock.sh"
+      printf '●  Then rerun bin/fm-session-start.sh. Firstmate never reclaims it for you.\n'
+    fi
     printf '●  Skipping every mutating step: stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'
     printf '●  X-mode artifacts, fleet sync, and wake-queue drain. Detect-only bootstrap\n'
