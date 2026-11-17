@@ -38,6 +38,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | [`fm-scope-map-lib.sh`](../bin/fm-scope-map-lib.sh) | Own the scope-map contract: a ship brief's numbered and bulleted items must each map to a branch commit or changed file before its `done:` is accepted |
 | `fm-scope-map.sh`        | List a brief's scope items and check a worker's scope map; the commands the brief's Scope map section hands the worker |
 | `fm-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `fm-dispatch-resolve.sh` |
+| `fm-brief-labels-lib.sh` | Single owner of the `Review tier:` and `Type:` values a brief may carry, shared by `fm-pr-merge.sh`'s merge gates and `fm-spawn.sh`'s brief check |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-herdr-lab-viewer.py` | The pty engine behind `fm-herdr-lab.sh viewer`: one real foreground Herdr client on a non-zero window grid |
 | `fm-lab-home.sh`         | Create and tear down disposable lab homes; see its header for socket safety       |

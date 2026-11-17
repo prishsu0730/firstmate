@@ -60,7 +60,7 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=${content//'{BLAST_RADIUS}'/'LOCAL; only the named task files; targeted screen check.'}
   content=${content//'{RISK_TIERS}'/'Code review Low and execution Low; isolated, reversible, and evidenced.'}
   content=${content//'{TYPE}'/feature}
-  content=${content//'{REVIEW_TIER}'/'No Greptile; no-mistakes only.'}
+  content=${content//'{REVIEW_TIER}'/'LOW'}
   printf '%s\n' "$content" > "$file"
 }
 
@@ -101,6 +101,67 @@ unknown yolo|--mode no-mistakes --yolo maybe|--yolo must be on or off
 conditional policy as a task mode|--mode no-mistakes-prod-only --yolo off|classify this task's surface
 ROWS
   pass "fm-spawn: a ship spawn requires a valid explicit mode and yolo before anything is created"
+}
+
+# A brief's Review tier and Type must be values bin/fm-pr-merge.sh accepts, so a
+# bad label stops the spawn when the brief is handed over and not at merge time.
+test_spawn_refuses_review_tier_and_type_the_merge_would_refuse() {
+  local rec home proj fakebin out status id n=0 tier type
+  rec=$(make_home labels)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  new_labelled_brief() {  # <id> <tier-line-value> <type-line-value>
+    FM_HOME="$home" "$BRIEF" "$1" proj --mode direct-PR >/dev/null 2>&1 \
+      || fail "labelled brief should scaffold"
+    fill_brief_subsections "$home/data/$1/brief.md" \
+      "Exercise the label check." "Only the Review tier and Type values differ."
+    sed -e "s|^Review tier: .*|Review tier: $2|" -e "s|^Type: .*|Type: $3|" \
+      "$home/data/$1/brief.md" > "$home/data/$1/brief.labelled"
+    mv "$home/data/$1/brief.labelled" "$home/data/$1/brief.md"
+  }
+
+  id=labels-bad-tier
+  new_labelled_brief "$id" "Light" "feature"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a Review tier the merge refuses was accepted by the spawn"
+  assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light')" \
+    "the bad Review tier was not named"
+  assert_contains "$out" "LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)" \
+    "the refusal did not list the accepted Review tier values"
+  assert_absent "$home/state/$id.meta" "a spawn refused for its Review tier wrote task metadata"
+
+  id=labels-bad-type
+  new_labelled_brief "$id" "LOW" "content"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a Type the merge refuses was accepted by the spawn"
+  assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse at merge (read 'content')" \
+    "the bad Type was not named"
+  assert_contains "$out" "'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor" \
+    "the refusal did not list the accepted Type values"
+  assert_absent "$home/state/$id.meta" "a spawn refused for its Type wrote task metadata"
+
+  id=labels-both-bad
+  new_labelled_brief "$id" "Light" "content"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" "a brief with two bad labels hid its Review tier"
+  assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" "a brief with two bad labels hid its Type"
+
+  # Every value the merge accepts must pass the spawn's check.
+  for tier in "LOW" "No Greptile" "MEDIUM (Base)" "base" "HIGH (Plus)" "Plus" "CRITICAL (Apex)" "apex" \
+    "MEDIUM (Base) (No Greptile / Base / Plus / Apex)"; do
+    for type in "bug fix" "bug-fix" "Feature" "docs" "refactor"; do
+      n=$((n + 1))
+      id="labels-ok-$n"
+      new_labelled_brief "$id" "$tier" "$type"
+      out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+      assert_not_contains "$out" "would refuse at merge" \
+        "Review tier '$tier' with Type '$type' was refused by the spawn though the merge accepts it"
+    done
+  done
+  pass "fm-spawn: a Review tier or Type the merge would refuse stops the spawn, and every accepted value passes"
 }
 
 # A scout has no merge to govern and a secondmate's posture is fixed, so the flags
@@ -1659,6 +1720,7 @@ EOF
 }
 
 test_ship_spawn_requires_a_valid_delivery_contract
+test_spawn_refuses_review_tier_and_type_the_merge_would_refuse
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_notices_a_rigor_downgrade_against_the_registry
