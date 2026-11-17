@@ -1,0 +1,4 @@
+ok - a lock refusal prints a loud read-only banner, skips every mutating step, and still completes the digest
+ok - a lock refusal whose holder is already dead says so and prints the exact reclaim command without reclaiming
+focused-done
+rc=

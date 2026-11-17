@@ -1,0 +1,8 @@
+== tier='Light' type='content'
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/tmp.5z3GiohW0y/brief-25842.md has a Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light'); set the 'Review tier:' line under '## Risk and review' to one of LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/tmp.5z3GiohW0y/brief-25842.md has a Type that bin/fm-pr-merge.sh would refuse at merge (read 'content'); set the 'Type:' line under '## Risk and review' to 'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor
+rc=1
+== tier='MEDIUM (Base)' type='bug fix'
+rc=0
+== tier='HIGH' type='feature'
+rc=0
