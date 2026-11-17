@@ -23,6 +23,9 @@
 #   `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{TYPE}` / `{REVIEW_TIER}`
 #   placeholders, an empty Task, an incomplete pair of Task subsections, or a
 #   `## Captain's intent` line opening with a Captain label or address.
+#   A fresh ship spawn also refuses a `Review tier:` or `Type:` value under
+#   `## Risk and review` that bin/fm-pr-merge.sh would refuse at merge, naming
+#   the accepted values; bin/fm-brief-labels-lib.sh owns them.
 #   Every ship or scout spawn renders `launch-brief.md`; for a no-mistakes ship
 #   it also carries the current `--intent` contract and the extracted captain
 #   intent. A legacy mixed Task is accepted there only under bin/fm-dod-lib.sh's
@@ -700,6 +703,8 @@ fm_backlog_directory_present "$STATE" "state directory" || {
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-dod-lib.sh
 . "$SCRIPT_DIR/fm-dod-lib.sh"
+# shellcheck source=bin/fm-brief-labels-lib.sh
+. "$SCRIPT_DIR/fm-brief-labels-lib.sh"
 # shellcheck source=bin/fm-trace-context-lib.sh
 . "$SCRIPT_DIR/fm-trace-context-lib.sh"
 # shellcheck source=bin/fm-remote-readiness-lib.sh
@@ -3264,6 +3269,12 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   fi
   if ! fm_brief_task_content_valid "$BRIEF"; then
     echo "error: $BRIEF must contain nonempty ## Captain's intent and ## Firstmate spec subsections (or a nonempty legacy # Task body) before spawn" >&2
+    exit 1
+  fi
+  # A fresh ship's Review tier and Type must be values bin/fm-pr-merge.sh
+  # accepts (bin/fm-brief-labels-lib.sh owns them), so a bad label is refused
+  # here and not at merge. A relaunch keeps the brief its task started with.
+  if [ "$KIND" = ship ] && [ "$RELAUNCH" -eq 0 ] && ! fm_brief_labels_check "$BRIEF"; then
     exit 1
   fi
   if ADDRESS_LINE=$(fm_brief_intent_address_line "$BRIEF"); then
