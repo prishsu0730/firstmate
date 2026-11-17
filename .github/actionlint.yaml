@@ -1,0 +1,4 @@
+# Custom label of the self-hosted Mac runner that runs Firstmate CI.
+self-hosted-runner:
+  labels:
+    - firstmate

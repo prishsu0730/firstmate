@@ -44,7 +44,7 @@ concurrency:
 jobs:
   plan:
     name: Plan test lanes
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Fast tier: the plan is a few git and runner listings.
     timeout-minutes: 5
     outputs:
@@ -71,7 +71,7 @@ jobs:
 
   lint:
     name: Lint ${{ matrix.partition }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     strategy:
@@ -98,9 +98,9 @@ jobs:
       # fails locally before merge.
       - name: Lint selected files or canonical partition
         env:
-          # Fail closed rather than lint uncapped when a configured per-root
-          # bound (wall deadline or memory rlimit) cannot be enforced here.
-          FM_LINT_REQUIRE_BOUNDS: '1'
+          # macOS cannot apply the per-root address-space limit (ulimit -v is
+          # rejected), so bounds are not required on this runner; the job
+          # timeout is the hang tripwire.
           FM_LINT_JOBS: '1'
           EVENT: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref || 'main' }}
@@ -150,7 +150,7 @@ jobs:
   # and that the portable serial CI shards partition that serial lane exactly.
   test-coverage:
     name: Test coverage guard
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Fast tier: the coverage guard is a seconds-long local computation.
     timeout-minutes: 5
     steps:
@@ -164,7 +164,7 @@ jobs:
     name: Behavior portable parallel 1
     needs: plan
     if: fromJSON(needs.plan.outputs.lanes)['portable-parallel-1'] != ''
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -184,6 +184,12 @@ jobs:
       - name: Install tasks-axi
         run: |
           set -eu
+          # Self-hosted runner: use a per-job npm prefix so the host's own
+          # global npm packages are never replaced or downgraded.
+          export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
           npm install -g tasks-axi
           tasks-axi --version
       - name: Install the Pi package for the Pi extension tests
@@ -215,7 +221,7 @@ jobs:
     name: Behavior portable parallel 2
     needs: plan
     if: fromJSON(needs.plan.outputs.lanes)['portable-parallel-2'] != ''
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -235,6 +241,12 @@ jobs:
       - name: Install tasks-axi
         run: |
           set -eu
+          # Self-hosted runner: use a per-job npm prefix so the host's own
+          # global npm packages are never replaced or downgraded.
+          export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
           npm install -g tasks-axi
           tasks-axi --version
       - name: Run portable parallel shard 2
@@ -263,7 +275,7 @@ jobs:
   tests-portable-serial:
     name: Behavior portable serial ${{ matrix.shard }}
     needs: plan
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     strategy:
@@ -311,6 +323,12 @@ jobs:
         if: env.LANE_ARGS != ''
         run: |
           set -eu
+          # Self-hosted runner: use a per-job npm prefix so the host's own
+          # global npm packages are never replaced or downgraded.
+          export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
+          PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
           npm install -g tasks-axi
           tasks-axi --version
       # The Pi extension tests read the installed Pi package's own types and
@@ -344,15 +362,16 @@ jobs:
           if-no-files-found: warn
 
   # Required real-Herdr lane: pinned install, serial real-herdr-gated family,
-  # hard-fail on "skip: herdr not found". Starts on Linux x86_64; if a genuine
-  # platform invariant fails (focus, cleanup, default-session tripwire), keep
-  # the failure evidence and move the job to macOS rather than skip assertions.
+  # hard-fail on "skip: herdr not found". Runs on the self-hosted macOS arm64
+  # runner; if a genuine platform invariant fails (focus, cleanup,
+  # default-session tripwire), keep the failure evidence rather than skip
+  # assertions.
   tests-herdr:
     name: Behavior tests (Herdr)
     needs: plan
     # Skipped (a successful check) when the plan has no Herdr test to run.
     if: fromJSON(needs.plan.outputs.lanes)['real-herdr-gated'] != ''
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Heavy tier (see the timeout policy above): the last-resort job backstop.
     # The family-run step below owns the hang tripwire, so a wedged suite fails
     # there with the always() cleanup and timing upload still running.
@@ -477,7 +496,7 @@ jobs:
   # Aggregate per-lane timing into one summary artifact for critical-path review.
   tests-timing-aggregate:
     name: Behavior timing aggregate
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Fast tier: aggregation is seconds of work over lane artifacts.
     timeout-minutes: 5
     needs:
@@ -521,10 +540,10 @@ jobs:
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
     needs: plan
-    # macOS minutes cost about ten times a Linux minute, so this runs only when
-    # the planner selects parsing or a stock-Bash suite (see its header).
+    # Runs only when the planner selects parsing or a stock-Bash suite (see its
+    # header). Every job now runs on the self-hosted Mac runner.
     if: needs.plan.outputs.macos == 'true'
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
     steps:
@@ -556,6 +575,10 @@ jobs:
         run: |
           set -eu
           command -v npm >/dev/null || { echo "::error::npm is required to install tasks-axi"; exit 1; }
+          # Self-hosted runner: use a per-job npm prefix so the host's own
+          # global npm packages are never replaced or downgraded.
+          export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
           npm install -g tasks-axi@0.2.6 >/dev/null
           PATH="$(npm prefix -g)/bin:$PATH"
           echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
@@ -653,7 +676,7 @@ jobs:
 
   invariants:
     name: Repo invariants
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, macOS, ARM64, firstmate]
     # Fast tier: the invariant checks are seconds-long file comparisons.
     timeout-minutes: 5
     steps:
