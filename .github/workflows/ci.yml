@@ -185,9 +185,11 @@ jobs:
         run: |
           set -eu
           # Self-hosted runner: use a per-job npm prefix so the host's own
-          # global npm packages are never replaced or downgraded.
+          # global npm packages and download cache are never touched.
           export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          export NPM_CONFIG_CACHE="$RUNNER_TEMP/npm-cache"
           echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "NPM_CONFIG_CACHE=$NPM_CONFIG_CACHE" >> "$GITHUB_ENV"
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
           PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
           npm install -g tasks-axi
@@ -195,6 +197,10 @@ jobs:
       - name: Install the Pi package for the Pi extension tests
         run: |
           set -eu
+          # The hosted images shipped tsc; this runner does not, and the Pi
+          # typecheck gate-skips (a failure here) without it.
+          npm install -g typescript
+          command -v tsc >/dev/null || { echo "::error::tsc is required"; exit 1; }
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable parallel shard 1
@@ -242,9 +248,11 @@ jobs:
         run: |
           set -eu
           # Self-hosted runner: use a per-job npm prefix so the host's own
-          # global npm packages are never replaced or downgraded.
+          # global npm packages and download cache are never touched.
           export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          export NPM_CONFIG_CACHE="$RUNNER_TEMP/npm-cache"
           echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "NPM_CONFIG_CACHE=$NPM_CONFIG_CACHE" >> "$GITHUB_ENV"
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
           PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
           npm install -g tasks-axi
@@ -324,9 +332,11 @@ jobs:
         run: |
           set -eu
           # Self-hosted runner: use a per-job npm prefix so the host's own
-          # global npm packages are never replaced or downgraded.
+          # global npm packages and download cache are never touched.
           export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          export NPM_CONFIG_CACHE="$RUNNER_TEMP/npm-cache"
           echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "NPM_CONFIG_CACHE=$NPM_CONFIG_CACHE" >> "$GITHUB_ENV"
           echo "$NPM_CONFIG_PREFIX/bin" >> "$GITHUB_PATH"
           PATH="$NPM_CONFIG_PREFIX/bin:$PATH"
           npm install -g tasks-axi
@@ -338,6 +348,10 @@ jobs:
         if: env.LANE_ARGS != ''
         run: |
           set -eu
+          # The hosted images shipped tsc; this runner does not, and the Pi
+          # typecheck gate-skips (a failure here) without it.
+          npm install -g typescript
+          command -v tsc >/dev/null || { echo "::error::tsc is required"; exit 1; }
           npm install -g @earendil-works/pi-coding-agent
           npm ls -g --depth 0 @earendil-works/pi-coding-agent
       - name: Run portable serial shard ${{ matrix.shard }}
@@ -347,7 +361,7 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          # The Pi package is installed above and CI provides npm and tsc, so
+          # The Pi package is installed above and the Pi steps install npm's tsc, so
           # any missing typecheck prerequisite is a broken lane, not a valid skip.
           read -r -a lane_args <<<"$LANE_ARGS"
           bin/fm-test-run.sh "${lane_args[@]}" \
@@ -471,6 +485,15 @@ jobs:
           bin/fm-test-run.sh "${lane_args[@]}" \
             --fail-on-gate-skip 'herdr not found' \
             --json "$RUNNER_TEMP/fm-test/fm-test-timing-herdr.json"
+      - name: Stop the job-owned default Herdr server
+        if: always()
+        run: |
+          # The runner is a persistent host: do not leave the server behind.
+          pidfile="$RUNNER_TEMP/fm-herdr/default-server.pid"
+          if [ -f "$pidfile" ]; then
+            pid=$(cat "$pidfile")
+            kill "$pid" 2>/dev/null || true
+          fi
       - name: Cleanup job-owned Herdr lab sessions
         id: cleanup-herdr-lab-sessions
         if: always()
@@ -576,9 +599,11 @@ jobs:
           set -eu
           command -v npm >/dev/null || { echo "::error::npm is required to install tasks-axi"; exit 1; }
           # Self-hosted runner: use a per-job npm prefix so the host's own
-          # global npm packages are never replaced or downgraded.
+          # global npm packages and download cache are never touched.
           export NPM_CONFIG_PREFIX="$RUNNER_TEMP/npm-global"
+          export NPM_CONFIG_CACHE="$RUNNER_TEMP/npm-cache"
           echo "NPM_CONFIG_PREFIX=$NPM_CONFIG_PREFIX" >> "$GITHUB_ENV"
+          echo "NPM_CONFIG_CACHE=$NPM_CONFIG_CACHE" >> "$GITHUB_ENV"
           npm install -g tasks-axi@0.2.6 >/dev/null
           PATH="$(npm prefix -g)/bin:$PATH"
           echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
