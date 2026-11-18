@@ -46,12 +46,22 @@ fm_brief_type_class() {  # <text after "Type:">
 }
 
 # Refuse a brief whose `Review tier:` or `Type:` line under `## Risk and review`
-# carries a value the merge gate would not accept. Prints each refusal on stderr
-# and returns 1; a missing line is not judged here, because fm-pr-merge.sh owns
-# what an absent line means.
+# carries a value the merge gate would not accept, or repeats the line, which the
+# merge gate also refuses. Prints each refusal on stderr and returns 1; a missing
+# line is not judged here, because fm-pr-merge.sh owns what an absent line means.
 fm_brief_labels_check() {  # <brief-file>
-  local brief=$1 section line value status=0
+  local brief=$1 section line value status=0 count
   section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
+  count=$(printf '%s\n' "$section" | grep -c '^Review tier:' || true)
+  if [ "$count" -gt 1 ]; then
+    printf "error: %s has more than one Review tier line under '## Risk and review', which bin/fm-pr-merge.sh refuses at merge; keep exactly one\n" "$brief" >&2
+    status=1
+  fi
+  count=$(printf '%s\n' "$section" | grep -c '^Type:' || true)
+  if [ "$count" -gt 1 ]; then
+    printf "error: %s has more than one Type line under '## Risk and review', which bin/fm-pr-merge.sh refuses at merge; keep exactly one\n" "$brief" >&2
+    status=1
+  fi
   while IFS= read -r line; do
     value=${line#Review tier:}
     fm_brief_review_tier_needed "$value" >/dev/null && continue

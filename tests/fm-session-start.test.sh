@@ -1008,9 +1008,10 @@ EOF
 # The lock step refuses because the recorded holder looked alive, but the holder
 # is gone by the time the digest reports the refusal: the banner must say the
 # lock is stale and print the exact reclaim command, and must not reclaim it.
-test_lock_refusal_dead_holder_prints_reclaim_command() {
-  local rec root home fakebin holder_pid out status
-  rec=$(new_world lock-refusal-dead-holder)
+# <variant> is plain, or override to start the session with FM_STATE_OVERRIDE set.
+check_lock_refusal_dead_holder() {
+  local variant=$1 rec root home fakebin holder_pid out status want
+  rec=$(new_world "lock-refusal-dead-holder-$variant")
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
@@ -1042,18 +1043,29 @@ SH
   printf '%s\n' "$holder_pid" > "$home/state/.lock"
 
   status=0
-  out=$(FM_TEST_HOLDER_PID="$holder_pid" run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
+  want="FM_HOME=$home"
+  if [ "$variant" = override ]; then
+    want="FM_HOME=$home FM_STATE_OVERRIDE=$home/state"
+    out=$(FM_STATE_OVERRIDE="$home/state" FM_TEST_HOLDER_PID="$holder_pid" run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
+  else
+    out=$(FM_TEST_HOLDER_PID="$holder_pid" run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
+  fi
   kill -9 "$holder_pid" 2>/dev/null || true
 
   expect_code 0 "$status" "fm-session-start.sh must exit 0 even on a lock refusal"
   assert_contains "$out" "READ-ONLY SESSION" "the dead-holder fixture did not actually refuse the lock"
   assert_contains "$out" "another live firstmate session holds the lock (pid $holder_pid" "the refusal did not name the recorded holder"
   assert_contains "$out" "STALE LOCK: the recorded holder (pid $holder_pid) is no longer running" "a dead holder was not reported plainly"
-  assert_contains "$out" "To reclaim the lock, run: FM_HOME=$home $ROOT/bin/fm-lock.sh" "the exact reclaim command was not printed"
+  assert_contains "$out" "To reclaim the lock, run: $want $ROOT/bin/fm-lock.sh" "the exact reclaim command was not printed"
   assert_contains "$out" "Firstmate never reclaims it for you" "the banner did not say the reclaim stays manual"
   [ "$(sed -n 1p "$home/state/.lock")" = "$holder_pid" ] || fail "session start reclaimed the lock on its own"
 
-  pass "a lock refusal whose holder is already dead says so and prints the exact reclaim command without reclaiming"
+  pass "a lock refusal whose holder is already dead says so and prints the exact reclaim command without reclaiming ($variant)"
+}
+
+test_lock_refusal_dead_holder_prints_reclaim_command() {
+  check_lock_refusal_dead_holder plain
+  check_lock_refusal_dead_holder override
 }
 
 test_lock_write_failure_read_only_path() {
