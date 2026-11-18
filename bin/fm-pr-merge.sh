@@ -173,9 +173,6 @@
 # missing, repeated, or unrecognised tier line all refuse; an unreadable review
 # record also refuses when the tier requires reviews. The refusal names the
 # record or line to fix. No flag skips this gate.
-# Tier values are case-insensitive exact names or risk labels listed above,
-# including MEDIUM (Base), HIGH (Plus), and CRITICAL (Apex); the scaffold's
-# trailing ` (No Greptile / Base / Plus / Apex)` is also accepted.
 # bin/fm-brief-labels-lib.sh owns the accepted values for this line and for
 # `Type:`, and bin/fm-spawn.sh refuses a brief carrying one it rejects.
 # Any tier needing reviews requires a synchronous merge on both forges, even

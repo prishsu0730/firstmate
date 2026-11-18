@@ -149,6 +149,25 @@ EOF
   assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" "a brief with two bad labels hid its Review tier"
   assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" "a brief with two bad labels hid its Type"
 
+  # The merge refuses a repeated line even when each copy is valid.
+  id=labels-repeated-tier
+  new_labelled_brief "$id" "LOW" "feature"
+  awk '{ print } /^Review tier: /{ print "Review tier: HIGH (Plus)" }' "$home/data/$id/brief.md" > "$home/data/$id/brief.dup"
+  mv "$home/data/$id/brief.dup" "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief with two Review tier lines was accepted by the spawn"
+  assert_contains "$out" "more than one Review tier line" "the repeated Review tier line was not named"
+
+  id=labels-repeated-type
+  new_labelled_brief "$id" "LOW" "feature"
+  awk '{ print } /^Type: /{ print "Type: docs" }' "$home/data/$id/brief.md" > "$home/data/$id/brief.dup"
+  mv "$home/data/$id/brief.dup" "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief with two Type lines was accepted by the spawn"
+  assert_contains "$out" "more than one Type line" "the repeated Type line was not named"
+
   # Every value the merge accepts must pass the spawn's check.
   for tier in "LOW" "No Greptile" "MEDIUM (Base)" "base" "HIGH (Plus)" "Plus" "CRITICAL (Apex)" "apex" \
     "MEDIUM (Base) (No Greptile / Base / Plus / Apex)"; do

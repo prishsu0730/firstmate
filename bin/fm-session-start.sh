@@ -810,7 +810,9 @@ if [ "$LOCK_RC" -ne 0 ]; then
     printf '●  %s\n' "$LOCK_OUT"
     if [ -n "$STALE_HOLDER" ]; then
       printf '●  STALE LOCK: the recorded holder (pid %s) is no longer running, so this refusal is out of date.\n' "$STALE_HOLDER"
-      printf '●  To reclaim the lock, run: FM_HOME=%q %q\n' "$FM_HOME" "$SCRIPT_DIR/fm-lock.sh"
+      STALE_ENV=$(printf 'FM_HOME=%q' "$FM_HOME")
+      [ -z "${FM_STATE_OVERRIDE:-}" ] || STALE_ENV="$STALE_ENV $(printf 'FM_STATE_OVERRIDE=%q' "$FM_STATE_OVERRIDE")"
+      printf '●  To reclaim the lock, run: %s %q\n' "$STALE_ENV" "$SCRIPT_DIR/fm-lock.sh"
       printf '●  Then rerun bin/fm-session-start.sh. Firstmate never reclaims it for you.\n'
     fi
     printf '●  Skipping every mutating step: stale Herdr child cleanup,\n'
