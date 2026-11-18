@@ -17,7 +17,7 @@ permissions:
   contents: read
 
 # Per-PR supersession: a new push to the same PR replaces that PR's in-flight
-# CI instead of letting superseded heads keep the full hosted-runner fan-out.
+# CI instead of letting superseded heads keep the full runner fan-out.
 # The group uses the PR number for pull_request events, so every run of one PR
 # shares a group, and falls back to the unique run id for push events, so each
 # main push gets its own group and is never cancelled. Cancellation is likewise
@@ -361,7 +361,7 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/fm-test"
-          # The Pi package is installed above and the Pi steps install npm's tsc, so
+          # The Pi package and tsc (typescript) are installed above, so
           # any missing typecheck prerequisite is a broken lane, not a valid skip.
           read -r -a lane_args <<<"$LANE_ARGS"
           bin/fm-test-run.sh "${lane_args[@]}" \

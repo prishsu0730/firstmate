@@ -58,7 +58,7 @@
 # workflow lint and backend-purity checks, keeping either invocation
 # independently useful.
 #
-# With FM_LINT_REQUIRE_BOUNDS=1, which CI sets, every per-root ShellCheck
+# With FM_LINT_REQUIRE_BOUNDS=1 (macOS cannot apply it, so the Mac CI runner leaves it unset), every per-root ShellCheck
 # process runs under an enforced envelope: a wall deadline
 # (FM_LINT_ROOT_SECONDS, default 1200), a terminate-then-kill cleanup grace
 # (FM_LINT_ROOT_GRACE, default 5), and a per-process address-space limit
