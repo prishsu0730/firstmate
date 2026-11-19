@@ -1,0 +1,45 @@
+=== retro-light: Review tier 'Light', Type 'content', extra line ''
+17:Type: content
+18:Review tier: Light
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/data/retro-light/brief.md has a Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light'); set the 'Review tier:' line under '## Risk and review' to one of LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/data/retro-light/brief.md has a Type that bin/fm-pr-merge.sh would refuse at merge (read 'content'); set the 'Type:' line under '## Risk and review' to 'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor
+exit=1 meta=none
+=== bad-tier: Review tier 'Light', Type 'feature', extra line ''
+17:Type: feature
+18:Review tier: Light
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/data/bad-tier/brief.md has a Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light'); set the 'Review tier:' line under '## Risk and review' to one of LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)
+exit=1 meta=none
+=== bad-type: Review tier 'LOW', Type 'content', extra line ''
+17:Type: content
+18:Review tier: LOW
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/data/bad-type/brief.md has a Type that bin/fm-pr-merge.sh would refuse at merge (read 'content'); set the 'Type:' line under '## Risk and review' to 'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor
+exit=1 meta=none
+=== dup-tier: Review tier 'LOW', Type 'feature', extra line 'Review tier: HIGH (Plus)'
+17:Type: feature
+18:Review tier: HIGH (Plus)
+19:Review tier: LOW
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/data/dup-tier/brief.md has more than one Review tier line under '## Risk and review', which bin/fm-pr-merge.sh refuses at merge; keep exactly one
+exit=1 meta=none
+=== dup-type: Review tier 'LOW', Type 'feature', extra line 'Type: docs'
+17:Type: feature
+18:Type: docs
+19:Review tier: LOW
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/data/dup-type/brief.md has more than one Type line under '## Risk and review', which bin/fm-pr-merge.sh refuses at merge; keep exactly one
+exit=1 meta=none
+=== good-low: Review tier 'LOW', Type 'bug fix', extra line ''
+17:Type: bug fix
+18:Review tier: LOW
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+notice: good-low ships mode=direct-PR while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+exit=1 meta=none
+=== good-medium: Review tier 'MEDIUM (Base)', Type 'feature', extra line ''
+17:Type: feature
+18:Review tier: MEDIUM (Base)
+fm-gate-refuse: gate agent lifecycle permitted only against lab home /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB
+notice: good-medium ships mode=direct-PR while the standing posture for proj is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+exit=1 meta=none

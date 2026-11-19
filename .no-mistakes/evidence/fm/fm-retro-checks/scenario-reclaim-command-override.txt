@@ -1,0 +1,5 @@
+$ FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB FM_STATE_OVERRIDE=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-lab.fygcgB/state-alt {run-worktree}/bin/fm-lock.sh
+lock acquired: harness pid 89874
+rc=0
+alt lock now: 89874
+home lock: 89874
