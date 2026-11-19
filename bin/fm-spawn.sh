@@ -23,9 +23,9 @@
 #   `{BLAST_RADIUS}` / `{RISK_TIERS}` / `{TYPE}` / `{REVIEW_TIER}`
 #   placeholders, an empty Task, an incomplete pair of Task subsections, or a
 #   `## Captain's intent` line opening with a Captain label or address.
-#   A fresh ship spawn also refuses a `Review tier:` or `Type:` value under
-#   `## Risk and review` that bin/fm-pr-merge.sh would refuse at merge, naming
-#   the accepted values; bin/fm-brief-labels-lib.sh owns them.
+#   A fresh ship spawn also refuses repeated `Review tier:` or `Type:` lines
+#   under `## Risk and review`, or values bin/fm-pr-merge.sh would refuse at
+#   merge, naming the accepted values; bin/fm-brief-labels-lib.sh owns them.
 #   Every ship or scout spawn renders `launch-brief.md`; for a no-mistakes ship
 #   it also carries the current `--intent` contract and the extracted captain
 #   intent. A legacy mixed Task is accepted there only under bin/fm-dod-lib.sh's

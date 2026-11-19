@@ -202,6 +202,9 @@
 #   reporting command, not a gate. A lock refusal is reported as a loud
 #   banner inline, never a silent failure or a non-zero exit that would make
 #   an agent skip the rest of the digest.
+#   If a refused live holder has since died, the banner identifies the stale
+#   refusal and prints a manual reclaim command preserving FM_HOME and any
+#   FM_STATE_OVERRIDE, followed by a startup rerun; it never reclaims the lock.
 #
 #   --reemit  This process ALREADY took the helm at its own startup and has
 #             only lost its context (a /clear or a compaction). Skip the
