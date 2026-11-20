@@ -99,6 +99,10 @@ bump_primary() {
   if [ "$mode" = bin ]; then
     printf 'echo %s-%s\n' "$mode" "$RANDOM" > "$w/main/bin/tool.sh"
   fi
+  if [ "$mode" = docs ]; then
+    mkdir -p "$w/main/docs"
+    printf 'd-%s-%s\n' "$mode" "$RANDOM" > "$w/main/docs/procedure.md"
+  fi
   git -C "$w/main" add -A
   git -C "$w/main" commit -qm "bump-$mode"
 }
@@ -1026,7 +1030,7 @@ test_remote_sync_targets_primary_not_host_copy() {
 # whether the running remote agent must be replaced to reload, or whether the
 # advance reloads itself.
 test_remote_sync_reports_the_changed_instruction_surface() {
-  local w c_instr c_bin c_readme
+  local w c_instr c_bin c_docs c_readme
   w=$(new_remote_world remote-instr)
   add_remote_home "$w" sm "$w/coderoot" "$(head_of "$w/main")"
 
@@ -1045,6 +1049,14 @@ test_remote_sync_reports_the_changed_instruction_surface() {
   [ "$REMOTE_SYNC_RC" -eq 0 ] || fail "the bin-only advance did not sync: $REMOTE_SYNC_OUT"
   assert_contains "$REMOTE_SYNC_OUT" "instr=bin" "a bin-only advance must be reported as bin only"
   assert_not_contains "$REMOTE_SYNC_OUT" "AGENTS.md" "a bin-only advance must not claim AGENTS.md changed"
+
+  bump_primary "$w" docs
+  c_docs=$(head_of "$w/main")
+  git -C "$w/coderoot" fetch -q --no-tags "$w/main" "$c_docs"
+  remote_sync "$w" sm "$c_docs"
+  [ "$REMOTE_SYNC_RC" -eq 0 ] || fail "the docs-only advance did not sync: $REMOTE_SYNC_OUT"
+  assert_contains "$REMOTE_SYNC_OUT" "instr=docs" "a docs-only advance must be reported as docs"
+  assert_not_contains "$REMOTE_SYNC_OUT" "instr=bin" "a docs-only advance must not claim bin changed"
 
   bump_primary "$w" readme
   c_readme=$(head_of "$w/main")
