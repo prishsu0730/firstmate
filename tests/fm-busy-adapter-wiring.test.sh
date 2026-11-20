@@ -32,7 +32,7 @@ make_spawn_case() {  # <name> <harness> <id>
 
 run_spawn() {  # <home> <wt> <fakebin> <spawn-args...>
   # Every case here is a ship spawn, which carries an explicit delivery contract
-  # (`task-intake` skill); these tests are about busy-state wiring, so they pass a
+  # (docs/configuration.md, Task delivery mode, yolo, and branch resolution); these tests are about busy-state wiring, so they pass a
   # fixed valid one.
   local home=$1 wt=$2 fakebin=$3
   shift 3
