@@ -17,6 +17,20 @@ A no-mistakes worker re-validates it with /no-mistakes so the pipeline stays the
 In no-mistakes mode a `done:` that names no PR URL is refused with a plain reason: the worker runs /no-mistakes itself and reports only the ready line.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line, the resolved checks-green crew-state line, or the task's `pr=` metadata, a concise outcome summary, and the no-mistakes risk level when applicable.
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
+
+## Merge authority
+
+This section is the single owner of the merge-authority contract; `AGENTS.md` hard rule 2 and section 7 keep the never-merge-without-the-captain's-word rule inline.
+Delivery mode and `yolo` are orthogonal.
+`yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
+Never merge a red PR, or one with a required check that has not reported, under either setting unless a current explicit captain instruction names the GitHub check to waive (`bin/fm-pr-merge.sh`'s header owns the attended-only waiver mechanics and remaining guards).
+Destructive, irreversible, and security-sensitive merges still escalate.
+Without a current explicit captain instruction stating the concrete merge, the green default stands and standing `yolo` cannot authorize a red merge (`AGENTS.md` hard rule 2 and the captain-instruction precedence section).
+Load `ask-user-authority` and `validation-supervision` before deciding or answering any ask-user finding; the implementation worker never answers its own finding.
+Use `bin/fm-pr-merge.sh` for every task PR merge (it records merge metadata and refuses an unproved merge) and `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
+After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
+
+## Ready and cleanup
 Before merging a bug-fix PR (its brief's `Type:` is a bug fix), check that `data/<id>/red-green.log` holds a red run at the PR's merge base and a later green run of the same test command at the task's `pr_head=`, or steer the worker to append them; `bin/fm-pr-merge.sh` refuses the merge otherwise, and its header owns the line format.
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.

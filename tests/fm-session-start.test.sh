@@ -879,7 +879,7 @@ EOF
 # deliberately huge: long hold reasons, a large dispatchable queue, and oversized
 # captain, shared, and learnings files. Only the hot tier may count against it.
 # Raising a ceiling is a deliberate edit of the constant below, reviewed as such.
-AGENTS_MD_BYTE_CAP=40000
+AGENTS_MD_BYTE_CAP=22000
 SESSION_START_DIGEST_BYTE_CAP=24000
 
 # assert_within_byte_cap <label> <actual-bytes> <cap-bytes>
