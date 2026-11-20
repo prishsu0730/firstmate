@@ -68,7 +68,7 @@ Treat `data/captain.md`, `data/captain-shared.md`, and `data/learnings.md` (sect
 - When dispatch profiles exist, consult them at every crewmate or scout intake and pass the resolved concrete profile required by `fm-spawn`.
 - Firstmate alone resolves a matched profile array, and must load `quota-array-dispatch` first; never guess or fall back silently.
   Preserve malformed profile configuration as an actionable error rather than selecting around it.
-- Run `bin/fm-dispatch-resolve.sh` on the written brief and pass a `clear` result's `profile:` line to `fm-spawn` (`task-intake`, `docs/configuration.md` "Typed dispatch resolution").
+- Run `bin/fm-dispatch-resolve.sh` on the written brief and pass a `clear` result's `profile:` line to `fm-spawn` (`docs/configuration.md` "Typed dispatch resolution").
 - Dispatch only on a backend that `fm-spawn` validates as spawn-capable; pass an explicit per-spawn `--backend` only under that exact task's own authority, never as later-task precedent.
   A missing dependency, authentication failure, unsupported backend, or version refusal is a blocker; never silently retry on another backend.
 - `docs/configuration.md` owns dispatch-profile and runtime-backend schemas and `fm-spawn` flags.
@@ -102,7 +102,7 @@ Surface only captain-relevant decisions, review-ready PRs, failures, and credent
 
 ## 7. Task lifecycle
 
-Load `task-intake` at every captain work request before routing, classifying, or dispatching it, before writing a brief, before steering a worker or relaying a mid-task ask, and before filing, holding, or re-queuing backlog work; it owns intake, delivery mode and `yolo` resolution, parallel dispatch and capacity, steering, briefs, and the backlog contract.
+At every work request, read `docs/configuration.md` "Task intake and authority" through "Task dispatch profile routing" and "Task delivery path rigor" through "Task backlog contract"; before steering or relaying a mid-task ask, read `docs/agent-control.md` "Task dispatch and supervision handoff".
 These rules stay inline:
 
 - A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code; load `diagnostic-reasoning` before scoping a reported bug.
@@ -126,7 +126,7 @@ No turn ends blind while work is under way, including turns described as holding
 - At the start of every wake-handling turn, drain the durable wake queue (`bin/fm-wake-drain.sh`) before peeking, steering, or starting work; session start is the only exception because its digest already presented the queue.
 - After handling, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; once an acknowledgement succeeds or reports a sequence already processed, never acknowledge it again or retry the refusal.
 - A status line is a wake event, not current state; use `bin/fm-crew-state.sh` when current state matters.
-- Load `wake-handling` on every actionable wake (`signal:`, `stale:`, `check:`, `heartbeat:`, or a drain section such as `OPEN DECISIONS`, `UNREAD STATUS`, or `RECORD DIVERGENCE`); it owns the per-wake procedure.
+- Read `docs/architecture.md` "Wake handling: drain and acknowledge" through "Wake handling: standing supervision facts" on every actionable wake (`signal:`, `stale:`, `check:`, `heartbeat:`, or a drain section such as `OPEN DECISIONS`, `UNREAD STATUS`, or `RECORD DIVERGENCE`); it owns the per-wake procedure.
 - When Relay-linked work reaches a milestone or terminal state, load `fmx-respond`; it owns the promised-final reconciliation required before terminal teardown.
 - Never broadly kill watchers, especially never `pkill -f bin/fm-watch.sh`, because that can kill sibling firstmate homes.
   A forced repair must use the home-scoped owner path emitted by supervision instructions.
@@ -148,13 +148,13 @@ For the full `stuck-crewmate-recovery` trigger, including a live worker claiming
 
 - **Talk in outcomes, not mechanics.**
   Translate internal state into the project outcome, consequence, and next decision, using the captain's nouns: the investigation, the scout, the fix, the PR, the review, the decision, the blocker, the credential, the worker, or the project.
-- Rewrite internal terms (worktree, teardown, wake, watcher, hold, gate, harness, task id, raw path, delivery-mode names, pipeline labels) into plain outcomes; `captain-reporting` owns the rewrite table and escalation form.
+- Rewrite internal terms (worktree, teardown, wake, watcher, hold, gate, harness, task id, raw path, delivery-mode names, pipeline labels) into plain outcomes; `docs/secondmate-parent-channel.md` "Captain reporting: rewrite internal terms" through "Captain reporting: secondmate homes" must be read before reporting outcomes.
 - A captain-facing reply's **final response message** must stand alone with all key information from the whole turn: outcomes, consequences, any decision or approval needed, and relevant URLs or identifiers; the captain may see only that message.
 - Never relay worker reports, status lines, tool output, validation-state labels, or decision records verbatim into captain chat; read them as evidence, then send the plain-English outcome and consequence.
 
 Reach the captain immediately for work ready for their review (with the PR's recorded URL), finished investigation findings (relayed as findings, not only a completion notice), gate findings that `ask-user-authority` escalates, a real blocker or failure after the relevant playbook is exhausted, anything destructive, irreversible, or security-sensitive, and a needed credential or login.
 
-- In a secondmate home, reaching the captain means appending the outcome to the parent channel your charter names (`captain-reporting`).
+- In a secondmate home, reaching the captain means appending the outcome to the parent channel your charter names (`docs/secondmate-parent-channel.md` "Captain reporting: secondmate homes").
 - Do not surface automatic fixes, retries, routine progress, or internal supervision mechanics.
 - Reply exactly `Captain, shipshape.` only for a true no-op that still needs an answer - an idle re-read, an empty heartbeat, or a pure acknowledgement with no consequence for the captain; never for a captain-requested completion or any wake that needs the captain's review, approval, merge, or design pick.
 - Whenever a PR is mentioned, and for any review or merge ask, include the PR's full `https://...` URL in MAIN's final captain-facing response, copied verbatim from the task's ready status or `pr=` metadata, never assembled from memory; when neither source has one, report only the identifier you actually have.
@@ -164,11 +164,11 @@ Reach the captain immediately for work ready for their review (with the PR's rec
 The configured `tasks-axi` backend is the durable queue (tracked default `data/backlog.md`), always used through `bin/fm-tasks-axi.sh`; it tracks work items only, never agents, and persistent secondmates never appear as backlog items.
 A decision is simply a task held for the captain: always hold it through `bin/fm-captain-hold.sh hold <id> --reason "<reason>"`.
 `bin/fm-spawn.sh` and `bin/fm-teardown.sh` move items themselves when the transition gate applies and refuse without an item, so file the item before dispatch.
-Load `task-intake` for the rest of the contract; `captain-hold-lifecycle` owns captain calls found by investigations or visual reviews.
+Read `docs/configuration.md` "Task backlog contract" before filing, holding, or re-queuing work; `captain-hold-lifecycle` owns captain calls found by investigations or visual reviews.
 
 ## 11. Crewmate briefs
 
-`bin/fm-brief.sh` and its help own the scaffold, which is a safety contract, not a suggestion; `task-intake` owns brief authoring.
+`bin/fm-brief.sh` and its help own the scaffold, which is a safety contract, not a suggestion; read `docs/configuration.md` "Task crewmate briefs" before filling it.
 Every ship brief must retain the worktree-isolation assertion and stop if launched in the primary checkout.
 If a ship task touches firstmate's shared tracked material, explicitly require `firstmate-coding-guidelines` before editing.
 If a task will drive Herdr lifecycle behavior, scaffold with `--herdr-lab`; if that need appears later, stop and regenerate rather than adding commands by hand.
