@@ -33,7 +33,6 @@ Classify the deliverable:
 
 - If established evidence already answers an informational question, relay it without a design-only scout; when implementation intent is unclear, answer and ask one concise implementation question rather than dispatching speculative design work.
 - Never both present a likely-enough solution and launch a parallel design exercise not expected to change it.
-- A diagnostic request, report, recommendation, or implementation-ready finding is evidence, not authorization to change code.
 - Load `diagnostic-reasoning` before scoping a reported bug and before acting on a diagnostic report.
 
 ## Delivery mode, yolo, and branch resolution
@@ -66,14 +65,13 @@ Run `bin/fm-dispatch-resolve.sh` directly on the written brief in the same turn,
 
 ## Dispatch and supervision handoff
 
-Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in `AGENTS.md` section 4.
-The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
+Spawn under the `AGENTS.md` section 4 and section 7 rules.
 When the configured tasks-axi backlog gate applies, the spawn itself moves the work item to In flight and refuses when this home has no item for the work (manual-backend contract: `docs/configuration.md`).
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
 
 Steer a worker with ordinary text through fail-closed `fm-send`, which leaves a durable message in the task's steering inbox and rings only a doorbell line in the worker's terminal; `bin/fm-send.sh` owns delivery, remote transport, and the `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend, the only safe retry after unconfirmed delivery.
-Pass `--resolve-key` when a steer answers an open keyed decision or blocker; never use `fm-send` for interrupt, exit, or other lifecycle control, because the worker would reason about it as chat instead of executing it.
+Pass `--resolve-key` when a steer answers an open keyed decision or blocker.
 Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything ([`docs/agent-control.md`](../../../docs/agent-control.md)).
 `bin/fm-pending-reply-lib.sh` owns the correlation, recovery, and escalation contract for marked secondmate requests.
 When the captain adds or changes an ask mid-task, append the captain's words, without speaker labels or direct address, to that brief's `## Captain's intent` and relay them to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
@@ -84,7 +82,7 @@ Supervise all live work under `AGENTS.md` section 8.
 The selected delivery path owns its own rigor.
 Keep local commits focused and granular as cheap checkpoints, batch obvious local corrections before a remote push, match CI, no-mistakes, and Greptile depth to the change level, and run each remote check against a stable coherent head.
 When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, documentation, push, PR, and CI; otherwise follow the faster path without adding an independent reviewer.
-Never hold work outside no-mistakes for a manual clean verdict, stack serial manual reviews, or infer authority for one from security, architecture, or risk alone.
+Never hold work outside no-mistakes for a manual clean verdict (`AGENTS.md` section 7).
 A separate review or audit is allowed only when the captain explicitly requests that deliverable or the task is a knowledge-only review.
 If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
 The path's worker, automated gates, and captain approval remain authoritative: **no-mistakes** runs the full pipeline through a PR, **direct-PR** has the worker push and open a PR without it, and **local-only** has the worker stop with a clean ready branch, each then waiting for the configured merge authority (local-only via the guarded fast-forward path).

@@ -22,12 +22,10 @@ A captain instruction to merge is explicit authority; `yolo` is the only standin
 
 This section is the single owner of the merge-authority contract; `AGENTS.md` hard rule 2 and section 7 keep the never-merge-without-the-captain's-word rule inline.
 Delivery mode and `yolo` are orthogonal.
-`yolo` governs merge authority only: with it off, the captain approves every PR merge and every local-only landing; with it on, firstmate merges green, in-scope work itself.
-Never merge a red PR, or one with a required check that has not reported, under either setting unless a current explicit captain instruction names the GitHub check to waive (`bin/fm-pr-merge.sh`'s header owns the attended-only waiver mechanics and remaining guards).
-Destructive, irreversible, and security-sensitive merges still escalate.
+With `yolo` on, firstmate merges green, in-scope work itself; with it off, the captain approves every PR merge and every local-only landing.
+`bin/fm-pr-merge.sh`'s header owns the attended-only waiver mechanics for a red or unreported check and the remaining guards.
 Without a current explicit captain instruction stating the concrete merge, the green default stands and standing `yolo` cannot authorize a red merge (`AGENTS.md` hard rule 2 and the captain-instruction precedence section).
-Load `ask-user-authority` and `validation-supervision` before deciding or answering any ask-user finding; the implementation worker never answers its own finding.
-Use `bin/fm-pr-merge.sh` for every task PR merge (it records merge metadata and refuses an unproved merge) and `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
+`bin/fm-pr-merge.sh` records merge metadata and refuses an unproved merge.
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 
 ## Ready and cleanup
