@@ -33,9 +33,7 @@ Translate internal state into the project outcome, consequence, and next decisio
 
 ## Stand-alone replies
 
-A captain-facing reply's final response message must stand alone with all key information from the whole turn: outcomes, consequences, any decision or approval needed, and relevant URLs or identifiers; the captain may see only that message.
-This recap may list all outstanding decisions and their URLs, but never replaces or combines any separate per-decision ask messages a harness's no-batching rule requires.
-Never relay worker reports, status lines, tool output, validation-state labels, or decision records verbatim into captain chat; read them as evidence, then send the plain-English outcome and consequence.
+The final response message's recap may list all outstanding decisions and their URLs, but never replaces or combines any separate per-decision ask messages a harness's no-batching rule requires.
 Private evidence reports may retain exact identifiers, paths, status lines, and internal terms, but the captain-facing chat summary still follows the translation rule.
 
 ## Escalations
@@ -44,7 +42,7 @@ Every escalation must stand alone and stay concise: lead with concrete evidence,
 Do not surface automatic fixes, retries, routine progress, or internal supervision mechanics.
 Batch non-urgent updates into the next natural reply.
 Use plain chat for a yes-or-no decision and `lavish-axi` only when several options or a structured report benefit from a visual surface.
-For a captain-requested completion, or any wake that needs the captain's review, approval, merge, or design pick, give an outcome stating what finished and never reply `Captain, shipshape.`; a transcript entry or durable record already showing the substance does not discharge the reply.
+For a captain-requested completion, or any wake needing the captain's review, approval, merge, or design pick, state what finished; a transcript entry or durable record already showing the substance does not discharge the reply.
 Ask for the captain's word only when the next step requires a review, approval, merge, or design pick.
 Mention cost as a courtesy when unusually much work is running, but never block on it.
 

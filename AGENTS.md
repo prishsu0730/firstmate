@@ -81,7 +81,8 @@ Reconcile only this home's recorded direct reports and backend inventory; never 
 - For an ordinary direct report whose endpoint is dead or whose metadata has no window, load `stuck-crewmate-recovery` and preserve the recorded worktree and unlanded work while reconciling ownership.
 - For a dead secondmate direct report, load `secondmate-provisioning` and reconcile only that secondmate, never its whole child tree from the main home; each secondmate reconciles its own work after restart, never inventing work (section 6).
 - If `state/.afk` is present, load `/afk` or `/quiet` per section 8's away-mode stub, let the daemon own supervision where it runs rather than arming another cycle, and on Pi keep main parked while the record exists.
-  Surface only captain-relevant decisions, review-ready PRs, failures, and credential needs.
+
+Surface only captain-relevant decisions, review-ready PRs, failures, and credential needs; otherwise resume the emitted supervision protocol silently.
 
 ## 6. Project and knowledge management
 
@@ -109,10 +110,11 @@ These rules stay inline:
   The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.
 - Steer a worker only through fail-closed `bin/fm-send.sh`, and drive its lifecycle only through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, never through `fm-send`.
 - `yolo` governs merge authority only: with it off, the captain approves every PR merge and local-only landing.
+- Never hold work outside no-mistakes for a manual clean verdict, stack serial manual reviews, or infer authority for one from security, architecture, or risk alone.
 - Never merge a red PR, or one with a required check that has not reported, under either setting unless a current explicit captain instruction names the GitHub check to waive.
   Destructive, irreversible, and security-sensitive merges still escalate.
 - Use `bin/fm-pr-merge.sh` for every task PR merge and `bin/fm-merge-local.sh` for approved local-only landing; never call a lower-level merge command around their guards.
-- Load `validation-supervision` when a ship starts or has an active no-mistakes validation run (including a mid-run requirement change or finding) and before deciding or answering any ask-user finding; the implementation worker never answers its own finding.
+- Load `validation-supervision` when a ship starts or has an active no-mistakes validation run (including a mid-run requirement change or finding) and before deciding or answering any ask-user finding (`ask-user-authority` owns finding policy); the implementation worker never answers its own finding.
 - Load `ship-landing` when a ship reports a PR or ready branch, when deciding or monitoring landing, and before task cleanup.
 - Load `scout-completion` when a scout reports completion, presents a visual artifact for iteration, or is being considered for promotion to implementation.
 
@@ -129,6 +131,8 @@ No turn ends blind while work is under way, including turns described as holding
 - Never broadly kill watchers, especially never `pkill -f bin/fm-watch.sh`, because that can kill sibling firstmate homes.
   A forced repair must use the home-scoped owner path emitted by supervision instructions.
 - Resolve a worktree-tangle warning without touching unlanded work.
+- Do not substitute another harness's wait shape, use shell `&`, or create a second cycle when a healthy one exists.
+- For every actionable wake, follow the emitted ordinary-wake continuation, using its repair action only when the live cycle is missing or failed.
 
 ### Away-mode and quiet-mode stub
 

@@ -14,11 +14,9 @@ The emitted supervision block (`bin/fm-supervision-instructions.sh`, rendered fr
 
 ## Drain and acknowledge
 
-At the start of every wake-handling turn, drain the durable wake queue before peeking, steering, or starting work; session start is the only exception because its digest already presented the queue.
 Treat any `OPEN DECISIONS` or `UNREAD STATUS` drain section as actionable even when no wake record was queued; read unread status this turn because it is not re-printed.
 Treat any `RECORD DIVERGENCE` section as a contradiction between two records of one captain call, never as proof the captain ruled; load `captain-hold-lifecycle` and reconcile it in whichever direction the evidence supports.
-After handling, run the exact `--ack-through` command printed as `WAKE_ACK_REQUIRED`; once an acknowledgement succeeds or reports a sequence already processed, never acknowledge that sequence again or retry the refusal.
-A status line is a wake event, not current state; use `bin/fm-crew-state.sh` when current state matters, especially before re-escalating an old decision, blocker, or pause.
+Check `bin/fm-crew-state.sh` before re-escalating an old decision, blocker, or pause, because a status line is only a wake event.
 `bin/fm-classify-lib.sh` owns the distinction between declared `paused:` waits and `blocked:` events needing firstmate action; `bin/fm-brief.sh` owns worker declaration instructions.
 
 ## Handle each wake type
@@ -39,4 +37,3 @@ When Relay-linked work reaches a milestone or terminal state, load `fmx-respond`
 A secondmate's idle endpoint is healthy; parent supervision relies on its routed status, not a quiet pane.
 Waiting on a healthy supervision cycle is silent; no-change updates are not captain-facing progress.
 Guard warnings do not replace the contract: resolve a worktree-tangle warning without touching unlanded work, and treat turn-end guards as backstops, not permission to omit the live cycle.
-Do not substitute another harness's wait shape, use shell `&`, or create a second cycle when a healthy one exists.

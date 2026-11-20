@@ -402,7 +402,7 @@ subsection() { printf '\n%s\n%s\n' "$1" "$SUBRULE"; }
 # subsection, or an explicit ABSENT marker. Absence is semantically
 # meaningful for every one of these files (captain.md absent = firstmate
 # repo built-in defaults, projects.md absent = rebuild from clones, etc. -
-# AGENTS.md section 3) and must never be confused with an empty-but-present
+# `session-start-recovery` skill) and must never be confused with an empty-but-present
 # file, so the two cases print differently.
 print_file_or_absent() {
   local path=$1 label=$2
@@ -420,7 +420,7 @@ print_file_or_absent() {
 
 # print_file_pointer_or_absent <path> <label> <when>: the cold tier of a context
 # file. ABSENT and present-but-empty print exactly as print_file_or_absent does,
-# because both carry meaning (AGENTS.md section 3). A present, non-empty file is
+# because both carry meaning (`session-start-recovery` skill). A present, non-empty file is
 # not printed: one line gives its size and the exact read command, and <when>
 # says when that read is owed, so the pointer line is the whole trigger.
 print_file_pointer_or_absent() {
