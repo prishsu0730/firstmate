@@ -176,7 +176,7 @@ Load `secondmate-provisioning` before creating or using a charter brief and pres
 
 ## 12. Self-update
 
-Shared instructions reach running homes only after landing on the default branch and fast-forwarding; a running firstmate loads only `AGENTS.md`, `bin/`, and `.agents/skills/`.
+Shared instructions reach running homes only after landing on the default branch and fast-forwarding; a running firstmate loads `AGENTS.md`, `bin/`, `.agents/skills/`, and referenced procedures in `docs/`.
 On `/updatefirstmate` or a request to update firstmate, load that skill; it owns the guarded update and never touches `projects/`.
 
 ## 13. Agent-only reference skills
