@@ -10,7 +10,7 @@
 # bin/fm-brief.sh owns the scaffold lines and the depths the tier names.
 
 # The accepted values as the refusals print them.
-FM_BRIEF_REVIEW_TIER_ACCEPTED='LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)'
+FM_BRIEF_REVIEW_TIER_ACCEPTED='LOW (No Greptile), MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)'
 FM_BRIEF_TYPE_ACCEPTED="'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor"
 
 # Print the value of a `Review tier:` line as it is matched: lowercase, trimmed,

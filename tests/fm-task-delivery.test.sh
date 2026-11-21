@@ -128,7 +128,7 @@ EOF
   [ "$status" -ne 0 ] || fail "a Review tier the merge refuses was accepted by the spawn"
   assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light')" \
     "the bad Review tier was not named"
-  assert_contains "$out" "LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)" \
+  assert_contains "$out" "LOW (No Greptile), MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)" \
     "the refusal did not list the accepted Review tier values"
   assert_absent "$home/state/$id.meta" "a spawn refused for its Review tier wrote task metadata"
 
