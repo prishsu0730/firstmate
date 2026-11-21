@@ -251,6 +251,58 @@ test_unchanged_decision_is_summarized_after_first_presentation() {
   pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
 }
 
+test_aged_open_decision_returns_on_a_heartbeat_drain_with_its_age() {
+  local dir state out now
+  dir=$(make_case aged-heartbeat)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  # One decision opened five hours ago, one opened a minute ago.
+  printf 'needs-decision [key=old-call] [at=%s]: pick the rollout plan\n' "$((now - 18000))" > "$state/task1.status"
+  printf 'needs-decision [key=fresh-call] [at=%s]: pick the colour\n' "$((now - 60))" > "$state/task2.status"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first drain failed"
+  grep -F 'pick the rollout plan' "$out" >/dev/null || fail "first drain did not print the old decision in full"
+
+  # An ordinary drain keeps the one-line count for both.
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
+  if grep -F 'pick the rollout plan' "$out" >/dev/null; then
+    fail "a non-heartbeat drain re-printed the aged decision: $(cat "$out")"
+  fi
+  grep -F 'OPEN DECISIONS: 2 unchanged' "$out" >/dev/null || fail "ordinary drain lost the unchanged count: $(cat "$out")"
+
+  # A heartbeat drain brings the aged one back with its age; the fresh one stays counted.
+  append_wake "$state" heartbeat heartbeat "heartbeat" || fail "queueing the heartbeat failed"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "heartbeat drain failed"
+  grep -F 'task1' "$out" | grep -F '[key=old-call]' | grep -F 'pick the rollout plan' | grep -F '5h' >/dev/null     || fail "heartbeat drain did not re-print the aged decision with its age: $(cat "$out")"
+  if grep -F 'pick the colour' "$out" >/dev/null; then
+    fail "heartbeat drain re-printed a decision younger than the age limit: $(cat "$out")"
+  fi
+  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" >/dev/null || fail "the fresh decision was not left in the unchanged count: $(cat "$out")"
+  pass "an open decision older than the age limit comes back with its age on a heartbeat drain"
+}
+
+test_aged_open_decision_age_limit_is_configurable() {
+  local dir state out now
+  dir=$(make_case aged-limit)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  printf 'needs-decision [key=mid-call] [at=%s]: pick the logo\n' "$((now - 1800))" > "$state/task1.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first drain failed"
+  append_wake "$state" heartbeat heartbeat "heartbeat" || fail "queueing the heartbeat failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "default-limit heartbeat drain failed"
+  if grep -F 'pick the logo' "$out" >/dev/null; then
+    fail "a 30-minute-old decision came back under the 4-hour default: $(cat "$out")"
+  fi
+
+  FM_OPEN_DECISION_RESURFACE_AFTER=600 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "short-limit heartbeat drain failed"
+  grep -F 'pick the logo' "$out" | grep -F '30m' >/dev/null \
+    || fail "a 10-minute limit did not bring the 30-minute-old decision back with its age: $(cat "$out")"
+  pass "the age limit defaults to four hours and FM_OPEN_DECISION_RESURFACE_AFTER changes it"
+}
+
 test_full_listing_is_read_only_and_bounded() {
   local dir state out cursor presented cursor_before presented_before probe bytes
   dir=$(make_case readonly-listing)
@@ -306,6 +358,8 @@ test_full_listing_exceeds_ordinary_byte_cap() {
 
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
+test_aged_open_decision_returns_on_a_heartbeat_drain_with_its_age
+test_aged_open_decision_age_limit_is_configurable
 test_full_listing_is_read_only_and_bounded
 test_full_listing_exceeds_ordinary_byte_cap
 test_over_long_decision_note_is_capped_with_a_marker
