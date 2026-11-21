@@ -1,0 +1,27 @@
+
+===== S2 ordinary drain: 10h-old decision returns with age, 30m-old one stays a count =====
+--- drain 1 (first sight)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-copy [key=copy] needs-decision: pick headline
+sm-ops [key=infra] blocked: need staging creds
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+--- drain 2 (ordinary, one queued signal wake)
+1795281572	1	signal	other.status	working: continuing
+wake annotation: latest wake-EVENT observed at drain, not current state: other.status: working [at=1795281344]: continuing
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-ops [key=infra] blocked (open 10h 4m): need staging creds
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+--- drain 3 (empty queue right after: cooldown)
+1795281572	1	signal	other.status	working: continuing
+OPEN DECISIONS: 2 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+===== S3 clock moved +4h01m: aged decision returns again with its new age =====
+1795281572	1	signal	other.status	working: continuing
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-copy [key=copy] needs-decision (open 4h 31m): pick headline
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+lab torn down

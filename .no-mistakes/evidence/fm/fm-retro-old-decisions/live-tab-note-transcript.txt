@@ -1,0 +1,15 @@
+
+===== S6 adversarial: note with a tab keeps age and cooldown =====
+--- drain 1 (first sight)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-tab [key=t] needs-decision: choose A^Ior B
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+--- drain 2 (aged, tab shown as ^I)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-tab [key=t] needs-decision (open 5h 0m): choose A^Ior B
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+--- drain 3 (cooldown)
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+lab torn down

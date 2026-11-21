@@ -1,0 +1,63 @@
+=== S1 retro repro: secondmate decision opened 8h ago, plus a 30-minute-old one ===
+-- drain 1 (first presentation)
+$ fm-wake-drain.sh 
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-copy [key=copy-tone] needs-decision: warm or crisp copy tone
+sm-design [key=logo-pick] needs-decision: pick logo A or B (Decision Log already answers this)
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+-- drain 2 (empty queue, both already shown)
+$ fm-wake-drain.sh 
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-design [key=logo-pick] needs-decision (open 8h 0m): pick logo A or B (Decision Log already answers this)
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+-- drain 3 (immediately again: cooldown)
+$ fm-wake-drain.sh 
+OPEN DECISIONS: 2 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+=== S4 ordinary drain with a queued wake ===
+-- drain with queued signal event
+$ fm-wake-drain.sh 
+1795283569	1	signal	sm-copy.status	working: drafting
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1478.1795283569.w5eO6I
+wake annotation: latest wake-EVENT observed at drain, not current state: sm-copy.status: needs-decision [key=copy-tone] [at=1795281761]: warm or crisp copy tone
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-api [key=api] needs-decision (open 5h 33m): REST or RPC
+OPEN DECISIONS: 2 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+=== S5 answer the old decision; it must vanish ===
+$ fm-wake-drain.sh 
+1795283569	1	signal	sm-copy.status	working: drafting
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1478.1795283569.w5eO6I
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+=== S6 configurable limit + real-clock cooldown expiry (limit 5s) ===
+$ fm-wake-drain.sh FM_OPEN_DECISION_RESURFACE_AFTER=5
+1795283569	1	signal	sm-copy.status	working: drafting
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1478.1795283569.w5eO6I
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-copy [key=copy-tone] needs-decision (open 0h 30m): warm or crisp copy tone
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+-- immediately again
+$ fm-wake-drain.sh FM_OPEN_DECISION_RESURFACE_AFTER=5
+1795283569	1	signal	sm-copy.status	working: drafting
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1478.1795283569.w5eO6I
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+-- after 6 real seconds
+$ fm-wake-drain.sh FM_OPEN_DECISION_RESURFACE_AFTER=5
+1795283569	1	signal	sm-copy.status	working: drafting
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 1478.1795283569.w5eO6I
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-copy [key=copy-tone] needs-decision (open 0h 30m): warm or crisp copy tone
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+[exit 0]
+-- presented-record file
+1795283585	sm-copy	copy-tone	needs-decision	warm or crisp copy tone

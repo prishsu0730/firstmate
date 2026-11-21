@@ -1,0 +1,12 @@
+20 secondmate decisions, each 5h old, each ~220 bytes (budget 4000 bytes)
+drain 1: new-choice shown=0; aged-with-age shown=0; ids=choice-01 choice-02 choice-03 choice-04 choice-05 choice-06 choice-07 choice-08 choice-09 choice-10 choice-11 choice-12 choice-13 choice-14 choice-15 choice-16 choice-17 choice-18 
+OPEN DECISIONS: 2 more omitted (byte cap)
+drain 2: new-choice shown=1; aged-with-age shown=16; ids=choice-19 choice-20 choice-01 choice-02 choice-03 choice-04 choice-05 choice-06 choice-07 choice-08 choice-09 choice-10 choice-11 choice-12 choice-13 choice-14 choice-15 choice-16 
+OPEN DECISIONS: 2 unchanged, already shown in an earlier drain; list t
+drain 3: new-choice shown=0; aged-with-age shown=4; ids=choice-17 choice-18 choice-19 choice-20 
+OPEN DECISIONS: 17 unchanged, already shown in an earlier drain; list 
+drain 4: new-choice shown=0; aged-with-age shown=0; ids=
+OPEN DECISIONS: 21 unchanged, already shown in an earlier drain; list 
+union of drains 2+3: 20 of 20 aged decisions reshown with age
+--- sample line:
+sm01 [key=call] needs-decision (open 5h 0m): choice-01 00000000000000000000000000000000000

@@ -1,0 +1,44 @@
+
+===== S1 retro case: secondmate decision opened 8h ago, already shown once =====
+--- drain 1 (first sight)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-design [key=logo] needs-decision: pick logo A or B (answer is in Decision Log)
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+--- drain 2 (empty queue, NEW code)
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+sm-design [key=logo] needs-decision (open 8h 0m): pick logo A or B (answer is in Decision Log)
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+--- drain 3 (immediately again, NEW code, cooldown)
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+===== S1b same fixture on BASE code (before fix) =====
+--- drain 2 (BASE code)
+OPEN DECISIONS: 1 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+
+===== S2 young decision (30m) stays a count; ordinary drain with a queued wake =====
+--- ordinary drain
+1795280557	1	signal	other.status	working: continuing
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 38006.1795280557.aasiLM
+
+===== S3 cooldown ends: clock moved +4h01m, decision returns with new age =====
+--- drain right now
+1795280557	1	signal	other.status	working: continuing
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 38006.1795280557.aasiLM
+--- drain at +4h01m
+1795280557	1	signal	other.status	working: continuing
+WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through 1 --recovery-generation 38006.1795280557.aasiLM
+
+===== S4 resolved decision never resurfaces =====
+--- drain after resolve (expect nothing)
+[exit=0]
+
+===== S5 adversarial: 20 aged long decisions + 1 new; budget rotation =====
+drain A: new-first=1 aged-shown=choice-01 choice-02 choice-03 choice-04 choice-05 choice-06 choice-07 choice-08 choice-09 choice-10 choice-11 choice-12 choice-13 choice-14 choice-15 choice-16 choice-17 choice-18 
+drain A summary: OPEN DECISIONS: 2 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+drain B aged-shown=choice-19 choice-20 
+distinct aged decisions shown across A+B: 20 / 20
+
+===== S6 adversarial: note with a tab keeps age and cooldown =====
+--- drain 2 (tab shown as ^I)
