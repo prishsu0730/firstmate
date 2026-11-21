@@ -1,0 +1,3 @@
+$ FM_HOME=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9tZYEQ {run-worktree}/bin/fm-lock.sh
+lock acquired: harness pid 89620
+lock file now: 89620

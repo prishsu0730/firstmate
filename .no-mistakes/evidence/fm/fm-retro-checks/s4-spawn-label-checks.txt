@@ -1,0 +1,51 @@
+=== task retro-light-content
+brief> Type: content
+brief> Review tier: Light
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9tZYEQ/data/retro-light-content/brief.md has a Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light'); set the 'Review tier:' line under '## Risk and review' to one of LOW (No Greptile), MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9tZYEQ/data/retro-light-content/brief.md has a Type that bin/fm-pr-merge.sh would refuse at merge (read 'content'); set the 'Type:' line under '## Risk and review' to 'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor
+exit=  meta-written=no
+
+=== task blank-tier
+brief> Type:  feature
+brief> Review tier: 
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9tZYEQ/data/blank-tier/brief.md has a Review tier that bin/fm-pr-merge.sh would refuse at merge (read ''); set the 'Review tier:' line under '## Risk and review' to one of LOW (No Greptile), MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)
+exit=  meta-written=no
+
+=== task blank-type
+brief> Type: 
+brief> Review tier: LOW
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9tZYEQ/data/blank-type/brief.md has a Type that bin/fm-pr-merge.sh would refuse at merge (read ''); set the 'Type:' line under '## Risk and review' to 'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor
+exit=  meta-written=no
+
+=== task dup-tier
+brief> Type: feature
+brief> Review tier: LOW
+brief> Review tier: HIGH (Plus)
+error: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.9tZYEQ/data/dup-tier/brief.md has more than one Review tier line under '## Risk and review', which bin/fm-pr-merge.sh refuses at merge; keep exactly one
+exit=  meta-written=no
+
+=== task ok-low-feature
+brief> Type: feature
+brief> Review tier: LOW
+notice: ok-low-feature ships mode=direct-PR while the standing posture for 01M7ZPJZR3HYJ81CTVTPSE044S is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+X No default remote repository has been set. To learn more about the default repository, run: gh repo set-default --help
+error: refusing to pre-register Claude trust: project '{run-worktree}' is a linked worktree whose primary checkout could not be resolved
+error: could not pre-register Claude workspace trust for ~/.treehouse/01M7ZPJZR3HYJ81CTVTPSE044S-8bf1b0/1/01M7ZPJZR3HYJ81CTVTPSE044S; refusing to launch a claude worker that would wedge on the trust dialog; inspect window firstmate:fm-ok-low-feature
+exit=  meta-written=no
+
+=== task ok-nogreptile-bugfix
+brief> Type: bug fix
+brief> Review tier: No Greptile
+notice: ok-nogreptile-bugfix ships mode=direct-PR while the standing posture for 01M7ZPJZR3HYJ81CTVTPSE044S is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: refusing to pre-register Claude trust: project '{run-worktree}' is a linked worktree whose primary checkout could not be resolved
+error: could not pre-register Claude workspace trust for ~/.treehouse/01M7ZPJZR3HYJ81CTVTPSE044S-8bf1b0/2/01M7ZPJZR3HYJ81CTVTPSE044S; refusing to launch a claude worker that would wedge on the trust dialog; inspect window firstmate:fm-ok-nogreptile-bugfix
+exit=  meta-written=no
+
+=== task ok-scaffold-high
+brief> Type: docs
+brief> Review tier: HIGH (No Greptile / Base / Plus / Apex)
+notice: ok-scaffold-high ships mode=direct-PR while the standing posture for 01M7ZPJZR3HYJ81CTVTPSE044S is no-mistakes - less rigor than the captain's standing posture; proceed only on a current explicit captain instruction or an intake judgment you can state
+error: refusing to pre-register Claude trust: project '{run-worktree}' is a linked worktree whose primary checkout could not be resolved
+error: could not pre-register Claude workspace trust for ~/.treehouse/01M7ZPJZR3HYJ81CTVTPSE044S-8bf1b0/3/01M7ZPJZR3HYJ81CTVTPSE044S; refusing to launch a claude worker that would wedge on the trust dialog; inspect window firstmate:fm-ok-scaffold-high
+exit=  meta-written=no
+
