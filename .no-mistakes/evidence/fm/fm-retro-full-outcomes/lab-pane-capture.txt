@@ -1,0 +1,12 @@
+  - The lookup shows the full routine line. The beta text is not cut. It ends with "ROUTINE-TAIL".
+  - Marking line 1 as handled worked. The next drain moves on to line 3. Line 1 does not show up again.
+  - A very big captain line stays whole. The gamma line is 6042 characters long. That is bigger than the size limit on its own. The drain still prints all of it, up to the "HUGE-TAIL" ending. The line
+    does not get stuck behind the limit.
+  The drain holds back 1 newer captain line. It tells you to run mark-processed --through 3 next. That run should show the last line.
+  I did not change any files. The outputs are in lookup-2.txt and drain-2.txt in the evidence folder.
+✻ Cooked for 8s · done 2:33 AM
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 · chat 46k · Claude 176931% · Codex 47% left
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 8 agents
