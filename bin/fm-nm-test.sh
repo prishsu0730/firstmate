@@ -54,11 +54,8 @@ ulimit -n 4096 2>/dev/null || true
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNNER="$ROOT/bin/fm-test-run.sh"
 # Per-script bound for the gate. tests/fm-watch-triage.test.sh runs 1564-1673s on
-# unchanged main, so 1500s timed out a passing suite.
-# tests/fm-pr-merge.test.sh runs about 1540s on unchanged main at load 66, and fleet load of
-# 35-90 pushed it, fm-task-delivery, and fm-test-run past 2100s on a passing tree.
-# 3600s leaves headroom for that load.
-PER_SCRIPT_TIMEOUT_SECS=3600
+# unchanged main, so 1500s timed out a passing suite; 2100s leaves headroom above it.
+PER_SCRIPT_TIMEOUT_SECS=2100
 FALLBACK_TESTS=(tests/fm-nm-test-contract.test.sh tests/fm-test-run.test.sh)
 
 usage() {
