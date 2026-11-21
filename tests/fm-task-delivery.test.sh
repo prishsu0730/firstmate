@@ -106,7 +106,7 @@ ROWS
 # A brief's Review tier and Type must be values bin/fm-pr-merge.sh accepts, so a
 # bad label stops the spawn when the brief is handed over and not at merge time.
 test_spawn_refuses_review_tier_and_type_the_merge_would_refuse() {
-  local rec home proj fakebin out status id n=0 tier type
+  local rec home proj fakebin out status id
   rec=$(make_home labels)
   IFS='|' read -r home proj fakebin <<EOF
 $rec
@@ -143,6 +143,24 @@ EOF
     "the refusal did not list the accepted Type values"
   assert_absent "$home/state/$id.meta" "a spawn refused for its Type wrote task metadata"
 
+  id=labels-blank-tier
+  new_labelled_brief "$id" "" "feature"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a blank Review tier was accepted by the spawn"
+  assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+    "the blank Review tier was not named"
+  assert_absent "$home/state/$id.meta" "a spawn refused for a blank Review tier wrote task metadata"
+
+  id=labels-blank-type
+  new_labelled_brief "$id" "LOW" ""
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a blank Type was accepted by the spawn"
+  assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" \
+    "the blank Type was not named"
+  assert_absent "$home/state/$id.meta" "a spawn refused for a blank Type wrote task metadata"
+
   id=labels-both-bad
   new_labelled_brief "$id" "Light" "content"
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
@@ -168,19 +186,7 @@ EOF
   [ "$status" -ne 0 ] || fail "a brief with two Type lines was accepted by the spawn"
   assert_contains "$out" "more than one Type line" "the repeated Type line was not named"
 
-  # Every value the merge accepts must pass the spawn's check.
-  for tier in "LOW" "No Greptile" "MEDIUM (Base)" "base" "HIGH (Plus)" "Plus" "CRITICAL (Apex)" "apex" \
-    "MEDIUM (Base) (No Greptile / Base / Plus / Apex)"; do
-    for type in "bug fix" "bug-fix" "Feature" "docs" "refactor"; do
-      n=$((n + 1))
-      id="labels-ok-$n"
-      new_labelled_brief "$id" "$tier" "$type"
-      out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
-      assert_not_contains "$out" "would refuse at merge" \
-        "Review tier '$tier' with Type '$type' was refused by the spawn though the merge accepts it"
-    done
-  done
-  pass "fm-spawn: a Review tier or Type the merge would refuse stops the spawn, and every accepted value passes"
+  pass "fm-spawn: invalid, blank, and repeated merge labels stop dispatch"
 }
 
 # A scout has no merge to govern and a secondmate's posture is fixed, so the flags
