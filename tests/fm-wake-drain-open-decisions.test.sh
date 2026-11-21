@@ -261,6 +261,7 @@ test_aged_open_decision_returns_on_every_drain() {
     printf 'needs-decision [key=old-call] [at=%s]: pick the rollout plan\n' "$((now - 18000))" > "$state/task1.status"
     FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "initial drain failed"
     if [ "$mode" = ordinary ]; then
+      printf 'working: continuing\n' > "$state/other.status"
       append_wake "$state" signal other.status 'working: continuing' || fail "queue failed"
     fi
     FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "aged drain failed"
