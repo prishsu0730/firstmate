@@ -377,6 +377,30 @@ test_full_listing_exceeds_ordinary_byte_cap() {
   pass "full listing includes decisions beyond the ordinary drain byte cap"
 }
 
+test_tabbed_receipts_preserve_age_and_cooldown() {
+  local dir state out now format
+  for format in legacy timestamped; do
+    dir=$(make_case "tabbed-$format")
+    state="$dir/state"
+    out="$dir/drain.out"
+    now=$(date +%s)
+    printf 'needs-decision [key=choice] [at=%s]: choose A\tor B\n' "$((now - 18000))" > "$state/task1.status"
+    printf 'blocked [key=other] [at=%s]: choose C\tor D\n' "$((now - 18000))" >> "$state/task1.status"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tabbed initial drain failed"
+    grep -F "$(printf 'choose A\tor B')" "$out" >/dev/null || fail "tabbed note was changed"
+    if [ "$format" = legacy ]; then
+      printf 'task1\tchoice\tneeds-decision\tchoose A\tor B\ntask1\tother\tblocked\tchoose C\tor D\n' > "$state/.open-decisions-presented"
+    fi
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tabbed aged drain failed"
+    grep -F 'needs-decision (open 5h' "$out" >/dev/null || fail "tabbed receipt lost decision age"
+    grep -F 'blocked (open 5h' "$out" >/dev/null || fail "sibling key lost decision age"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tabbed cooldown drain failed"
+    grep -F 'OPEN DECISIONS: 2 unchanged' "$out" >/dev/null || fail "tabbed receipts bypassed cooldown"
+    if grep -F 'choose ' "$out" >/dev/null; then fail "tabbed notes reprinted during cooldown"; fi
+  done
+  pass "legacy and timestamped tabbed receipts retain notes, age, and cooldown"
+}
+
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
 test_aged_open_decision_returns_on_every_drain
@@ -392,3 +416,5 @@ test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path
 test_status_symlink_is_not_followed
+
+test_tabbed_receipts_preserve_age_and_cooldown

@@ -493,7 +493,7 @@ format_decision_age() {  # <seconds>
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 unchanged=0 bytes raw tab recorded=''
-  local age_text opened now age last
+  local age_text opened now age last eligible epochs task_keys task_epochs
   now=$(date +%s)
   tab=$(printf '\t')
 
@@ -511,8 +511,8 @@ print_open_decisions_section() {
   [ ! -f "$OPEN_DECISIONS_PRESENTED" ] || receipt=$OPEN_DECISIONS_PRESENTED
   open=$(awk -F '\t' -v OFS='\t' '
     FILENAME != "-" {
-      if (NF == 4) seen[$0] = 0
-      else if (NF == 5) { stamp = $1; sub(/^[^\t]*\t/, ""); seen[$0] = stamp }
+      if ($1 ~ /^[0-9]+$/) { stamp = $1; sub(/^[^\t]*\t/, ""); seen[$0] = stamp }
+      else seen[$0] = 0
       next
     }
     { print (($0 in seen) ? seen[$0] : -1), $0 }
@@ -521,14 +521,34 @@ print_open_decisions_section() {
     open=$(printf '%s\n' "$open" | sort -t "$tab" -k1,1n)
   fi
 
-  while IFS=$tab read -r last task key verb note; do
+  epochs=''
+  if [ "$OPEN_DECISIONS_FULL" != true ]; then
+    eligible=$(printf '%s\n' "$open" | awk -F '\t' -v now="$now" -v limit="$OPEN_DECISIONS_RESURFACE_AFTER" '
+      $1 >= 0 && ($1 == 0 || now - $1 >= limit) { print $2 "\t" $3 }
+    ')
+    while IFS= read -r task; do
+      [ -n "$task" ] || continue
+      task_keys=$(printf '%s\n' "$eligible" | awk -F '\t' -v task="$task" '$1 == task { print $2 }')
+      task_epochs=$(status_open_decision_opened_epochs "$STATE/$task.status" "$task_keys")
+      while IFS=$tab read -r key opened; do
+        [ -n "$opened" ] || continue
+        epochs="$epochs$task$tab$key$tab$opened
+"
+      done <<< "$task_epochs"
+    done < <(printf '%s\n' "$eligible" | cut -f1 | sort -u)
+  fi
+  open=$(awk -F '\t' -v OFS='\t' '
+    FILENAME != "-" { epoch[$1 SUBSEP $2] = $3; next }
+    { print (($2 SUBSEP $3 in epoch) ? epoch[$2 SUBSEP $3] : -1), $0 }
+  ' <(printf '%s' "$epochs") - <<< "$open")
+
+  while IFS=$tab read -r opened last task key verb note; do
     [ -n "$task" ] || continue
     raw="$task$tab$key$tab$verb$tab$note"
     age_text=''
     if [ "$OPEN_DECISIONS_FULL" != true ] && [ "$last" -ge 0 ]; then
-      if opened=$(status_open_decision_opened_epoch "$STATE/$task.status" "$key") \
-        && age=$((now - opened)) && [ "$age" -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ] \
-        && { [ "$last" -eq 0 ] || [ $((now - last)) -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ]; }; then
+      if [ "$opened" -ge 0 ] && age=$((now - opened)) \
+        && [ "$age" -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ]; then
         age_text=$(format_decision_age "$age")
       fi
       if [ -z "$age_text" ]; then

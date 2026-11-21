@@ -1012,28 +1012,24 @@ status_open_decisions() {  # <status-file> [<kind>]
   printf '%s\n' "$open" | _fm_decision_public_set
 }
 
-# The epoch stamped on the line that last opened <key> in a status file, for a
-# reader that asks how long a still-open decision has been waiting. Prints
-# nothing and returns nonzero when the file cannot be read or that line carries
-# no well-formed [at=<epoch>] tag, so the age is unknown rather than guessed.
-# Only needs-decision and blocked lines open a decision, and a line the fold
-# would refuse (a reserved key outside its owner's vocabulary) is skipped here
-# too. Whole-file but prefiltered by a case glob, and called only for the few
-# decisions a drain is deciding whether to bring back.
-status_open_decision_opened_epoch() {  # <status-file> <key> -> epoch; nonzero when unknown
-  local f=$1 key=$2 line verb k epoch='' LC_ALL=C
-  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 1
+# Print key/epoch pairs for requested open keys in one pass through the log.
+# Unknown opening times are omitted.
+status_open_decision_opened_epochs() {  # <status-file> <newline-separated-keys>
+  local f=$1 keys=$2 line verb k epoch epochs='' LC_ALL=C
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in *needs-decision*|*blocked*) ;; *) continue ;; esac
     status_line_verb "$line" verb
     case "$verb" in needs-decision|blocked) ;; *) continue ;; esac
     k=$(_fm_decision_key "$line") || continue
-    [ "$k" = "$key" ] || continue
+    case $'\n'"$keys"$'\n' in *$'\n'"$k"$'\n'*) ;; *) continue ;; esac
     _fm_decision_key_transition_allowed "$k" "$(status_line_note "$line")" || continue
     epoch=$(status_line_at_epoch "$line") || epoch=''
+    epochs="$epochs$k"$'\t'"$epoch"$'\n'
   done < "$f"
-  [ -n "$epoch" ] || return 1
-  printf '%s' "$epoch"
+  printf '%s' "$epochs" | awk -F '\t' '{ epoch[$1] = $2 } END {
+    for (key in epoch) if (epoch[key] != "") print key "\t" epoch[key]
+  }'
 }
 
 # Resolve the log's current declaration at one boundary for crew-state consumers.
