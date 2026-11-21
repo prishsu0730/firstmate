@@ -269,7 +269,10 @@ test_aged_open_decision_returns_on_every_drain() {
     FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "repeat drain failed"
     if grep -F 'pick the rollout plan' "$out" >/dev/null; then fail "immediate reprint"; fi
     mkdir "$dir/clock"
-    printf '#!/usr/bin/env bash\nif [ "$1" = +%%s ]; then echo %s; else exec %s "$@"; fi\n' "$((now + 14460))" "$(command -v date)" > "$dir/clock/date"
+    cat > "$dir/clock/date" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = +%s ]; then echo $((now + 14460)); else exec $(command -v date) "\$@"; fi
+EOF
     chmod +x "$dir/clock/date"
     PATH="$dir/clock:$PATH" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "later drain failed"
     grep -F 'pick the rollout plan' "$out" | grep -F '9h' >/dev/null || fail "decision did not return after interval"
