@@ -268,6 +268,42 @@ test_branch_outcomes_collapse_repeated_captain_outcomes_per_task() {
   pass "drain: repeated captain outcomes collapse per task, and the byte cap presents only the run its acknowledgement covers"
 }
 
+# A captain outcome is never cut: the correction a long summary carries at its
+# tail must reach main in the drain itself. A routine outcome may be cut, and
+# then names the exact lookup command for its sequence.
+test_branch_outcomes_never_cut_a_captain_outcome() {
+  local home drained long huge routine_long target
+  home="$TMP_ROOT/drain-captain-whole"
+  mkdir -p "$home/state" "$home/config"
+  : > "$home/config/supervision-host"
+  long=$(awk 'BEGIN { for (i = 0; i < 1500; i++) printf "a"; printf " CORRECTION-AT-THE-TAIL" }')
+  FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task alpha --verdict captain --summary "$long" >/dev/null \
+    || fail "fixture: could not record the long captain outcome"
+  routine_long=$(awk 'BEGIN { for (i = 0; i < 900; i++) printf "r" }')
+  FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task beta --verdict routine --summary "$routine_long" >/dev/null \
+    || fail "fixture: could not record the long routine outcome"
+  drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
+  assert_contains "$drained" "alpha: $long" "a captain outcome over 900 characters must appear whole in the drain"
+  assert_not_contains "$drained" "alpha: ${long:0:100} [truncated]" "a captain outcome must carry no truncation marker"
+  assert_contains "$drained" "[truncated] (full text: bin/fm-branch-outcome.sh lookup --seqs 2)" "a cut routine outcome must print its exact lookup command"
+  assert_contains "$drained" "mark-processed --through 1;" "the acknowledgement must cover the whole captain outcome"
+  FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" mark-processed --through 1 >/dev/null 2>&1 || fail "the acknowledgement was refused"
+
+  # One outcome longer than the whole captain budget is still presented, whole,
+  # so the section cannot stall on the oldest row.
+  huge=$(awk 'BEGIN { for (i = 0; i < 6000; i++) printf "h"; printf " HUGE-TAIL" }')
+  FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task gamma --verdict captain --summary "$huge" >/dev/null \
+    || fail "fixture: could not record the huge captain outcome"
+  FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task delta --verdict captain --summary 'delta ready' >/dev/null \
+    || fail "fixture: could not record the delta outcome"
+  drained=$(FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
+  assert_contains "$drained" "gamma: $huge" "an oldest captain outcome over the byte budget must still appear whole"
+  assert_contains "$drained" "1 newer captain outcome(s) are held back" "the row after an over-budget one must wait"
+  target=$(printf '%s\n' "$drained" | sed -n 's/.*mark-processed --through \([0-9]*\);.*/\1/p')
+  [ "$target" = 3 ] || fail "the acknowledgement must cover only the whole row shown, got '${target:-none}'"
+  pass "drain: a captain outcome is never cut, and a cut routine outcome prints its lookup command"
+}
+
 # The reference experience after a long away window: the drain is the only
 # presenter, so the first drain once the away record is gone shows the window
 # once - each task's captain outcomes collapsed to one line, routine ones past
@@ -330,13 +366,13 @@ test_branch_outcomes_budgets_count_bytes() {
     FM_HOME="$home" "$ROOT/bin/fm-branch-outcome.sh" append --task wide-cap --verdict captain --summary "$wide" >/dev/null \
       || fail "fixture: could not record the captain outcome"
     drained=$(LC_ALL=$locale FM_HOME="$home" "$FAKE_CLAUDE" -c '"$0" 2>&1' "$ROOT/bin/fm-wake-drain.sh")
-    assert_contains "$drained" "wide-cap: " "the captain outcome must be presented (locale '$locale')"
-    printf '%s\n' "$drained" | LC_ALL=C awk '/^\[seq [0-9]+[^]]*\] wide-/ && length($0) > 599 { bad = 1 } END { exit bad }' \
-      || fail "an item exceeded its 599-byte cap (locale '$locale'): $drained"
-    printf '%s\n' "$drained" | grep '^\[seq [0-9]*[^]]*\] wide-' | grep -qv ' \[truncated\]$' \
-      && fail "an over-long multibyte item was not cut with the truncation marker (locale '$locale'): $drained"
-    printf '%s\n' "$drained" | grep '^\[seq [0-9]*[^]]*\] wide-' | perl -ne 'utf8::decode($_) or exit 1' \
-      || fail "an item was cut inside a character (locale '$locale')"
+    assert_contains "$drained" "wide-cap: $wide" "the captain outcome must be presented whole (locale '$locale')"
+    printf '%s\n' "$drained" | LC_ALL=C awk '/^\[seq [0-9]+\] wide-/ && length($0) > 599 { bad = 1 } END { exit bad }' \
+      || fail "a routine item exceeded its 599-byte cap (locale '$locale'): $drained"
+    printf '%s\n' "$drained" | grep '^\[seq [0-9]*\] wide-' | grep -qvE ' \[truncated\] \(full text: bin/fm-branch-outcome\.sh lookup --seqs [0-9]+\)$' \
+      && fail "an over-long multibyte routine item was not cut with the truncation marker and its lookup command (locale '$locale'): $drained"
+    printf '%s\n' "$drained" | grep '^\[seq [0-9]*\] wide-' | perl -ne 'utf8::decode($_) or exit 1' \
+      || fail "a routine item was cut inside a character (locale '$locale')"
     routine_block=$(printf '%s\n' "$drained" | sed -n '/^BRANCH OUTCOMES, ROUTINE/,$p' | grep '^\[seq [0-9]*\] wide-[0-9]')
     [ "$(printf '%s\n' "$routine_block" | LC_ALL=C wc -c | tr -d ' ')" -le 2000 ] \
       || fail "the routine list exceeded its 2000-byte budget (locale '$locale'): $routine_block"
@@ -1725,6 +1761,7 @@ test_dispatch_entry_scopes_rows_and_renders_the_away_tail
 test_branch_outcomes_only_on_a_host_home_off_pi
 test_branch_outcomes_put_captain_first_and_collapse_routine_overflow
 test_branch_outcomes_collapse_repeated_captain_outcomes_per_task
+test_branch_outcomes_never_cut_a_captain_outcome
 test_branch_outcomes_present_a_long_away_window_once
 test_branch_outcomes_budgets_count_bytes
 test_branch_outcomes_stay_unread_when_a_projection_fails
