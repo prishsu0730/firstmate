@@ -648,8 +648,10 @@ EOF
 #     cap presents only the oldest contiguous run of captain rows and counts
 #     the newer ones it holds back, so the printed bin/fm-branch-outcome.sh
 #     mark-processed target, the newest presented row, acknowledges exactly
-#     what was presented and always at least the oldest row. An unprocessed
-#     captain row is never adopted as processed, so a home that opts in
+#     what was presented and always at least the oldest row. A captain line
+#     is never cut, since its tail can hold a correction; the oldest row is
+#     presented whole even past the byte cap, so the section cannot stall. An
+#     unprocessed captain row is never adopted as processed, so a home that opts in
 #     mid-session cannot lose its first captain outcome. Each line names how
 #     long ago its row was recorded (the store's "recordedAgo"), because a row
 #     main never acknowledged can come back long after its situation settled
@@ -662,7 +664,9 @@ EOF
 #     branch's routine notes reach main's transcript without a turn; silent
 #     routine outcomes never appear. The newest visible rows that fit a byte
 #     cap are listed, and older visible rows collapse into a count, since
-#     bin/fm-branch-outcome.sh list keeps them all.
+#     bin/fm-branch-outcome.sh list keeps them all. A routine line over the
+#     per-item cap is cut and prints the exact bin/fm-branch-outcome.sh lookup
+#     command for its sequence.
 # Once the section is printed, the store's read cursor advances through every
 # presented row, which is what lets mark-processed accept main's
 # acknowledgement and keeps a routine row from repeating; a drain stopped
@@ -712,12 +716,14 @@ print_branch_outcomes_section() {
       held=$((held + 1))
       continue
     fi
-    cap_outcome_line "$task_line" $((item_bytes - 1))
+    whole_outcome_line "$task_line"
     i=0
     while [ "$i" -lt "$shown" ] && [ "${captain_tasks[$i]}" != "$task" ]; do i=$((i + 1)); done
     bytes=$(( used + OUTCOME_LINE_BYTES + 1 ))
     [ "$i" -eq "$shown" ] || bytes=$(( bytes - captain_line_bytes[i] - 1 ))
-    if [ "$bytes" -gt "$captain_bytes" ]; then
+    # The oldest row is always presented, however long, so the section cannot
+    # stall on it; later rows wait once the byte cap would pass.
+    if [ "$bytes" -gt "$captain_bytes" ] && [ "$shown" -gt 0 ]; then
       held=1
       continue
     fi
@@ -753,7 +759,7 @@ ROWS
   # Newest first against the cap, printed oldest first.
   while IFS= read -r line; do
     [ -n "$line" ] || continue
-    cap_outcome_line "$line" $((item_bytes - 1))
+    cap_outcome_line "$line" $((item_bytes - 1)) "$(outcome_lookup_hint "$line")"
     bytes=$(( OUTCOME_LINE_BYTES + 1 ))
     [ $((used + bytes)) -le "$routine_bytes" ] || break
     routine_lines="$OUTCOME_LINE
@@ -780,19 +786,40 @@ ROWS
   fi
 }
 
-# BRANCH OUTCOMES' per-item cut: the shared digest marker in place of the
-# tail once the line passes <max> bytes, cut bytewise whatever the caller's
-# locale and backed off to the last whole UTF-8 character, so a multibyte
-# summary keeps the section inside its byte budgets and stays valid text. Sets
-# OUTCOME_LINE and OUTCOME_LINE_BYTES.
-cap_outcome_line() {  # <line> <max-bytes>
-  local LC_ALL=C line=$1 max=$2 keep body tail rest need
+# A captain outcome line is never cut: sets OUTCOME_LINE and OUTCOME_LINE_BYTES
+# (counted in bytes whatever the caller's locale) to the whole line.
+whole_outcome_line() {  # <line>
+  local LC_ALL=C line=$1
+  OUTCOME_LINE=$line
+  OUTCOME_LINE_BYTES=${#line}
+}
+
+# The exact lookup command for a routine outcome line's sequence, which a cut
+# line prints so the cut text costs main one command, not a search. Empty when
+# the line carries no leading "[seq N" marker.
+outcome_lookup_hint() {  # <line>
+  local seq
+  seq=${1#\[seq }
+  [ "$seq" != "$1" ] || return 0
+  seq=${seq%%[!0-9]*}
+  [ -n "$seq" ] || return 0
+  printf ' (full text: bin/fm-branch-outcome.sh lookup --seqs %s)' "$seq"
+}
+
+# BRANCH OUTCOMES' per-item cut for a routine line: the shared digest marker in
+# place of the tail once the line passes <max> bytes, then <hint> (the lookup
+# command), cut bytewise whatever the caller's locale and backed off to the
+# last whole UTF-8 character, so a multibyte summary keeps the section inside
+# its byte budgets and stays valid text. Sets OUTCOME_LINE and
+# OUTCOME_LINE_BYTES.
+cap_outcome_line() {  # <line> <max-bytes> [<hint>]
+  local LC_ALL=C line=$1 max=$2 hint=${3:-} keep body tail rest need
   if [ "${#line}" -le "$max" ]; then
     OUTCOME_LINE=$line
     OUTCOME_LINE_BYTES=${#line}
     return 0
   fi
-  keep=$((max - ${#FM_LINE_CAP_SUFFIX}))
+  keep=$((max - ${#FM_LINE_CAP_SUFFIX} - ${#hint}))
   [ "$keep" -ge 0 ] || keep=0
   body=${line:0:keep}
   tail=${body##*[!$'\x80'-$'\xbf']}
@@ -804,7 +831,7 @@ cap_outcome_line() {  # <line> <max-bytes>
     *) need=0 ;;
   esac
   [ "${#tail}" -ge "$need" ] || body=${rest%?}
-  OUTCOME_LINE=$body$FM_LINE_CAP_SUFFIX
+  OUTCOME_LINE=$body$FM_LINE_CAP_SUFFIX$hint
   OUTCOME_LINE_BYTES=${#OUTCOME_LINE}
 }
 
