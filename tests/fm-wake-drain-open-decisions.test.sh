@@ -251,35 +251,56 @@ test_unchanged_decision_is_summarized_after_first_presentation() {
   pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
 }
 
-test_aged_open_decision_returns_on_a_heartbeat_drain_with_its_age() {
-  local dir state out now
-  dir=$(make_case aged-heartbeat)
+test_aged_open_decision_returns_on_every_drain() {
+  local dir state out now mode
+  for mode in empty ordinary; do
+    dir=$(make_case "aged-$mode")
+    state="$dir/state"
+    out="$dir/drain.out"
+    now=$(date +%s)
+    printf 'needs-decision [key=old-call] [at=%s]: pick the rollout plan\n' "$((now - 18000))" > "$state/task1.status"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "initial drain failed"
+    if [ "$mode" = ordinary ]; then
+      append_wake "$state" signal other.status 'working: continuing' || fail "queue failed"
+    fi
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "aged drain failed"
+    grep -F 'pick the rollout plan' "$out" | grep -F '5h' >/dev/null || fail "$mode drain hid aged decision"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "repeat drain failed"
+    if grep -F 'pick the rollout plan' "$out" >/dev/null; then fail "immediate reprint"; fi
+    mkdir "$dir/clock"
+    printf '#!/usr/bin/env bash\nif [ "$1" = +%%s ]; then echo %s; else exec %s "$@"; fi\n' "$((now + 14460))" "$(command -v date)" > "$dir/clock/date"
+    chmod +x "$dir/clock/date"
+    PATH="$dir/clock:$PATH" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "later drain failed"
+    grep -F 'pick the rollout plan' "$out" | grep -F '9h' >/dev/null || fail "decision did not return after interval"
+  done
+  pass "aged decisions return on ordinary and empty drains, once per interval"
+}
+
+test_aged_decisions_rotate_and_new_decisions_go_first() {
+  local dir state out now i note
+  dir=$(make_case aged-rotation)
   state="$dir/state"
   out="$dir/drain.out"
   now=$(date +%s)
-  # One decision opened five hours ago, one opened a minute ago.
-  printf 'needs-decision [key=old-call] [at=%s]: pick the rollout plan\n' "$((now - 18000))" > "$state/task1.status"
-  printf 'needs-decision [key=fresh-call] [at=%s]: pick the colour\n' "$((now - 60))" > "$state/task2.status"
-
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first drain failed"
-  grep -F 'pick the rollout plan' "$out" >/dev/null || fail "first drain did not print the old decision in full"
-
-  # An ordinary drain keeps the one-line count for both.
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second drain failed"
-  if grep -F 'pick the rollout plan' "$out" >/dev/null; then
-    fail "a non-heartbeat drain re-printed the aged decision: $(cat "$out")"
-  fi
-  grep -F 'OPEN DECISIONS: 2 unchanged' "$out" >/dev/null || fail "ordinary drain lost the unchanged count: $(cat "$out")"
-
-  # A heartbeat drain brings the aged one back with its age; the fresh one stays counted.
-  append_wake "$state" heartbeat heartbeat "heartbeat" || fail "queueing the heartbeat failed"
-  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "heartbeat drain failed"
-  grep -F 'task1' "$out" | grep -F '[key=old-call]' | grep -F 'pick the rollout plan' | grep -F '5h' >/dev/null     || fail "heartbeat drain did not re-print the aged decision with its age: $(cat "$out")"
-  if grep -F 'pick the colour' "$out" >/dev/null; then
-    fail "heartbeat drain re-printed a decision younger than the age limit: $(cat "$out")"
-  fi
-  grep -F 'OPEN DECISIONS: 1 unchanged' "$out" >/dev/null || fail "the fresh decision was not left in the unchanged count: $(cat "$out")"
-  pass "an open decision older than the age limit comes back with its age on a heartbeat drain"
+  note=$(printf '%0200d' 0)
+  for i in $(seq 1 20); do
+    printf 'needs-decision [key=call] [at=%s]: choice-%02d %s\n' "$((now - 18000))" "$i" "$note" > "$state/task$i.status"
+  done
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "seed failed"
+  printf 'needs-decision: brand new choice\n' > "$state/zz-new.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first rotation failed"
+  grep -F 'brand new choice' "$out" >/dev/null || fail "aged decisions crowded out new decision"
+  for i in $(seq 1 20); do
+    if ! grep -F "choice-$(printf '%02d' "$i")" "$out" >/dev/null; then
+      printf '%s\n' "$i" >> "$dir/remaining"
+    fi
+  done
+  [ -s "$dir/remaining" ] || fail "fixture did not exceed budget"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second rotation failed"
+  while read -r i; do
+    grep -F "choice-$(printf '%02d' "$i")" "$out" >/dev/null || fail "omitted decision starved"
+  done < "$dir/remaining"
+  pass "aged decisions rotate within the budget and new decisions print first"
 }
 
 test_aged_open_decision_age_limit_is_configurable() {
@@ -358,7 +379,8 @@ test_full_listing_exceeds_ordinary_byte_cap() {
 
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
-test_aged_open_decision_returns_on_a_heartbeat_drain_with_its_age
+test_aged_open_decision_returns_on_every_drain
+test_aged_decisions_rotate_and_new_decisions_go_first
 test_aged_open_decision_age_limit_is_configurable
 test_full_listing_is_read_only_and_bounded
 test_full_listing_exceeds_ordinary_byte_cap

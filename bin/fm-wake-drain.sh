@@ -16,10 +16,10 @@
 # locked drain rotates such leftovers away before doing anything else.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
-# A drain that presents a heartbeat row prints again, with its age, every
-# still-open decision already shown in an earlier drain whose opening line is
-# older than FM_OPEN_DECISION_RESURFACE_AFTER seconds (default 14400, four
-# hours); younger unchanged decisions stay in the one-line count.
+# Every drain can reshow an unchanged decision older than
+# FM_OPEN_DECISION_RESURFACE_AFTER seconds (default 14400, four hours), with
+# its age. Reprints wait the same interval before returning; new and edited
+# decisions precede reprints within the output budget.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -57,11 +57,6 @@ BRANCH_OUTCOMES_RC=0
 OPEN_DECISIONS_FULL=${FM_DRAIN_FULL_OPEN_DECISIONS:+true}
 OPEN_DECISIONS_FULL=${OPEN_DECISIONS_FULL:-false}
 OPEN_DECISIONS_READONLY=false
-# A heartbeat drain brings back every still-open decision that has waited longer
-# than this many seconds (default four hours), with its age, even when an
-# earlier drain already showed it. Set by the main flow when the drain presents
-# a heartbeat row; FM_OPEN_DECISION_RESURFACE_AFTER overrides the age.
-OPEN_DECISIONS_RESURFACE=false
 OPEN_DECISIONS_RESURFACE_AFTER=${FM_OPEN_DECISION_RESURFACE_AFTER:-14400}
 case "$OPEN_DECISIONS_RESURFACE_AFTER" in ''|*[!0-9]*|0) OPEN_DECISIONS_RESURFACE_AFTER=14400 ;; esac
 OPEN_DECISIONS_PRESENTED="$STATE/.open-decisions-presented"
@@ -498,7 +493,8 @@ format_decision_age() {  # <seconds>
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 unchanged=0 bytes raw tab recorded=''
-  local age_text opened now='' age
+  local age_text opened now age last
+  now=$(date +%s)
   tab=$(printf '\t')
 
   OPEN_DECISIONS_PENDING=
@@ -511,27 +507,33 @@ print_open_decisions_section() {
   fi
   [ -n "$open" ] || { OPEN_DECISIONS_PENDING=none; return 0; }
 
-  while IFS=$tab read -r task key verb note; do
+  local receipt=/dev/null
+  [ ! -f "$OPEN_DECISIONS_PRESENTED" ] || receipt=$OPEN_DECISIONS_PRESENTED
+  open=$(awk -F '\t' -v OFS='\t' '
+    FILENAME != "-" {
+      if (NF == 4) seen[$0] = 0
+      else if (NF == 5) { stamp = $1; sub(/^[^\t]*\t/, ""); seen[$0] = stamp }
+      next
+    }
+    { print (($0 in seen) ? seen[$0] : -1), $0 }
+  ' "${receipt}" - <<< "$open" 2>/dev/null)
+  if [ "$OPEN_DECISIONS_FULL" != true ]; then
+    open=$(printf '%s\n' "$open" | sort -t "$tab" -k1,1n)
+  fi
+
+  while IFS=$tab read -r last task key verb note; do
     [ -n "$task" ] || continue
     raw="$task$tab$key$tab$verb$tab$note"
     age_text=''
-    # A decision already presented in an earlier drain and unchanged since is
-    # only counted; a new or edited one (any field differs) prints in full. On
-    # a heartbeat drain one that has waited past the age limit prints again with
-    # its age, so a long-open decision cannot fade into the count. An unknown
-    # age (no time tag on the opening line) stays counted.
-    if [ "$OPEN_DECISIONS_FULL" != true ] && [ -f "$OPEN_DECISIONS_PRESENTED" ] \
-      && grep -Fxq -- "$raw" "$OPEN_DECISIONS_PRESENTED" 2>/dev/null; then
-      if [ "$OPEN_DECISIONS_RESURFACE" = true ]; then
-        [ -n "$now" ] || now=$(date +%s)
-        if opened=$(status_open_decision_opened_epoch "$STATE/$task.status" "$key") \
-          && age=$((now - opened)) && [ "$age" -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ]; then
-          age_text=$(format_decision_age "$age")
-        fi
+    if [ "$OPEN_DECISIONS_FULL" != true ] && [ "$last" -ge 0 ]; then
+      if opened=$(status_open_decision_opened_epoch "$STATE/$task.status" "$key") \
+        && age=$((now - opened)) && [ "$age" -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ] \
+        && { [ "$last" -eq 0 ] || [ $((now - last)) -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ]; }; then
+        age_text=$(format_decision_age "$age")
       fi
       if [ -z "$age_text" ]; then
         unchanged=$((unchanged + 1))
-        recorded="$recorded$raw
+        recorded="$recorded$last$tab$raw
 "
         continue
       fi
@@ -554,7 +556,7 @@ print_open_decisions_section() {
       if [ -n "$age_text" ]; then
         # Already presented before: past the byte cap it falls back to the count.
         unchanged=$((unchanged + 1))
-        recorded="$recorded$raw
+        recorded="$recorded$last$tab$raw
 "
         continue
       fi
@@ -566,7 +568,8 @@ print_open_decisions_section() {
 "
     used=$((used + bytes))
     shown=$((shown + 1))
-    recorded="$recorded$raw
+    if [ -n "$age_text" ]; then last=$now; elif [ "$last" -lt 0 ]; then last=0; fi
+    recorded="$recorded$last$tab$raw
 "
   done <<EOF
 $open
@@ -1207,9 +1210,6 @@ DRAIN_LOCK_HELD=false
 printf 'WAKE_ACK_REQUIRED: after handling completes run bin/fm-wake-drain.sh --ack-through %s --recovery-generation %s\n' \
   "$ACK_THROUGH" "${RECOVERY_MARKER_TOKEN##*:}" >&2
 
-if printf '%s\n' "$RAW_ROWS" | awk -F '\t' '$3 == "heartbeat" { found = 1 } END { exit !found }'; then
-  OPEN_DECISIONS_RESURFACE=true
-fi
 (print_status_presentation "$RAW_ROWS") || true
 print_branch_outcomes_section || BRANCH_OUTCOMES_RC=1
 assert_watcher_liveness
