@@ -1,8 +1,7 @@
 # Native session-start adapters
 
 This doc is for operators who need to know which harnesses run `bin/fm-session-start.sh` when a session opens, which only nudge the agent to run it, and how clear, compaction, and resume are handled.
-AGENTS.md section 3 is the authoritative behavioral contract for session start.
-This file owns how the tracked native session-open adapters deliver it, and the compatibility limits that force two tiers rather than one.
+`AGENTS.md` owns the always-loaded session-start requirements; `session-start-recovery` owns conditional recovery. This document owns how tracked native session-open adapters deliver the digest and the compatibility limits behind its two tiers.
 
 One term recurs throughout:
 

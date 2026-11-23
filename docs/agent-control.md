@@ -204,7 +204,7 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 
 ## Task dispatch and supervision handoff
 
-Spawn under the `AGENTS.md` section 4 and section 7 rules.
+Spawn under the always-loaded dispatch requirements in `AGENTS.md` section 4 and the task-intake and dispatch procedures in `docs/configuration.md`.
 When the configured tasks-axi backlog gate applies, the spawn itself moves the work item to In flight and refuses when this home has no item for the work (manual-backend contract: `docs/configuration.md`).
 After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
 A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
@@ -214,4 +214,4 @@ Pass `--resolve-key` when a steer answers an open keyed decision or blocker.
 Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything (this document).
 `bin/fm-pending-reply-lib.sh` owns the correlation, recovery, and escalation contract for marked secondmate requests.
 When the captain adds or changes an ask mid-task, append the captain's words, without speaker labels or direct address, to that brief's `## Captain's intent` and relay them to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
-Supervise all live work under `AGENTS.md` section 8.
+Supervise all live work under `AGENTS.md` section 8 and the per-wake procedure in `docs/architecture.md`.

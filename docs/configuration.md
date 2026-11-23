@@ -1096,7 +1096,7 @@ Firstmate cannot see which part of a worker's execution uses the resource, so th
 
 `config/crew-dispatch.json` is an optional local, gitignored file containing natural-language rules that firstmate reads before dispatching a crewmate or scout.
 Firstmate chooses the best matching rule with judgment; shell scripts do not match the natural-language rules.
-Firstmate resolves the rule's profile object or array under `AGENTS.md` section 4 and `quota-array-dispatch`, then passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
+Firstmate resolves the rule's profile object or array under the always-loaded dispatch intake boundary in [`AGENTS.md` section 4](../AGENTS.md#4-harness-and-runtime-dispatch), this document's Task dispatch profile routing procedure, and `quota-array-dispatch`, then passes only concrete `--harness`, `--model`, and `--effort` flags to `fm-spawn.sh`.
 
 **Spawn requirements**
 
@@ -1107,7 +1107,7 @@ Firstmate resolves the rule's profile object or array under `AGENTS.md` section 
 **Contract owners**
 
 This section is the single owner of the canonical schema and its per-field semantics.
-`AGENTS.md` section 4 owns the always-loaded dispatch intake boundary, and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
+The always-loaded dispatch intake boundary remains in [`AGENTS.md` section 4](../AGENTS.md#4-harness-and-runtime-dispatch), and `quota-array-dispatch` owns the completion-aware profile-array selection procedure.
 
 ```json
 {
@@ -1162,7 +1162,7 @@ Set it high when a wrong pick is costly and low when the rule is a safe runner-u
 A profile `provider` optionally names the quota-axi provider family whose rows apply to that profile; when present, profile and rule-floor provider IDs must match the strict whole-string pattern `^[a-z0-9]+(-[a-z0-9]+)*\z`.
 Bootstrap validates resolver-only `approval`, `min_confidence`, `floor`, and present `provider` values only while typed resolution is active; without the key those inert fields and the pre-existing verified-harness baseline preserve bootstrap behavior.
 
-Typed resolution additively recognizes `gemini` because AGENTS.md section 4 verifies it for crewmate and scout dispatch.
+Typed resolution additively recognizes `gemini` because [`AGENTS.md` section 4](../AGENTS.md#4-harness-and-runtime-dispatch) verifies it for crewmate and scout dispatch.
 
 | Harness | Provider declaration on the opted-in resolver path |
 | --- | --- |
@@ -2585,7 +2585,7 @@ Write the task-specific brief (Crewmate briefs in docs/configuration.md) before 
 
 ## Task dispatch profile routing
 
-`AGENTS.md` section 4 keeps the always-loaded intake boundary; the rest of the routing procedure is here.
+`AGENTS.md` section 4 keeps the always-loaded dispatch boundary; this section owns the rest of the routing procedure.
 Routing precedence is an explicit per-task captain override, then the best-fit configured rule, then the configured default, then the static crewmate harness.
 Never call a profile-array result quota-informed without having loaded `quota-array-dispatch`, and never infer a credential store, provider family, or quota mapping from a harness, model, or source name.
 Never launch another harness's CLI to judge a candidate.
@@ -2598,7 +2598,7 @@ Run `bin/fm-dispatch-resolve.sh` directly on the written brief in the same turn,
 The selected delivery path owns its own rigor.
 Keep local commits focused and granular as cheap checkpoints, batch obvious local corrections before a remote push, match CI, no-mistakes, and Greptile depth to the change level, and run each remote check against a stable coherent head.
 When no-mistakes is selected, no-mistakes alone owns review, fixes, tests, documentation, push, PR, and CI; otherwise follow the faster path without adding an independent reviewer.
-Never hold work outside no-mistakes for a manual clean verdict (`AGENTS.md` section 7).
+Never hold work outside no-mistakes for a manual clean verdict; this section owns task delivery path rigor.
 A separate review or audit is allowed only when the captain explicitly requests that deliverable or the task is a knowledge-only review.
 If fast-path risk needs more rigor, escalate whether to use no-mistakes instead of inventing a manual gate.
 The path's worker, automated gates, and captain approval remain authoritative: **no-mistakes** runs the full pipeline through a PR, **direct-PR** has the worker push and open a PR without it, and **local-only** has the worker stop with a clean ready branch, each then waiting for the configured merge authority (local-only via the guarded fast-forward path).
