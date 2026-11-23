@@ -251,6 +251,83 @@ test_unchanged_decision_is_summarized_after_first_presentation() {
   pass "an unchanged open decision prints once, then as a count; new or changed ones print in full"
 }
 
+test_aged_open_decision_returns_on_every_drain() {
+  local dir state out now mode
+  for mode in empty ordinary; do
+    dir=$(make_case "aged-$mode")
+    state="$dir/state"
+    out="$dir/drain.out"
+    now=$(date +%s)
+    printf 'needs-decision [key=old-call] [at=%s]: pick the rollout plan\n' "$((now - 18000))" > "$state/task1.status"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "initial drain failed"
+    if [ "$mode" = ordinary ]; then
+      printf 'working: continuing\n' > "$state/other.status"
+      append_wake "$state" signal other.status 'working: continuing' || fail "queue failed"
+    fi
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "aged drain failed"
+    grep -F 'pick the rollout plan' "$out" | grep -F '5h' >/dev/null || fail "$mode drain hid aged decision"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "repeat drain failed"
+    if grep -F 'pick the rollout plan' "$out" >/dev/null; then fail "immediate reprint"; fi
+    mkdir "$dir/clock"
+    cat > "$dir/clock/date" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = +%s ]; then echo $((now + 14460)); else exec $(command -v date) "\$@"; fi
+EOF
+    chmod +x "$dir/clock/date"
+    PATH="$dir/clock:$PATH" FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "later drain failed"
+    grep -F 'pick the rollout plan' "$out" | grep -F '9h' >/dev/null || fail "decision did not return after interval"
+  done
+  pass "aged decisions return on ordinary and empty drains, once per interval"
+}
+
+test_aged_decisions_rotate_and_new_decisions_go_first() {
+  local dir state out now i note
+  dir=$(make_case aged-rotation)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  note=$(printf '%0200d' 0)
+  for i in $(seq 1 20); do
+    printf 'needs-decision [key=call] [at=%s]: choice-%02d %s\n' "$((now - 18000))" "$i" "$note" > "$state/task$i.status"
+  done
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "seed failed"
+  printf 'needs-decision: brand new choice\n' > "$state/zz-new.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first rotation failed"
+  grep -F 'brand new choice' "$out" >/dev/null || fail "aged decisions crowded out new decision"
+  for i in $(seq 1 20); do
+    if ! grep -F "choice-$(printf '%02d' "$i")" "$out" >/dev/null; then
+      printf '%s\n' "$i" >> "$dir/remaining"
+    fi
+  done
+  [ -s "$dir/remaining" ] || fail "fixture did not exceed budget"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "second rotation failed"
+  while read -r i; do
+    grep -F "choice-$(printf '%02d' "$i")" "$out" >/dev/null || fail "omitted decision starved"
+  done < "$dir/remaining"
+  pass "aged decisions rotate within the budget and new decisions print first"
+}
+
+test_aged_open_decision_age_limit_is_configurable() {
+  local dir state out now
+  dir=$(make_case aged-limit)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  printf 'needs-decision [key=mid-call] [at=%s]: pick the logo\n' "$((now - 1800))" > "$state/task1.status"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "first drain failed"
+  append_wake "$state" heartbeat heartbeat "heartbeat" || fail "queueing the heartbeat failed"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "default-limit heartbeat drain failed"
+  if grep -F 'pick the logo' "$out" >/dev/null; then
+    fail "a 30-minute-old decision came back under the 4-hour default: $(cat "$out")"
+  fi
+
+  FM_OPEN_DECISION_RESURFACE_AFTER=600 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "short-limit heartbeat drain failed"
+  grep -F 'pick the logo' "$out" | grep -F '30m' >/dev/null \
+    || fail "a 10-minute limit did not bring the 30-minute-old decision back with its age: $(cat "$out")"
+  pass "the age limit defaults to four hours and FM_OPEN_DECISION_RESURFACE_AFTER changes it"
+}
+
 test_full_listing_is_read_only_and_bounded() {
   local dir state out cursor presented cursor_before presented_before probe bytes
   dir=$(make_case readonly-listing)
@@ -304,8 +381,35 @@ test_full_listing_exceeds_ordinary_byte_cap() {
   pass "full listing includes decisions beyond the ordinary drain byte cap"
 }
 
+test_tabbed_receipts_preserve_age_and_cooldown() {
+  local dir state out now format
+  for format in legacy timestamped; do
+    dir=$(make_case "tabbed-$format")
+    state="$dir/state"
+    out="$dir/drain.out"
+    now=$(date +%s)
+    printf 'needs-decision [key=choice] [at=%s]: choose A\tor B\n' "$((now - 18000))" > "$state/task1.status"
+    printf 'blocked [key=other] [at=%s]: choose C\tor D\n' "$((now - 18000))" >> "$state/task1.status"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tabbed initial drain failed"
+    grep -F "$(printf 'choose A\tor B')" "$out" >/dev/null || fail "tabbed note was changed"
+    if [ "$format" = legacy ]; then
+      printf 'task1\tchoice\tneeds-decision\tchoose A\tor B\ntask1\tother\tblocked\tchoose C\tor D\n' > "$state/.open-decisions-presented"
+    fi
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tabbed aged drain failed"
+    grep -F 'needs-decision (open 5h' "$out" >/dev/null || fail "tabbed receipt lost decision age"
+    grep -F 'blocked (open 5h' "$out" >/dev/null || fail "sibling key lost decision age"
+    FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "tabbed cooldown drain failed"
+    grep -F 'OPEN DECISIONS: 2 unchanged' "$out" >/dev/null || fail "tabbed receipts bypassed cooldown"
+    if grep -F 'choose ' "$out" >/dev/null; then fail "tabbed notes reprinted during cooldown"; fi
+  done
+  pass "legacy and timestamped tabbed receipts retain notes, age, and cooldown"
+}
+
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
+test_aged_open_decision_returns_on_every_drain
+test_aged_decisions_rotate_and_new_decisions_go_first
+test_aged_open_decision_age_limit_is_configurable
 test_full_listing_is_read_only_and_bounded
 test_full_listing_exceeds_ordinary_byte_cap
 test_over_long_decision_note_is_capped_with_a_marker
@@ -316,3 +420,5 @@ test_no_open_decisions_prints_nothing
 test_open_decision_surfaces_even_with_an_unrelated_queued_wake
 test_buried_decision_surfaces_on_the_empty_queue_fast_path
 test_status_symlink_is_not_followed
+
+test_tabbed_receipts_preserve_age_and_cooldown

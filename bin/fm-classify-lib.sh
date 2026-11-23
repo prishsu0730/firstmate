@@ -1012,6 +1012,26 @@ status_open_decisions() {  # <status-file> [<kind>]
   printf '%s\n' "$open" | _fm_decision_public_set
 }
 
+# Print key/epoch pairs for requested open keys in one pass through the log.
+# Unknown opening times are omitted.
+status_open_decision_opened_epochs() {  # <status-file> <newline-separated-keys>
+  local f=$1 keys=$2 line verb k epoch epochs='' LC_ALL=C
+  [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *needs-decision*|*blocked*) ;; *) continue ;; esac
+    status_line_verb "$line" verb
+    case "$verb" in needs-decision|blocked) ;; *) continue ;; esac
+    k=$(_fm_decision_key "$line") || continue
+    case $'\n'"$keys"$'\n' in *$'\n'"$k"$'\n'*) ;; *) continue ;; esac
+    _fm_decision_key_transition_allowed "$k" "$(status_line_note "$line")" || continue
+    epoch=$(status_line_at_epoch "$line") || epoch=''
+    epochs="$epochs$k"$'\t'"$epoch"$'\n'
+  done < "$f"
+  printf '%s' "$epochs" | awk -F '\t' '{ epoch[$1] = $2 } END {
+    for (key in epoch) if (epoch[key] != "") print key "\t" epoch[key]
+  }'
+}
+
 # Resolve the log's current declaration at one boundary for crew-state consumers.
 # Any decision the fold still holds open wins over unrelated events, and the
 # fold's most recently opened record supplies it; a standing declared wait, then

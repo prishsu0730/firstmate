@@ -16,6 +16,10 @@
 # locked drain rotates such leftovers away before doing anything else.
 # FM_STATUS_PRESENTATION_LOCK_TIMEOUT sets the positive whole-second wait for
 # presentation-path locks (default 10); queue mutation locks remain blocking.
+# Every drain can reshow an unchanged decision older than
+# FM_OPEN_DECISION_RESURFACE_AFTER seconds (default 14400, four hours), with
+# its age. Reprints wait the same interval before returning; new and edited
+# decisions precede reprints within the output budget.
 set -u
 
 SCRIPT_DIR="$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)"
@@ -53,6 +57,8 @@ BRANCH_OUTCOMES_RC=0
 OPEN_DECISIONS_FULL=${FM_DRAIN_FULL_OPEN_DECISIONS:+true}
 OPEN_DECISIONS_FULL=${OPEN_DECISIONS_FULL:-false}
 OPEN_DECISIONS_READONLY=false
+OPEN_DECISIONS_RESURFACE_AFTER=${FM_OPEN_DECISION_RESURFACE_AFTER:-14400}
+case "$OPEN_DECISIONS_RESURFACE_AFTER" in ''|*[!0-9]*|0) OPEN_DECISIONS_RESURFACE_AFTER=14400 ;; esac
 OPEN_DECISIONS_PRESENTED="$STATE/.open-decisions-presented"
 OPEN_DECISIONS_PENDING=
 case "$PRESENTATION_LOCK_TIMEOUT" in ''|*[!0-9]*|0) PRESENTATION_LOCK_TIMEOUT=10 ;; esac
@@ -459,6 +465,16 @@ EOF
   [ "$shown" -gt 0 ] || return 0
 }
 
+# Print "<n>h <m>m" (or "<d>d <h>h" from a day up) for an age in seconds.
+format_decision_age() {  # <seconds>
+  local secs=$1
+  if [ "$secs" -ge 86400 ]; then
+    printf '%dd %dh' $((secs / 86400)) $((secs % 86400 / 3600))
+  else
+    printf '%dh %dm' $((secs / 3600)) $((secs % 3600 / 60))
+  fi
+}
+
 # Print the consolidated OPEN DECISIONS section: every still-open
 # needs-decision/blocked, fleet-wide, folded from the durable status logs by
 # fm-classify-lib.sh's status_open_decisions fold (via its cursor-backed
@@ -477,6 +493,8 @@ EOF
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 unchanged=0 bytes raw tab recorded=''
+  local age_text opened now age last eligible epochs task_keys task_epochs
+  now=$(date +%s)
   tab=$(printf '\t')
 
   OPEN_DECISIONS_PENDING=
@@ -489,21 +507,64 @@ print_open_decisions_section() {
   fi
   [ -n "$open" ] || { OPEN_DECISIONS_PENDING=none; return 0; }
 
-  while IFS=$tab read -r task key verb note; do
+  local receipt=/dev/null
+  [ ! -f "$OPEN_DECISIONS_PRESENTED" ] || receipt=$OPEN_DECISIONS_PRESENTED
+  open=$(awk -F '\t' -v OFS='\t' '
+    FILENAME != "-" {
+      if ($1 ~ /^[0-9]+$/) { stamp = $1; sub(/^[^\t]*\t/, ""); seen[$0] = stamp }
+      else seen[$0] = 0
+      next
+    }
+    { print (($0 in seen) ? seen[$0] : -1), $0 }
+  ' "${receipt}" - <<< "$open" 2>/dev/null)
+  if [ "$OPEN_DECISIONS_FULL" != true ]; then
+    open=$(printf '%s\n' "$open" | sort -t "$tab" -k1,1n)
+  fi
+
+  epochs=''
+  if [ "$OPEN_DECISIONS_FULL" != true ]; then
+    eligible=$(printf '%s\n' "$open" | awk -F '\t' -v now="$now" -v limit="$OPEN_DECISIONS_RESURFACE_AFTER" '
+      $1 >= 0 && ($1 == 0 || now - $1 >= limit) { print $2 "\t" $3 }
+    ')
+    while IFS= read -r task; do
+      [ -n "$task" ] || continue
+      task_keys=$(printf '%s\n' "$eligible" | awk -F '\t' -v task="$task" '$1 == task { print $2 }')
+      task_epochs=$(status_open_decision_opened_epochs "$STATE/$task.status" "$task_keys")
+      while IFS=$tab read -r key opened; do
+        [ -n "$opened" ] || continue
+        epochs="$epochs$task$tab$key$tab$opened
+"
+      done <<< "$task_epochs"
+    done < <(printf '%s\n' "$eligible" | cut -f1 | sort -u)
+  fi
+  open=$(awk -F '\t' -v OFS='\t' '
+    FILENAME != "-" { epoch[$1 SUBSEP $2] = $3; next }
+    { print (($2 SUBSEP $3 in epoch) ? epoch[$2 SUBSEP $3] : -1), $0 }
+  ' <(printf '%s' "$epochs") - <<< "$open")
+
+  while IFS=$tab read -r opened last task key verb note; do
     [ -n "$task" ] || continue
     raw="$task$tab$key$tab$verb$tab$note"
-    # A decision already presented in an earlier drain and unchanged since is
-    # only counted; a new or edited one (any field differs) prints in full.
-    if [ "$OPEN_DECISIONS_FULL" != true ] && [ -f "$OPEN_DECISIONS_PRESENTED" ] \
-      && grep -Fxq -- "$raw" "$OPEN_DECISIONS_PRESENTED" 2>/dev/null; then
-      unchanged=$((unchanged + 1))
-      recorded="$recorded$raw
+    age_text=''
+    if [ "$OPEN_DECISIONS_FULL" != true ] && [ "$last" -ge 0 ]; then
+      if [ "$opened" -ge 0 ] && age=$((now - opened)) \
+        && [ "$age" -ge "$OPEN_DECISIONS_RESURFACE_AFTER" ]; then
+        age_text=$(format_decision_age "$age")
+      fi
+      if [ -z "$age_text" ]; then
+        unchanged=$((unchanged + 1))
+        recorded="$recorded$last$tab$raw
 "
-      continue
+        continue
+      fi
     fi
     line="$task"
     [ "$key" = default ] || line="$line [key=$key]"
-    line="$line $verb: $note"
+    if [ -n "$age_text" ]; then
+      line="$line $verb (open $age_text): $note"
+    else
+      line="$line $verb: $note"
+    fi
     # The shared cut counts the item's own characters; the trailing newline this
     # section's global budget also pays for is this caller's, so the per-item
     # allowance passed down is one short of the cap.
@@ -512,6 +573,13 @@ print_open_decisions_section() {
     local LC_ALL=C
     bytes=$(( ${#line} + 1 ))
     if [ "$OPEN_DECISIONS_FULL" != true ] && [ $((used + bytes)) -gt "$global_bytes" ]; then
+      if [ -n "$age_text" ]; then
+        # Already presented before: past the byte cap it falls back to the count.
+        unchanged=$((unchanged + 1))
+        recorded="$recorded$last$tab$raw
+"
+        continue
+      fi
       # Not recorded as presented, so the next drain prints it.
       omitted=$((omitted + 1))
       continue
@@ -520,7 +588,8 @@ print_open_decisions_section() {
 "
     used=$((used + bytes))
     shown=$((shown + 1))
-    recorded="$recorded$raw
+    if [ -n "$age_text" ]; then last=$now; elif [ "$last" -lt 0 ]; then last=0; fi
+    recorded="$recorded$last$tab$raw
 "
   done <<EOF
 $open
