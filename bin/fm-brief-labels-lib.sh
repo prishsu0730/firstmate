@@ -25,7 +25,7 @@ fm_brief_review_tier_normalize() {  # <text after "Review tier:">
 # one unambiguous tier.
 fm_brief_review_tier_needed() {  # <text after "Review tier:">
   case "$(fm_brief_review_tier_normalize "$1")" in
-    low|'no greptile') printf '0' ;;
+    low|'no greptile'|'low (no greptile)') printf '0' ;;
     base|medium|'medium (base)') printf '1' ;;
     plus|high|'high (plus)') printf '2' ;;
     apex|critical|'critical (apex)') printf '4' ;;

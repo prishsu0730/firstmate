@@ -203,8 +203,8 @@
 #   banner inline, never a silent failure or a non-zero exit that would make
 #   an agent skip the rest of the digest.
 #   If a refused live holder has since died, the banner identifies the stale
-#   refusal and prints a manual reclaim command preserving FM_HOME and any
-#   FM_STATE_OVERRIDE, followed by a startup rerun; it never reclaims the lock.
+#   refusal and prints a session start rerun command preserving FM_HOME and any
+#   FM_STATE_OVERRIDE; this run never reclaims the lock itself.
 #
 #   --reemit  This process ALREADY took the helm at its own startup and has
 #             only lost its context (a /clear or a compaction). Skip the
@@ -815,8 +815,8 @@ if [ "$LOCK_RC" -ne 0 ]; then
       printf '●  STALE LOCK: the recorded holder (pid %s) is no longer running, so this refusal is out of date.\n' "$STALE_HOLDER"
       STALE_ENV=$(printf 'FM_HOME=%q' "$FM_HOME")
       [ -z "${FM_STATE_OVERRIDE:-}" ] || STALE_ENV="$STALE_ENV $(printf 'FM_STATE_OVERRIDE=%q' "$FM_STATE_OVERRIDE")"
-      printf '●  To reclaim the lock, run: %s %q\n' "$STALE_ENV" "$SCRIPT_DIR/fm-lock.sh"
-      printf '●  Then rerun bin/fm-session-start.sh. Firstmate never reclaims it for you.\n'
+      printf '●  To take the lock over, rerun session start: %s %q\n' "$STALE_ENV" "$SCRIPT_DIR/fm-session-start.sh"
+      printf '●  This read-only run did not reclaim it, and it never will.\n'
     fi
     printf '●  Skipping every mutating step: stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'

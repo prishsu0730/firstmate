@@ -106,7 +106,7 @@ ROWS
 # A brief's Review tier and Type must be values bin/fm-pr-merge.sh accepts, so a
 # bad label stops the spawn when the brief is handed over and not at merge time.
 test_spawn_refuses_review_tier_and_type_the_merge_would_refuse() {
-  local rec home proj fakebin out status id
+  local rec home proj fakebin out status id named n value form
   rec=$(make_home labels)
   IFS='|' read -r home proj fakebin <<EOF
 $rec
@@ -185,6 +185,27 @@ EOF
   status=$?
   [ "$status" -ne 0 ] || fail "a brief with two Type lines was accepted by the spawn"
   assert_contains "$out" "more than one Type line" "the repeated Type line was not named"
+
+  # Every Review tier the refusal names must itself pass the check, in any case.
+  id=labels-bad-tier
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  named=$(printf '%s\n' "$out" | sed -n "s/.*'## Risk and review' to one of \(.*\)\$/\1/p" | head -1)
+  [ -n "$named" ] || fail "the Review tier refusal named no accepted values to try"
+  n=0
+  while IFS= read -r value; do
+    [ -n "$value" ] || continue
+    for form in "$value" "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')"; do
+      n=$((n + 1))
+      id="labels-named-tier-$n"
+      new_labelled_brief "$id" "$form" "feature"
+      out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+      assert_not_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+        "the spawn refused '$form', a Review tier its own refusal tells the writer to use"
+    done
+  done <<EOF2
+$(printf '%s\n' "$named" | sed 's/, /\n/g')
+EOF2
+  [ "$n" -ge 8 ] || fail "the refusal named too few Review tier values ($n forms tried)"
 
   pass "fm-spawn: invalid, blank, and repeated merge labels stop dispatch"
 }
