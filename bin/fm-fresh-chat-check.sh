@@ -90,11 +90,11 @@ esac
 transcript=$(printf '%s' "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/null) || transcript=
 [ -n "$transcript" ] && [ -f "$transcript" ] || step_aside "the chat log was not found, so its size cannot be measured"
 
-used=$(tail -n 400 "$transcript" 2>/dev/null | jq -R -r '
-  fromjson? | select(.type == "assistant" and (.isSidechain | not) and (.message.usage | type) == "object")
-  | .message.usage
-  | ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))
-  | select(. > 0)' 2>/dev/null | tail -n 1)
+used=$(jq -R -s -r '
+  [split("\n")[] | fromjson? | select(.type == "assistant" and (.isSidechain | not))]
+  | last | .message.usage? // empty
+  | ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))' \
+  < "$transcript" 2>/dev/null)
 case "$used" in
   ''|*[!0-9]*) step_aside "the chat log has no token count yet, so its size cannot be measured" ;;
 esac

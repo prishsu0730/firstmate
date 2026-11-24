@@ -79,6 +79,20 @@ test_ignores_sidechain_usage() {
   pass "subagent entries do not count toward the chat size"
 }
 
+test_uses_newest_main_thread_entry_only() {
+  write_transcript "$TMP_ROOT/newest-zero.jsonl" 160000
+  printf '{"type":"assistant","isSidechain":false,"message":{"content":"no usage"}}\n' >> "$TMP_ROOT/newest-zero.jsonl"
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/newest-zero.jsonl" 'go')"
+  [ -z "$OUT" ] || fail "newest entry without usage must not reuse stale usage: $OUT"
+
+  write_transcript "$TMP_ROOT/older.jsonl" 160000
+  for i in $(seq 1 450); do printf '{"type":"user","message":{"content":"padding"}}\n' >> "$TMP_ROOT/older.jsonl"; done
+  printf '{"type":"assistant","isSidechain":false,"message":{"usage":{"input_tokens":160000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' >> "$TMP_ROOT/older.jsonl"
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/older.jsonl" 'go')"
+  [ "$(decision)" = "block" ] || fail "newest entry beyond former tail window must be measured: $OUT"
+  pass "only the newest main-thread assistant entry determines measured context"
+}
+
 test_slash_commands_pass() {
   run_check "$PRIMARY" "$(payload "$TMP_ROOT/big.jsonl" '/compact')"
   [ -z "$OUT" ] || fail "slash commands must pass: $OUT"
@@ -122,9 +136,19 @@ test_inert_in_task_worktree() {
 }
 
 test_registered_for_claude_prompts() {
-  jq -e '.hooks.UserPromptSubmit[].hooks[] | select(.command | contains("fm-fresh-chat-check.sh"))' \
-    "$ROOT/.claude/settings.json" >/dev/null || fail "Claude UserPromptSubmit must register the alarm"
-  pass "Claude Code registers the alarm on UserPromptSubmit"
+  local command
+  command=$(jq -r '.hooks.UserPromptSubmit[].hooks[] | select(.type == "command") | .command' \
+    "$ROOT/.claude/settings.json" | while IFS= read -r candidate; do
+      case "$candidate" in
+        *fm-fresh-chat-check.sh*) printf '%s\n' "$candidate"; break ;;
+      esac
+    done)
+  [ -n "$command" ] || fail "Claude UserPromptSubmit must register a command"
+  local hook_json
+  hook_json=$(payload "$TMP_ROOT/big.jsonl" 'registered hook probe')
+  OUT=$(printf '%s' "$hook_json" | CLAUDE_PROJECT_DIR="$ROOT" bash -c "$command" 2>/dev/null)
+  [ "$(decision)" = "block" ] || fail "registered UserPromptSubmit hook must block a >150k prompt: $OUT"
+  pass "registered Claude UserPromptSubmit command blocks a prompt past 150k"
 }
 
 test_shellcheck_clean() {
@@ -137,6 +161,7 @@ test_blocks_new_work_past_limit
 test_allows_under_limit
 test_sums_cache_and_input_tokens
 test_ignores_sidechain_usage
+test_uses_newest_main_thread_entry_only
 test_slash_commands_pass
 test_limit_from_config_and_env
 test_unmeasurable_steps_aside_once
