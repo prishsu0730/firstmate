@@ -789,6 +789,12 @@ esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 SCOPE_MAP=$(fm_scope_map_block "$FM_ROOT" "$DATA" "$ID")
+PR_CLOSE_INSTRUCTION=
+if [ "$MODE" != local-only ]; then
+  # The backticks are literal Markdown, not command substitutions.
+  # shellcheck disable=SC2016
+  PR_CLOSE_INSTRUCTION='   When this task fixes a known issue, write `Closes #N` for it in the PR body, so the merge closes that issue on its own.'
+fi
 
 # The task's file boundary: the validated list is recorded beside the brief for
 # bin/fm-file-boundary.sh, and the worker is told to run that checker. Empty
@@ -852,6 +858,7 @@ $RULE1
    Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
    Leave the worktree clean before reporting done.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+$PR_CLOSE_INSTRUCTION
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

@@ -103,6 +103,17 @@
 # new head. Live checks and head binding remain authoritative; the notice does
 # not authorize or bypass a review or permission guard.
 #
+# After a GitHub pull request is confirmed merged, close_merged_pr_issues
+# closes the issues it fixes, because GitHub closes "Closes #N" issues itself
+# only when the base is the default branch. It reads the pull request's
+# closingIssuesReferences plus any Closes, Fixes, or Resolves #N keyword in its
+# body, which covers a base that is not the default branch. Only same-repository
+# issues are touched: a reference to another repository, and a number that is a
+# pull request, are left alone. An issue that is already closed is skipped. Each
+# close leaves one comment naming the merged pull request and its base branch.
+# A read or close failure prints a warning on stderr and never fails or undoes
+# the merge. A queued merge and a GitLab merge request are not covered.
+#
 # A GitLab merge is refused unless every pre-merge condition holds, each read
 # live at merge time rather than taken from recorded metadata: the merge request
 # is open, detailed_merge_status is mergeable, has_conflicts is false,
@@ -1971,9 +1982,55 @@ case "$PROVIDER" in
     ;;
 esac
 
+# Close the same-repository issues a merged GitHub pull request fixes. Every
+# failure is a warning: the merge has already landed and nothing here may fail
+# or undo it, so each step ends in a handled status and the function returns 0.
+close_merged_pr_issues() {
+  local json base numbers number issue state is_pr comment
+  if ! json=$(gh pr view "$URL" --json closingIssuesReferences,baseRefName,body 2>/dev/null) \
+    || ! base=$(printf '%s' "$json" | jq -er '.baseRefName' 2>/dev/null); then
+    printf 'warning: merged %s but could not read the issues it fixes; no issue was closed\n' "$URL" >&2
+    return 0
+  fi
+  if ! numbers=$({
+    printf '%s' "$json" | jq -r --arg owner "$PR_OWNER" --arg repo "$PR_REPO" '
+      (.closingIssuesReferences // [])[]
+      | select(((.repository.name // "") | ascii_downcase) == ($repo | ascii_downcase)
+        and ((.repository.owner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
+      | .number | tostring'
+    printf '%s' "$json" | jq -r --arg qualified "$PR_OWNER/$PR_REPO" '
+      (.body // "")
+      | scan("(?i)(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(" + ($qualified | gsub("([.\\+*?\\[\\]{}()^$|])"; "\\\\\\1")) + ")?#([0-9]+)")
+      | .[-1]'
+  } 2>/dev/null | { grep -E '^[0-9]{1,9}$' || true; } | sort -un); then
+    printf 'warning: merged %s but could not read the issues it fixes; no issue was closed\n' "$URL" >&2
+    return 0
+  fi
+  comment="Closed automatically: the fix merged in $URL into $base."
+  for number in $numbers; do
+    if ! issue=$(gh api "repos/$PR_OWNER/$PR_REPO/issues/$number" 2>/dev/null) \
+      || ! state=$(printf '%s' "$issue" | jq -er '.state' 2>/dev/null) \
+      || ! is_pr=$(printf '%s' "$issue" | jq -r 'if has("pull_request") then "yes" else "no" end' 2>/dev/null); then
+      printf 'warning: merged %s but could not read issue #%s; it was not closed\n' "$URL" "$number" >&2
+      continue
+    fi
+    [ "$is_pr" = no ] || continue
+    [ "$state" = open ] || continue
+    if gh issue close "$number" --repo "$PR_OWNER/$PR_REPO" --comment "$comment" >/dev/null 2>&1; then
+      printf 'closed: issue #%s, fixed by %s (base %s)\n' "$number" "$URL" "$base"
+    else
+      printf 'warning: merged %s but could not close issue #%s\n' "$URL" "$number" >&2
+    fi
+  done
+  return 0
+}
+
 # Reached only after the forge confirmed the merge landed: set -e exits on a
 # refused or failed merge above, and a queued forge merge exits without an
 # outcome while its existing poll remains armed.
+if [ "$PROVIDER" = github ]; then
+  close_merged_pr_issues || true
+fi
 outcome_rc=0
 fm_merge_outcome_report "$FM_HOME" "$STATE" "$ID" "$URL" self \
   "${FM_PR_MERGE_AUTHORITY:-}" || outcome_rc=$?

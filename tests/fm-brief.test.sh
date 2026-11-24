@@ -1516,6 +1516,30 @@ test_ship_scaffold_carries_the_commit_wording_check() {
   pass "ship scaffolds name the pre-push commit wording check"
 }
 
+test_ship_scaffold_tells_the_worker_to_write_closes_in_the_pr_body() {
+  local home id brief mode
+  home="$TMP_ROOT/closes-line-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR local-only; do
+    id="brief-closes-line-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode "$mode" >/dev/null 2>&1 \
+      || fail "fm-brief.sh --mode $mode exited non-zero"
+    brief="$home/data/$id/brief.md"
+    if [ "$mode" = local-only ]; then
+      # The backticks are literal Markdown in the expected text.
+      # shellcheck disable=SC2016
+      assert_no_grep 'When this task fixes a known issue, write `Closes #N` for it in the PR body' "$brief" \
+        "local-only brief includes PR issue-closing guidance"
+    else
+      # The backticks are literal Markdown in the expected text.
+      # shellcheck disable=SC2016
+      assert_grep 'When this task fixes a known issue, write `Closes #N` for it in the PR body' "$brief" \
+        "$mode brief does not tell the worker to write Closes #N in the PR body"
+    fi
+  done
+  pass "PR ship briefs tell the worker to write Closes #N; local-only omits it"
+}
+
 test_ship_scaffold_names_the_red_green_proof_paths() {
   local home id brief
   home="$TMP_ROOT/red-green-paths-home"
@@ -1772,6 +1796,7 @@ test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_ship_scaffold_carries_the_scope_map_section
 test_ship_scaffold_carries_the_commit_wording_check
+test_ship_scaffold_tells_the_worker_to_write_closes_in_the_pr_body
 test_ship_scaffold_names_the_red_green_proof_paths
 test_allowed_files_flag_adds_only_a_section
 test_allowed_files_flag_is_validated
