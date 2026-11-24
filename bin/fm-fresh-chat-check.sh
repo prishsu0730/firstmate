@@ -90,7 +90,25 @@ esac
 transcript=$(printf '%s' "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/null) || transcript=
 [ -n "$transcript" ] && [ -f "$transcript" ] || step_aside "the chat log was not found, so its size cannot be measured"
 
-used=$(tail -r "$transcript" 2>/dev/null | jq -R -r '
+command -v perl >/dev/null 2>&1 || step_aside "the chat log reader is unavailable, so its size cannot be measured"
+used=$(perl -e '
+  my $path = shift;
+  open my $fh, "<", $path or exit 1;
+  binmode $fh;
+  seek($fh, 0, 2) or exit 1;
+  my $pos = tell($fh);
+  my $partial = "";
+  while ($pos > 0) {
+    my $size = $pos > 65536 ? 65536 : $pos;
+    $pos -= $size;
+    seek($fh, $pos, 0) or exit 1;
+    read($fh, my $chunk, $size) == $size or exit 1;
+    my @lines = split /\n/, $chunk . $partial, -1;
+    $partial = shift @lines;
+    for my $line (reverse @lines) { print "$line\n" }
+  }
+  print "$partial\n" if length $partial;
+' "$transcript" | jq -R -r '
   fromjson? |
   if .type == "assistant" and (.isSidechain | not) then
     (.message.usage? // empty
