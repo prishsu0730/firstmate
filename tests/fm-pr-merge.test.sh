@@ -197,6 +197,14 @@ printf '%s\n' "$*" >> "$FM_TEST_GH_LOG"
 case "${1:-} ${2:-}" in
   "pr view")
     case " $* " in
+      *closingIssuesReferences*)
+        if [ -f "${FM_TEST_GH_CLOSING:-}" ]; then
+          cat "$FM_TEST_GH_CLOSING"
+        else
+          printf '%s\n' '{"closingIssuesReferences":[],"baseRefName":"main","body":""}'
+        fi
+        exit "${FM_TEST_GH_CLOSING_RC:-0}"
+        ;;
       *statusCheckRollup*)
         if [ -n "${FM_TEST_GH_MERGEABLE_SEQUENCE:-}" ]; then
           call_n=$(( $(cat "$FM_TEST_GH_MERGEABLE_CALLS" 2>/dev/null || echo 0) + 1 ))
@@ -269,6 +277,10 @@ case "${1:-} ${2:-}" in
     fi
     exit "$merge_rc"
     ;;
+  "issue close")
+    [ ! -f "${FM_TEST_GH_ISSUES:-/nonexistent}/close-fails" ] || exit 1
+    exit 0
+    ;;
   "api graphql")
     if [ -f "${FM_TEST_GH_GRAPHQL_FAIL:-}" ]; then
       echo 'error: could not reach the GitHub API' >&2
@@ -281,6 +293,12 @@ case "${1:-} ${2:-}" in
     # The required-check reads: the branch itself, and its rules read without
     # the merge-queue filter the queue reader below applies.
     case " $* " in
+      *" repos/"*"/issues/"*)
+        issue_file="${FM_TEST_GH_ISSUES:-/nonexistent}/${2##*/}.json"
+        [ -f "$issue_file" ] || exit 1
+        cat "$issue_file"
+        exit 0
+        ;;
       *" repos/"*"/compare/"*)
         [ -f "${FM_TEST_GH_COMPARE:-}" ] || exit 1
         cat "$FM_TEST_GH_COMPARE"
@@ -540,6 +558,9 @@ run_pr_merge() {
   FM_TEST_GH_COMMITS="$case_dir/github-commits" \
   FM_TEST_GH_COMPARE="$case_dir/github-compare.json" \
   FM_TEST_GH_BODY="$case_dir/github-body.md" \
+  FM_TEST_GH_CLOSING="$case_dir/github-closing.json" \
+  FM_TEST_GH_CLOSING_RC="${FM_TEST_GH_CLOSING_RC:-0}" \
+  FM_TEST_GH_ISSUES="$case_dir/github-issues" \
   FM_TEST_GH_RUNS="$case_dir/github-runs.json" \
   FM_TEST_GH_MERGE_RC_FILE="$case_dir/github-merge-rc" \
   FM_TEST_GH_MERGE_OUTPUT="$(cat "$case_dir/github-merge-output" 2>/dev/null || true)" \
@@ -5389,3 +5410,109 @@ test_red_green_exit_codes_and_output_must_prove_the_runs
 test_red_green_unreadable_inputs_refuse
 test_red_green_waiver_is_the_attended_allow_red
 test_red_green_gitlab_reads_the_merge_base
+
+# Issue auto-close after a merge. The shared gh mock answers the combined
+# closing-references read from github-closing.json, each issue read from
+# github-issues/<n>.json, and an issue close from the close-fails marker.
+# Args: case_dir number state [extra-json-key]
+write_issue() {
+  local case_dir=$1 number=$2 state=$3 extra=${4:-}
+  mkdir -p "$case_dir/github-issues"
+  printf '{"number":%s,"state":"%s"%s}\n' "$number" "$state" "${extra:+,$extra}" \
+    > "$case_dir/github-issues/$number.json"
+}
+
+# Args: case_dir base refs-json body
+write_closing() {
+  local case_dir=$1 base=$2 refs=$3 body=$4
+  jq -n --arg base "$base" --argjson refs "$refs" --arg body "$body" \
+    '{baseRefName: $base, closingIssuesReferences: $refs, body: $body}' \
+    > "$case_dir/github-closing.json"
+}
+
+merge_for_issue_close() {
+  local case_dir=$1
+  add_gh_mocks "$case_dir" 2020202020202020202020202020202020202020
+  : > "$case_dir/gh-axi.log"
+  set +e
+  run_pr_merge "$case_dir" task-x1 https://github.com/example/repo/pull/71 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr"
+  RC=$?
+  set -e
+}
+
+test_merge_closes_an_open_referenced_issue() {
+  local case_dir
+  case_dir=$(make_case issue-close-open)
+  write_issue "$case_dir" 7 open
+  write_closing "$case_dir" main '[{"number":7,"repository":{"name":"repo","owner":{"login":"example"}}}]' ''
+  add_gh_mocks "$case_dir" 2020202020202020202020202020202020202020
+  merge_for_issue_close "$case_dir"
+  expect_code 0 "$RC" "issue-close-open: the merge must succeed (stderr: $(cat "$case_dir/stderr"))"
+  grep -qxF 'issue close 7 --repo example/repo --comment Closed automatically: the fix merged in https://github.com/example/repo/pull/71 into main.' "$case_dir/gh.log" \
+    || fail "issue-close-open: the open issue was not closed with a comment naming the PR and base"
+  assert_grep 'closed: issue #7' "$case_dir/stdout" "issue-close-open: the close was not reported"
+  pass "fm-pr-merge closes an open issue the merged PR references"
+}
+
+test_merge_skips_an_already_closed_issue() {
+  local case_dir
+  case_dir=$(make_case issue-close-already-closed)
+  write_issue "$case_dir" 8 closed
+  write_closing "$case_dir" main '[{"number":8,"repository":{"name":"repo","owner":{"login":"example"}}}]' ''
+  merge_for_issue_close "$case_dir"
+  expect_code 0 "$RC" "issue-close-already-closed: the merge must succeed"
+  assert_no_grep 'issue close ' "$case_dir/gh.log" "issue-close-already-closed: a closed issue was closed again"
+  assert_no_grep 'but could not' "$case_dir/stderr" "issue-close-already-closed: a closed issue raised a warning"
+  pass "fm-pr-merge skips an issue that is already closed"
+}
+
+test_merge_closes_body_references_on_a_non_default_base() {
+  local case_dir
+  case_dir=$(make_case issue-close-non-default-base)
+  write_issue "$case_dir" 9 open
+  write_issue "$case_dir" 10 open
+  write_issue "$case_dir" 11 open
+  write_issue "$case_dir" 12 open
+  write_issue "$case_dir" 13 open '"pull_request":{}'
+  write_closing "$case_dir" m2-staging '[{"number":14,"repository":{"name":"other","owner":{"login":"example"}}}]' \
+    $'Fixes the thing.\n\nCloses #9\nfixes #10 and Resolves: #11\nSee #12 and closes other/repo#15\nCloses #13'
+  merge_for_issue_close "$case_dir"
+  expect_code 0 "$RC" "issue-close-non-default-base: the merge must succeed (stderr: $(cat "$case_dir/stderr"))"
+  grep -qxF 'issue close 9 --repo example/repo --comment Closed automatically: the fix merged in https://github.com/example/repo/pull/71 into m2-staging.' "$case_dir/gh.log" \
+    || fail "issue-close-non-default-base: Closes #9 in the body was not closed with the base named"
+  assert_grep 'issue close 10 --repo example/repo ' "$case_dir/gh.log" "issue-close-non-default-base: fixes #10 was not closed"
+  assert_grep 'issue close 11 --repo example/repo ' "$case_dir/gh.log" "issue-close-non-default-base: Resolves: #11 was not closed"
+  assert_no_grep 'issue close 12 ' "$case_dir/gh.log" "issue-close-non-default-base: a mention without a keyword was closed"
+  assert_no_grep 'issue close 13 ' "$case_dir/gh.log" "issue-close-non-default-base: a pull request number was closed"
+  assert_no_grep 'issue close 14 ' "$case_dir/gh.log" "issue-close-non-default-base: another repository's issue was closed"
+  assert_no_grep 'issue close 15 ' "$case_dir/gh.log" "issue-close-non-default-base: a cross-repository reference was closed"
+  pass "fm-pr-merge closes body-referenced issues when the base is not the default branch"
+}
+
+test_issue_close_failure_never_fails_the_merge() {
+  local case_dir
+  case_dir=$(make_case issue-close-fails)
+  write_issue "$case_dir" 7 open
+  : > "$case_dir/github-issues/close-fails"
+  write_closing "$case_dir" main '[{"number":7,"repository":{"name":"repo","owner":{"login":"example"}}}]' ''
+  merge_for_issue_close "$case_dir"
+  expect_code 0 "$RC" "issue-close-fails: a close failure must not fail the merge (stderr: $(cat "$case_dir/stderr"))"
+  assert_grep 'warning: merged https://github.com/example/repo/pull/71 but could not close issue #7' "$case_dir/stderr" \
+    "issue-close-fails: the failed close was not warned about"
+  assert_grep 'verified: https://github.com/example/repo/pull/71 is merged' "$case_dir/stdout" \
+    "issue-close-fails: the merge was not reported as verified"
+
+  case_dir=$(make_case issue-close-read-fails)
+  FM_TEST_GH_CLOSING_RC=1 merge_for_issue_close "$case_dir"
+  expect_code 0 "$RC" "issue-close-read-fails: an unreadable reference list must not fail the merge"
+  assert_grep 'could not read the issues it fixes; no issue was closed' "$case_dir/stderr" \
+    "issue-close-read-fails: the unreadable list was not warned about"
+  assert_no_grep 'issue close ' "$case_dir/gh.log" "issue-close-read-fails: an issue was closed with no readable list"
+  pass "fm-pr-merge reports an issue close failure without failing or undoing the merge"
+}
+
+test_merge_closes_an_open_referenced_issue
+test_merge_skips_an_already_closed_issue
+test_merge_closes_body_references_on_a_non_default_base
+test_issue_close_failure_never_fails_the_merge

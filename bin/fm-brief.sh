@@ -852,6 +852,7 @@ $RULE1
    Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
    Leave the worktree clean before reporting done.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+   When this task fixes a known issue, write \`Closes #N\` for it in the PR body, so the merge closes that issue on its own.
 4. Report status by appending one line:
    \`$STATUS_APPEND\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

@@ -1516,6 +1516,19 @@ test_ship_scaffold_carries_the_commit_wording_check() {
   pass "ship scaffolds name the pre-push commit wording check"
 }
 
+test_ship_scaffold_tells_the_worker_to_write_closes_in_the_pr_body() {
+  local home id brief
+  home="$TMP_ROOT/closes-line-home"
+  mkdir -p "$home/data"
+  id="brief-closes-line"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode no-mistakes >/dev/null 2>&1 \
+    || fail "fm-brief.sh --mode no-mistakes exited non-zero"
+  brief="$home/data/$id/brief.md"
+  assert_grep 'When this task fixes a known issue, write `Closes #N` for it in the PR body' "$brief" \
+    "ship brief does not tell the worker to write Closes #N in the PR body"
+  pass "ship scaffolds tell the worker to write Closes #N in the PR body"
+}
+
 test_ship_scaffold_names_the_red_green_proof_paths() {
   local home id brief
   home="$TMP_ROOT/red-green-paths-home"
@@ -1772,6 +1785,7 @@ test_branch_prefix_command_is_shell_safe
 test_crewmate_scaffolds_forbid_pool_administration
 test_ship_scaffold_carries_the_scope_map_section
 test_ship_scaffold_carries_the_commit_wording_check
+test_ship_scaffold_tells_the_worker_to_write_closes_in_the_pr_body
 test_ship_scaffold_names_the_red_green_proof_paths
 test_allowed_files_flag_adds_only_a_section
 test_allowed_files_flag_is_validated
