@@ -1,0 +1,3 @@
+== copy of real transcript + newest entry at 153203 tokens, default limit ==
+{"decision":"block","reason":"This chat holds about 153203 tokens of context, past the 150000 limit. Please start a fresh chat for new work. Work already under way keeps running."}
+rc=0

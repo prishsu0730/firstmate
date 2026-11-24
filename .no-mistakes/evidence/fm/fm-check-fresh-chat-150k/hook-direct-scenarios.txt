@@ -1,0 +1,34 @@
+
+### over 150k (153000) (prompt=build\ feature\ X)
+{"decision":"block","reason":"This chat holds about 153000 tokens of context, past the 150000 limit. Please start a fresh chat for new work. Work already under way keeps running."}
+exit=0
+
+### under 150k (140010) (prompt=build\ feature\ X)
+exit=0
+
+### over 150k but slash command (prompt=/compact)
+exit=0
+
+### newest assistant has no usage, older 200k (prompt=new\ job)
+exit=0
+
+### sidechain 300k ignored, main 50k (prompt=new\ job)
+exit=0
+
+### newest 20k far beyond older 200k (big file   270334 bytes) (prompt=new\ job)
+exit=0
+
+### missing transcript (prompt=new\ job)
+{"systemMessage":"Fresh-chat alarm is off for this chat: the chat log was not found, so its size cannot be measured."}
+exit=0
+
+### missing transcript again (notice once) (prompt=new\ job)
+exit=0
+
+### linked task worktree (gate worktree) is inert, over transcript:
+exit=0
+
+### newest over-limit entry buried under  1200164 bytes of progress lines (crosses 64KB chunks)
+{"decision":"block","reason":"This chat holds about 161005 tokens of context, past the 150000 limit. Please start a fresh chat for new work. Work already under way keeps running."}
+exit=0
+( jq -nc --arg t "$W/buried.jsonl"  | FM_HOME=$W/home ; echo "exit=$?"; )  0.07s user 0.04s system 97% cpu 0.109 total

@@ -1,0 +1,9 @@
+== real transcript, plain primary clone, limit 30000, new job ==
+{"decision":"block","reason":"This chat holds about 42190 tokens of context, past the 30000 limit. Please start a fresh chat for new work. Work already under way keeps running."}
+rc=0
+== same, but /compact slash command ==
+rc=0 (empty output = allowed)
+== same over-limit chat, hook run from a linked task worktree (gate worktree) ==
+rc=0 (empty output = allowed)
+== real transcript, default limit 150000 ==
+rc=0 (empty output = allowed)
