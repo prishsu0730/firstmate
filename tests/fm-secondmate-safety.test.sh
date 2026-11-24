@@ -63,6 +63,10 @@ test_fm_home_parameterization() {
   brief="$home_one/data/task-a/brief.md"
   [ -f "$brief" ] || fail "brief was not written under FM_HOME/data"
   grep -F ">> '$home_one/state/task-a.status'" "$brief" >/dev/null || fail "brief did not shell-quote FM_HOME state path"
+  sed -i '' 's/^Type: {TYPE}$/Type: Bug fix/; s/^Review tier: {REVIEW_TIER} (No Greptile \/ Base \/ Plus \/ Apex)$/Review tier: Base/' "$brief"
+  grep -F 'Type: Bug fix' "$brief" >/dev/null || fail "task-a brief type was not filled"
+  grep -F 'Review tier: Base' "$brief" >/dev/null || fail "task-a brief review tier was not filled"
+  grep -F 'review tier: Base' "$home_one/state/task-a.status" >/dev/null || fail "saved status did not record the review tier"
 
   FM_HOME="$home_one" "$ROOT/bin/fm-brief.sh" task-b app --scout >/dev/null || fail "scout brief scaffold failed under FM_HOME"
   brief="$home_one/data/task-b/brief.md"
