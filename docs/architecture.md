@@ -298,7 +298,7 @@ Only a named non-default branch checked out in `FM_ROOT` is a worktree tangle.
 
 `fm-tangle-lib.sh` resolves the default branch from `origin/HEAD`, then local `main` or `master`, and classifies that named non-default primary branch as the tangle.
 `fm-guard.sh` prints the repair command on the next mutable fleet action, while `bin/fm-session-start.sh` reports the same condition through bootstrap as a `TANGLE:` line at session start.
-If another live session holds the fleet lock, both surfaces keep the alarm but switch to read-only wording with no repair command.
+If another live session holds the fleet lock, both surfaces keep the alarm but switch to read-only wording with no repair command; if that refusal names a holder that has since exited, session start identifies the stale refusal and prints the command to rerun session start and acquire the lock.
 Ship briefs also tell the crewmate to verify `pwd -P` and `git rev-parse --show-toplevel` before creating its ship branch (`fm/<id>` by default, or the project's registered prefix), then stop with a blocked status if it landed in the primary checkout.
 Placement is proven only at launch, so `bin/fm-spawn.sh` also exports the task id as `FM_TASK_ID` into every ship and scout pane, and `bin/fm-test-run.sh` refuses to execute the behavior suite from the primary checkout while that marker is set; the runner's header owns the predicate and [`tests/fm-test-run.test.sh`](../tests/fm-test-run.test.sh) pins it.
 
@@ -396,6 +396,7 @@ For URL-only landing, [`bin/fm-pr-land.sh`](../bin/fm-pr-land.sh)'s header owns 
 For a task with a recorded file boundary, that merge path checks the live GitHub PR file list against the task's list and refuses a GitLab merge it cannot check; [`fm-file-boundary.sh`](../bin/fm-file-boundary.sh)'s header owns the comparison and missing-record rules.
 The helper requires a full canonical URL and rejects malformed URLs or repo override flags before recording merge state.
 A `https://github.com/<owner>/<repo>/pull/<n>` URL requires `gh` and `jq`; [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh)'s header owns the live pre-merge guards, and `gh pr merge` binds the verified head with `--match-head-commit`.
+A fresh ship spawn refuses a repeated or unrecognized `Review tier:` or `Type:` value under `## Risk and review` when the merge gate would reject it; [`bin/fm-brief-labels-lib.sh`](../bin/fm-brief-labels-lib.sh) owns the shared accepted values.
 A merge is also refused until the review depth named by the brief's `Review tier:` line has been recorded for the PR's current head; [`bin/fm-brief.sh`](../bin/fm-brief.sh) owns the review depths, and [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh)'s header owns the review record format and enforcement.
 A PR whose brief types it `Type: bug fix` is also refused until its description has a `Root cause:` line and its saved red/green log shows one test failing on an ancestor and then passing at the current head; [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh)'s header owns the classification and log format.
 A required check that never reported is absent from the checks list rather than red; [`bin/fm-pr-merge.sh`](../bin/fm-pr-merge.sh)'s header owns required-context sources, producer identity, partial-read refusals, and attended check waivers.
