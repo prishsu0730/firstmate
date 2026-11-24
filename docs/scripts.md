@@ -34,9 +34,10 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-captain-hold.sh`     | Hold tasks for the captain, record the captain's answers, gate investigation completion, and report record divergence between the status log and the backlog |
 | `fm-decision-hold.sh`    | One-release compatibility shim mapping the retired decision commands onto fm-captain-hold.sh |
 | `fm-brief.sh`            | Scaffold ship (explicit `--mode`, plus the project's registered `--forge`), scout, secondmate-charter, and Herdr-lab briefs, with Captain's intent, Firstmate spec, and Risk and review subsections on ship/scout |
-| [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the named-head reachability gate and scope-map completeness gate on ship `done:` acceptance, and the no-mistakes `--intent` contract |
+| [`fm-dod-lib.sh`](../bin/fm-dod-lib.sh) | Own ship/scout worker role scope, ship definitions of done, the named-head reachability gate, scope-map completeness gate, and merge-proof gate on ship `done:` acceptance, and the no-mistakes `--intent` contract |
 | [`fm-scope-map-lib.sh`](../bin/fm-scope-map-lib.sh) | Own the scope-map contract: a ship brief's numbered and bulleted items must each map to a branch commit or changed file before its `done:` is accepted |
 | `fm-scope-map.sh`        | List a brief's scope items and check a worker's scope map; the commands the brief's Scope map section hands the worker |
+| [`fm-merge-proof-lib.sh`](../bin/fm-merge-proof-lib.sh) | Own how the merge gate's proof inputs are read (the brief's Type and Review tier lines, the `red-green.log` markers) and the done-time check that a bug fix's red and green runs exist and the ready report states the review tier |
 | `fm-brief-heading-lib.sh` | Single owner of reading a brief's sections, shared by the `--intent` contract, spawn and promotion validation, and `fm-dispatch-resolve.sh` |
 | `fm-brief-labels-lib.sh` | Single owner of the `Review tier:` and `Type:` values a brief may carry, shared by `fm-pr-merge.sh`'s merge gates and `fm-spawn.sh`'s brief check |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |

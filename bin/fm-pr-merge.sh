@@ -217,6 +217,9 @@
 # as ancestors of the head in the task's local worktree.
 # A push gives the pull request a new head and voids the green run.
 # An unreadable log, brief, or merge base refuses. No flag skips this gate.
+# bin/fm-merge-proof-lib.sh owns how the Type line, the Review tier line, and the
+# log markers are read; bin/fm-dod-lib.sh applies the same reading when a worker
+# reports ready, so a missing proof stops the ready report rather than the merge.
 #
 # Extra args must not include --repo or -R in any form, including a bundled
 # short-option cluster such as -yR, because the repository comes only from the
@@ -265,6 +268,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
 # shellcheck source=bin/fm-brief-labels-lib.sh
 . "$SCRIPT_DIR/fm-brief-labels-lib.sh"
+# shellcheck source=bin/fm-merge-proof-lib.sh
+. "$SCRIPT_DIR/fm-merge-proof-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -1325,15 +1330,14 @@ require_file_boundary() {
 REVIEW_TIER_NAME=
 REVIEW_TIER_NEEDED=
 read_review_tier() {
-  local brief=$1 section lines value needed
+  local brief=$1 lines value needed
   REVIEW_TIER_NAME=
   REVIEW_TIER_NEEDED=
   if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
     echo "error: refusing to merge $URL: the brief of task $ID cannot be read at $brief, so its review tier is unknown; restore the brief with a 'Review tier:' line under '## Risk and review'" >&2
     return 1
   fi
-  section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
-  lines=$(printf '%s\n' "$section" | grep '^Review tier:' || true)
+  lines=$(fm_merge_proof_risk_lines "$brief" 'Review tier')
   if [ -z "$lines" ]; then
     echo "error: refusing to merge $URL: the brief of task $ID has no Review tier line under '## Risk and review', so its review tier is unknown; add 'Review tier: LOW|MEDIUM (Base)|HIGH (Plus)|CRITICAL (Apex)' to $brief" >&2
     return 1
@@ -1421,14 +1425,13 @@ require_review_tier() {
 # section, like the review tier; the header owns the accepted values.
 RED_GREEN_BUG_FIX=false
 read_bug_fix_type() {
-  local brief=$1 section lines value
+  local brief=$1 lines value
   RED_GREEN_BUG_FIX=false
   if [ ! -f "$brief" ] || [ ! -r "$brief" ]; then
     echo "error: refusing to merge $URL: the brief of task $ID cannot be read at $brief, so whether it is a bug fix is unknown" >&2
     return 1
   fi
-  section=$(fm_brief_task_heading_body "$brief" "## Risk and review") || section=
-  lines=$(printf '%s\n' "$section" | grep '^Type:' || true)
+  lines=$(fm_merge_proof_risk_lines "$brief" Type)
   if [ -z "$lines" ]; then
     echo "warning: the brief of task $ID has no Type line under '## Risk and review', so $URL merges as not a bug fix; add 'Type: bug fix' to $brief if it is one" >&2
     return 0
@@ -1547,32 +1550,7 @@ require_red_green_log() {
     fi
     # A marker counts only when captured output follows it before the next
     # marker, so the log carries the run it claims and not a bare assertion.
-    candidates=$(awk -F'|' -v url="$URL" -v head="$head" '
-      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
-      function settle() {
-        if (pending != "" && output && !invalid) {
-          if (pending_kind == "red") red[pending SUBSEP pending_command SUBSEP pending_sha] = 1
-          else for (key in red) { split(key, parts, SUBSEP); if (parts[1] == pending && parts[2] == pending_command) print parts[3] " " pending }
-        }
-        pending = ""; output = 0; invalid = 0
-      }
-      NF >= 6 && (trim($4) == "red" || trim($4) == "green") {
-        settle()
-        if (trim($1) != url) next
-        sha = tolower(trim($2)); t = trim($3); kind = trim($4); code = trim($5)
-        pending_command = $0
-        for (i = 0; i < 5; i++) sub(/^[^|]*\|/, "", pending_command)
-        pending_command = trim(pending_command)
-        if (t == "" || t ~ /[[:space:]]/ || pending_command == "" || code !~ /^[0-9]+$/ || code + 0 == 126 || code + 0 == 127) next
-        if (kind == "red" && sha ~ /^[0-9a-f]+$/ && length(sha) == 40 && sha != head && code + 0 != 0) { pending = t; pending_kind = "red"; pending_sha = sha }
-        if (kind == "green" && sha == head && code + 0 == 0) { pending = t; pending_kind = "green" }
-        next
-      }
-      /[^[:space:]]/ { if (pending != "") { output = 1; if (tolower($0) ~ /command not found|no tests found/) invalid = 1 } }
-      END {
-        settle()
-      }
-    ' "$log") || {
+    candidates=$(fm_merge_proof_red_green_candidates "$log" "$URL" "$head") || {
       echo "error: refusing to merge $URL: the red/green evidence log of task $ID could not be read: $log" >&2
       return 1
     }
