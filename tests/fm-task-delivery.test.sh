@@ -189,8 +189,34 @@ EOF
   id=labels-legacy-no-greptile
   new_labelled_brief "$id" "No Greptile; no-mistakes only." "feature"
   out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
-  assert_absent "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+  assert_not_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
     "the spawn refused the legacy No Greptile review tier accepted by the merge gate"
+
+  # Every spelling below is one tests/fm-pr-merge.test.sh shows the merge gate
+  # accepts. The lists are written out by hand there and here, so neither side
+  # reads its values from the shared label file.
+  local value n=0
+  for value in 'LOW' 'low' 'LOW (No Greptile)' 'low (no greptile)' 'No Greptile' \
+    'No Greptile; no-mistakes only.' 'MEDIUM (Base)' 'medium' 'HIGH (Plus)' 'high' \
+    'CRITICAL (Apex)' 'critical'; do
+    n=$((n + 1))
+    id="labels-ok-tier-$n"
+    new_labelled_brief "$id" "$value" "feature"
+    out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+    assert_not_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+      "the spawn refused the Review tier '$value' that the merge gate accepts"
+  done
+  [ "$n" -ge 12 ] || fail "only $n Review tier spellings were tried at spawn"
+  n=0
+  for value in 'bug fix' 'Bug Fix' 'feature' 'docs' 'chore' 'refactor'; do
+    n=$((n + 1))
+    id="labels-ok-type-$n"
+    new_labelled_brief "$id" "LOW" "$value"
+    out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+    assert_not_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" \
+      "the spawn refused the Type '$value' that the merge gate accepts"
+  done
+  [ "$n" -ge 6 ] || fail "only $n Type spellings were tried at spawn"
 
   pass "fm-spawn: invalid, blank, and repeated merge labels stop dispatch"
 }
