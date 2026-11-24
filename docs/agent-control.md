@@ -201,3 +201,17 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 - `tests/fm-control.test.sh` - the adapter contract for its verified-harness lane (adapters outside the lane pin their control mechanics in their own harness suites), the backend capability matrix, exact-id scoping, the closed verb list, the busy, idle, dead, and idempotent lifecycle cases, and marker non-regression, all against a stubbed session provider.
 - `tests/fm-control-relaunch.test.sh` - the relaunch transaction: identity preservation, harness switching, the progress note, checkpoint refusals, rollback after a failed launch, and the endpoint-absence proof both verbs share, including Herdr reclaim, tmux server replacement, legacy-record reboot recovery, and refusal when absence remains unproven.
 - `tests/fm-control-herdr-smoke.test.sh` - the second state-verified backend against the real herdr binary, on an isolated throwaway lab session.
+
+## Task dispatch and supervision handoff
+
+Spawn under the always-loaded dispatch requirements in `AGENTS.md` section 4 and the task-intake and dispatch procedures in `docs/configuration.md`.
+When the configured tasks-axi backlog gate applies, the spawn itself moves the work item to In flight and refuses when this home has no item for the work (manual-backend contract: `docs/configuration.md`).
+After spawning, confirm the worker is processing the brief and handle any trust dialog through `harness-adapters`.
+A persistent secondmate is recorded in the secondmate registry and runtime state, never as a backlog work item.
+
+Steer a worker with ordinary text through fail-closed `fm-send`, which leaves a durable message in the task's steering inbox and rings only a doorbell line in the worker's terminal; `bin/fm-send.sh` owns delivery, remote transport, and the `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend, the only safe retry after unconfirmed delivery.
+Pass `--resolve-key` when a steer answers an open keyed decision or blocker.
+Drive a worker's lifecycle through `bin/fm-control.sh <task-id> interrupt|exit|relaunch`, which owns the per-runtime mechanics, verifies each action, and never tears down or discards anything (this document).
+`bin/fm-pending-reply-lib.sh` owns the correlation, recovery, and escalation contract for marked secondmate requests.
+When the captain adds or changes an ask mid-task, append the captain's words, without speaker labels or direct address, to that brief's `## Captain's intent` and relay them to the worker; Firstmate build constraints stay in `## Firstmate spec` or the steer.
+Supervise all live work under `AGENTS.md` section 8 and the per-wake procedure in `docs/architecture.md`.

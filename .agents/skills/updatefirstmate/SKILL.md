@@ -13,7 +13,7 @@ metadata:
 
 Self-update firstmate in place.
 Firstmate is its own repo, behind the same no-mistakes gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` and then sits there until each running firstmate pulls it.
-Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.
+Only `AGENTS.md`, `bin/`, `.agents/skills/`, and the procedures in `docs/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.
 This skill performs that pull for the running main firstmate and every secondmate, without disturbing any in-flight work.
 
 Pulling the files is only half of it.
@@ -53,7 +53,7 @@ This touches only the firstmate repo and its own worktrees, never anything under
    A skipped genuine divergence still requires attention through its durable reconciliation record; the other two cases need no update action from you.
 
 2. **Re-read AGENTS.md if your own instructions changed.**
-   When the updater printed `reread-firstmate: yes`, the tracked instruction surface (`AGENTS.md`, `bin/`, or `.agents/skills/`) just advanced under you.
+   When the updater printed `reread-firstmate: yes`, the tracked instruction surface (`AGENTS.md`, `bin/`, `.agents/skills/`, or `docs/`) just advanced under you.
    **Read `AGENTS.md` now** (CLAUDE.md is a real `@AGENTS.md` pointer to it) to refresh your operating instructions before doing anything else, so you are acting on the new instructions rather than the stale ones you were started with.
    When it printed `reread-firstmate: no`, nothing changed for you - skip the re-read.
 
