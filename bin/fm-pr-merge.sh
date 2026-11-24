@@ -2006,9 +2006,10 @@ close_merged_pr_issues() {
       | select(((.repository.name // "") | ascii_downcase) == ($repo | ascii_downcase)
         and ((.repository.owner.login // "") | ascii_downcase) == ($owner | ascii_downcase))
       | .number | tostring'
-    printf '%s' "$json" | jq -r '.body // ""' \
-      | { grep -ioE '(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+#[0-9]+' || true; } \
-      | { grep -oE '[0-9]+$' || true; }
+    printf '%s' "$json" | jq -r --arg qualified "$PR_OWNER/$PR_REPO" '
+      (.body // "")
+      | scan("(?i)(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?):?[[:space:]]+(" + ($qualified | gsub("([.\\+*?\\[\\]{}()^$|])"; "\\\\\\1")) + ")?#([0-9]+)")
+      | .[-1]'
   } 2>/dev/null | { grep -E '^[0-9]{1,9}$' || true; } | sort -un); then
     printf 'warning: merged %s but could not read the issues it fixes; no issue was closed\n' "$URL" >&2
     return 0

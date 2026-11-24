@@ -279,6 +279,10 @@ case "${1:-} ${2:-}" in
     ;;
   "issue close")
     [ ! -f "${FM_TEST_GH_ISSUES:-/nonexistent}/close-fails" ] || exit 1
+    issue_file="${FM_TEST_GH_ISSUES:-/nonexistent}/${3##*/}.json"
+    if [ -f "$issue_file" ]; then
+      jq '.state = "closed"' "$issue_file" > "$issue_file.tmp" && mv "$issue_file.tmp" "$issue_file"
+    fi
     exit 0
     ;;
   "api graphql")
@@ -5464,6 +5468,8 @@ test_merge_skips_an_already_closed_issue() {
   expect_code 0 "$RC" "issue-close-already-closed: the merge must succeed"
   assert_no_grep 'issue close ' "$case_dir/gh.log" "issue-close-already-closed: a closed issue was closed again"
   assert_no_grep 'but could not' "$case_dir/stderr" "issue-close-already-closed: a closed issue raised a warning"
+  actual_state=$(jq -r '.state' "$case_dir/github-issues/8.json")
+  [ "$actual_state" = closed ] || fail "issue-close-already-closed: expected GitHub's closed issue state, got $actual_state"
   pass "fm-pr-merge skips an issue that is already closed"
 }
 
@@ -5475,14 +5481,16 @@ test_merge_closes_body_references_on_a_non_default_base() {
   write_issue "$case_dir" 11 open
   write_issue "$case_dir" 12 open
   write_issue "$case_dir" 13 open '"pull_request":{}'
+  write_issue "$case_dir" 16 open
   write_closing "$case_dir" m2-staging '[{"number":14,"repository":{"name":"other","owner":{"login":"example"}}}]' \
-    $'Fixes the thing.\n\nCloses #9\nfixes #10 and Resolves: #11\nSee #12 and closes other/repo#15\nCloses #13'
+    $'Fixes the thing.\n\nCloses #9\nfixes #10 and Resolves: #11\nSee #12 and closes other/repo#15\nCloses #13\nCloses EXAMPLE/REPO#16'
   merge_for_issue_close "$case_dir"
   expect_code 0 "$RC" "issue-close-non-default-base: the merge must succeed (stderr: $(cat "$case_dir/stderr"))"
   grep -qxF 'issue close 9 --repo example/repo --comment Closed automatically: the fix merged in https://github.com/example/repo/pull/71 into m2-staging.' "$case_dir/gh.log" \
     || fail "issue-close-non-default-base: Closes #9 in the body was not closed with the base named"
   assert_grep 'issue close 10 --repo example/repo ' "$case_dir/gh.log" "issue-close-non-default-base: fixes #10 was not closed"
   assert_grep 'issue close 11 --repo example/repo ' "$case_dir/gh.log" "issue-close-non-default-base: Resolves: #11 was not closed"
+  assert_grep 'issue close 16 --repo example/repo ' "$case_dir/gh.log" "issue-close-non-default-base: qualified same-repository reference was not closed"
   assert_no_grep 'issue close 12 ' "$case_dir/gh.log" "issue-close-non-default-base: a mention without a keyword was closed"
   assert_no_grep 'issue close 13 ' "$case_dir/gh.log" "issue-close-non-default-base: a pull request number was closed"
   assert_no_grep 'issue close 14 ' "$case_dir/gh.log" "issue-close-non-default-base: another repository's issue was closed"
