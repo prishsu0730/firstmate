@@ -1,0 +1,21 @@
+==== bin/fm-brief.sh ic-no-mistakes alpha --mode no-mistakes  (exit 0)
+Rules section lines 3-4 of the emitted brief.md:
+50:3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+51-   When this task fixes a known issue, write `Closes #N` for it in the PR body, so the merge closes that issue on its own.
+52-4. Report status by appending one line:
+53-   `echo "{state} [at=<epoch>]: {one short line}" >> '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/state/ic-no-mistakes.status' && { [ ! -e '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/config/fleet-ledger' ] || '{run-worktree}/bin/fm-fleet-ledger.sh' appended '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/config' '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/state/ic-no-mistakes.status' >/dev/null 2>&1 || true; }`
+
+==== bin/fm-brief.sh ic-direct-PR alpha --mode direct-PR  (exit 0)
+Rules section lines 3-4 of the emitted brief.md:
+49:3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+50-   When this task fixes a known issue, write `Closes #N` for it in the PR body, so the merge closes that issue on its own.
+51-4. Report status by appending one line:
+52-   `echo "{state} [at=<epoch>]: {one short line}" >> '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/state/ic-direct-PR.status' && { [ ! -e '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/config/fleet-ledger' ] || '{run-worktree}/bin/fm-fleet-ledger.sh' appended '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/config' '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/state/ic-direct-PR.status' >/dev/null 2>&1 || true; }`
+
+==== bin/fm-brief.sh ic-local-only alpha --mode local-only  (exit 0)
+Rules section lines 3-4 of the emitted brief.md:
+49:3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
+50-
+51-4. Report status by appending one line:
+52-   `echo "{state} [at=<epoch>]: {one short line}" >> '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/state/ic-local-only.status' && { [ ! -e '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/config/fleet-ledger' ] || '{run-worktree}/bin/fm-fleet-ledger.sh' appended '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/config' '/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-ic-brief.eVv4my/state/ic-local-only.status' >/dev/null 2>&1 || true; }`
+

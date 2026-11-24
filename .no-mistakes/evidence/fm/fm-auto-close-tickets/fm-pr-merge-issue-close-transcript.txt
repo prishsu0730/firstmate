@@ -1,0 +1,152 @@
+---- S1 non-default base m2-staging, body Closes #9
+PR base: m2-staging
+closingIssuesReferences: []
+PR body:
+    | Fix the onboarding crash.
+    | 
+    | Closes #9
+fm-pr-merge.sh exit code: 0
+stdout:
+    > armed: state/task-x1.check.sh
+    > verified: https://github.com/example/repo/pull/71 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+    > closed: issue #9, fixed by https://github.com/example/repo/pull/71 (base m2-staging)
+stderr:
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! ●  WATCHER DOWN - SUPERVISION IS OFF
+    ! ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    ! ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    ! ●  This is a supervision warning only; the guarded operation WILL still run.
+    ! ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 2020202020202020202020202020202020202020
+gh issue calls:
+    $ gh api repos/example/repo/issues/9
+    $ gh issue close 9 --repo example/repo --comment Closed automatically: the fix merged in https://github.com/example/repo/pull/71 into m2-staging.
+final issue states:
+    #9: closed
+
+---- S2 default base, linked issues #7 (open) and #8 (already closed)
+PR base: main
+closingIssuesReferences: ["example/repo#7","example/repo#8"]
+PR body:
+    | Linked via sidebar
+fm-pr-merge.sh exit code: 0
+stdout:
+    > armed: state/task-x1.check.sh
+    > verified: https://github.com/example/repo/pull/71 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+    > closed: issue #7, fixed by https://github.com/example/repo/pull/71 (base main)
+stderr:
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! ●  WATCHER DOWN - SUPERVISION IS OFF
+    ! ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    ! ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    ! ●  This is a supervision warning only; the guarded operation WILL still run.
+    ! ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 2020202020202020202020202020202020202020
+gh issue calls:
+    $ gh api repos/example/repo/issues/7
+    $ gh issue close 7 --repo example/repo --comment Closed automatically: the fix merged in https://github.com/example/repo/pull/71 into main.
+    $ gh api repos/example/repo/issues/8
+final issue states:
+    #7: closed
+    #8: closed
+
+---- S3 adversarial: plain mention, other-repo refs, a PR number
+PR base: m2-staging
+closingIssuesReferences: ["example/other#14"]
+PR body:
+    | See #12 for background
+    | closes other/repo#15
+    | Closes #13
+    | prefixCloses #12
+fm-pr-merge.sh exit code: 0
+stdout:
+    > armed: state/task-x1.check.sh
+    > verified: https://github.com/example/repo/pull/71 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+stderr:
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! ●  WATCHER DOWN - SUPERVISION IS OFF
+    ! ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    ! ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    ! ●  This is a supervision warning only; the guarded operation WILL still run.
+    ! ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 2020202020202020202020202020202020202020
+gh issue calls:
+    $ gh api repos/example/repo/issues/13
+final issue states:
+    #12: open
+    #13: open (is a pull request)
+    #14: open
+    #15: open
+
+---- S3b PR names no ticket
+PR base: main
+closingIssuesReferences: []
+PR body:
+    | Tweak footer copy
+fm-pr-merge.sh exit code: 0
+stdout:
+    > armed: state/task-x1.check.sh
+    > verified: https://github.com/example/repo/pull/71 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+stderr:
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! ●  WATCHER DOWN - SUPERVISION IS OFF
+    ! ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    ! ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    ! ●  This is a supervision warning only; the guarded operation WILL still run.
+    ! ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 2020202020202020202020202020202020202020
+gh issue calls:
+final issue states:
+
+---- S4a gh issue close fails
+PR base: m2-staging
+closingIssuesReferences: []
+PR body:
+    | Closes #9
+fm-pr-merge.sh exit code: 0
+stdout:
+    > armed: state/task-x1.check.sh
+    > verified: https://github.com/example/repo/pull/71 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+stderr:
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! ●  WATCHER DOWN - SUPERVISION IS OFF
+    ! ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    ! ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    ! ●  This is a supervision warning only; the guarded operation WILL still run.
+    ! ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 2020202020202020202020202020202020202020
+    ! warning: merged https://github.com/example/repo/pull/71 but could not close issue #9
+gh issue calls:
+    $ gh api repos/example/repo/issues/9
+    $ gh issue close 9 --repo example/repo --comment Closed automatically: the fix merged in https://github.com/example/repo/pull/71 into m2-staging.
+final issue states:
+    #9: open
+
+---- S4b reading the PR's closing refs fails
+PR base: m2-staging
+closingIssuesReferences: []
+PR body:
+    | Closes #9
+fm-pr-merge.sh exit code: 0
+stdout:
+    > armed: state/task-x1.check.sh
+    > verified: https://github.com/example/repo/pull/71 is merged (state=MERGED, merged=true, isInMergeQueue=false)
+stderr:
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! ●  WATCHER DOWN - SUPERVISION IS OFF
+    ! ●  1 task(s) in flight, but no watcher has a fresh beacon (last beat: never, grace 300s).
+    ! ●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+    ! ●  This is a supervision warning only; the guarded operation WILL still run.
+    ! ●  watcher supervision needs Stop-owned automatic recovery; inspect the hook registration and startup status before ending the turn.
+    ! ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ! verified: https://github.com/example/repo/pull/71 is open and mergeable, with every unwaived required check reported and every unwaived check green at head 2020202020202020202020202020202020202020
+    ! warning: merged https://github.com/example/repo/pull/71 but could not read the issues it fixes; no issue was closed
+gh issue calls:
+final issue states:
+    #9: open
+
