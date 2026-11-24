@@ -167,12 +167,19 @@ fi
 MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
 PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
 # The gate is asked about the ready report this task's worker was told to give;
-# on a Gerrit change both publishing modes report the same published line.
-case "$PROVIDER:$MODE" in
-  gerrit:*) DONE_LINE="done: PR $URL published for review" ;;
-  *:no-mistakes|*:) DONE_LINE="done: PR $URL checks green" ;;
-  *) DONE_LINE="done: PR $URL" ;;
-esac
+# retain its review-tier statement from the append-only status record. A
+# registration without that matching ready line still uses the mode's canonical
+# wording and is refused by the merge-proof gate when the brief opts in.
+DONE_LINE=$(status_current_line "$STATE/$ID.status" "${KIND:-ship}")
+DONE_URL=$(fm_dod_pr_url_from_done_note "$(status_line_note "$DONE_LINE")") || DONE_URL=
+if [ "$(status_line_verb "$DONE_LINE")" != done ] || [ "$DONE_URL" != "$URL" ]; then
+  # on a Gerrit change both publishing modes report the same published line.
+  case "$PROVIDER:$MODE" in
+    gerrit:*) DONE_LINE="done: PR $URL published for review" ;;
+    *:no-mistakes|*:) DONE_LINE="done: PR $URL checks green" ;;
+    *) DONE_LINE="done: PR $URL" ;;
+  esac
+fi
 if { [ -z "$PR_HEAD" ] || ! fm_dod_forge_head_is_named_head "$MODE"; } \
   && ! GATE_REASON=$(fm_dod_accept_ship_done "${KIND:-ship}" "$MODE" "$WT" "$PROJECT" "$DONE_LINE" "$STATE" "$ID" "$META"); then
   echo "error: $GATE_REASON" >&2
