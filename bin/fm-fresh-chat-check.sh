@@ -111,10 +111,12 @@ used=$(perl -e '
 ' "$transcript" | jq -R -r '
   fromjson? |
   if .type == "assistant" and (.isSidechain | not) then
-    (.message.usage? // empty
-      | ((.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))),
+    (if (.message.usage? | type) == "object" then
+      ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0))
+    else "no-usage" end),
     halt
   else empty end' 2>/dev/null)
+if [ "$used" = no-usage ]; then exit 0; fi
 case "$used" in
   ''|*[!0-9]*) step_aside "the chat log has no token count yet, so its size cannot be measured" ;;
 esac
