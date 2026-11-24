@@ -137,13 +137,10 @@ test_inert_in_task_worktree() {
 
 test_registered_for_claude_prompts() {
   local command
-  command=$(jq -r '.hooks.UserPromptSubmit[].hooks[] | select(.type == "command") | .command' \
-    "$ROOT/.claude/settings.json" | while IFS= read -r candidate; do
-      case "$candidate" in
-        *fm-fresh-chat-check.sh*) printf '%s\n' "$candidate"; break ;;
-      esac
-    done)
-  [ -n "$command" ] || fail "Claude UserPromptSubmit must register a command"
+  command=$(jq -er '
+    .hooks.UserPromptSubmit[0].hooks[0]
+    | select(.type == "command" and (.command | type == "string") and (.timeout | type == "number"))
+    | .command' "$ROOT/.claude/settings.json") || fail "Claude UserPromptSubmit must register a command hook"
   local hook_json
   hook_json=$(payload "$TMP_ROOT/big.jsonl" 'registered hook probe')
   OUT=$(printf '%s' "$hook_json" | CLAUDE_PROJECT_DIR="$ROOT" bash -c "$command" 2>/dev/null)
