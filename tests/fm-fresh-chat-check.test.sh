@@ -141,9 +141,16 @@ test_registered_for_claude_prompts() {
     .hooks.UserPromptSubmit[0].hooks[0]
     | select(.type == "command" and (.command | type == "string") and (.timeout | type == "number"))
     | .command' "$ROOT/.claude/settings.json") || fail "Claude UserPromptSubmit must register a command hook"
-  local hook_json
-  hook_json=$(payload "$TMP_ROOT/big.jsonl" 'registered hook probe')
-  OUT=$(printf '%s' "$hook_json" | CLAUDE_PROJECT_DIR="$ROOT" bash -c "$command" 2>/dev/null)
+  # A linked task checkout deliberately disables primary-only hooks. Execute
+  # the registered command from the same primary-style fixture as other cases.
+  local hook_json hook_primary hook_transcript
+  hook_primary="$TMP_ROOT/registered-primary"
+  make_primary "$hook_primary"
+  hook_transcript="$TMP_ROOT/registered-big.jsonl"
+  write_transcript "$hook_transcript" 160000
+  hook_json=$(payload "$hook_transcript" 'registered hook probe')
+  OUT=$(printf '%s' "$hook_json" | env -u FM_FRESH_CHAT_LIMIT FM_HOME="$hook_primary" \
+    CLAUDE_PROJECT_DIR="$hook_primary" bash -c "$command" 2>/dev/null)
   [ "$(decision)" = "block" ] || fail "registered UserPromptSubmit hook must block a >150k prompt: $OUT"
   pass "registered Claude UserPromptSubmit command blocks a prompt past 150k"
 }
