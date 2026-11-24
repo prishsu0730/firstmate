@@ -100,8 +100,7 @@ fm_merge_proof_problems() {  # <brief> <log> <worktree> <pr-url> <head> <note>
       candidates=$(fm_merge_proof_red_green_candidates "$log" "$url" "$head") || candidates=
       while read -r sha test_id; do
         [ -n "$sha" ] || continue
-        if git -C "$wt" merge-base --is-ancestor "$sha" "$head" 2>/dev/null \
-          || git -C "$wt" merge-base --is-ancestor "$sha" HEAD 2>/dev/null; then
+        if git -C "$wt" merge-base --is-ancestor "$sha" "$head" 2>/dev/null; then
           found=$test_id
           break
         fi
