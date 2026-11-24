@@ -791,6 +791,8 @@ DOD=$(fm_dod_block "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1
 SCOPE_MAP=$(fm_scope_map_block "$FM_ROOT" "$DATA" "$ID")
 PR_CLOSE_INSTRUCTION=
 if [ "$MODE" != local-only ]; then
+  # The backticks are literal Markdown, not command substitutions.
+  # shellcheck disable=SC2016
   PR_CLOSE_INSTRUCTION='   When this task fixes a known issue, write `Closes #N` for it in the PR body, so the merge closes that issue on its own.'
 fi
 

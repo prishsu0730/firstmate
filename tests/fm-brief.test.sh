@@ -1526,9 +1526,13 @@ test_ship_scaffold_tells_the_worker_to_write_closes_in_the_pr_body() {
       || fail "fm-brief.sh --mode $mode exited non-zero"
     brief="$home/data/$id/brief.md"
     if [ "$mode" = local-only ]; then
+      # The backticks are literal Markdown in the expected text.
+      # shellcheck disable=SC2016
       assert_no_grep 'When this task fixes a known issue, write `Closes #N` for it in the PR body' "$brief" \
         "local-only brief includes PR issue-closing guidance"
     else
+      # The backticks are literal Markdown in the expected text.
+      # shellcheck disable=SC2016
       assert_grep 'When this task fixes a known issue, write `Closes #N` for it in the PR body' "$brief" \
         "$mode brief does not tell the worker to write Closes #N in the PR body"
     fi
