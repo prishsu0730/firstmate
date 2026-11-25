@@ -430,11 +430,40 @@ test_digest_view_shows_count_and_newest_five() {
   FM_DRAIN_OPEN_DECISIONS_DIGEST=1 FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing with digest env failed"
   [ "$(grep -c 'question number' "$out")" -eq 8 ] || fail "digest env shrank --all-open-decisions"
 
+  cp "$state/.open-decisions-presented" "$dir/presented.before"
   FM_STATE_OVERRIDE="$state" "$DRAIN" --digest-open-decisions > "$out" || fail "read-only digest listing failed"
   [ "$(grep -c 'question number' "$out")" -eq 5 ] || fail "--digest-open-decisions did not keep five entries"
-  [ ! -e "$state/.open-decisions-presented" ] || [ "$(wc -l < "$state/.open-decisions-presented")" -eq 8 ] \
+  cmp -s "$dir/presented.before" "$state/.open-decisions-presented" \
     || fail "the read-only digest listing changed the presented record"
   pass "the digest view prints a count and the newest five; the full listing stays whole"
+}
+
+test_digest_hidden_decisions_print_in_full_on_the_next_drain() {
+  local dir state out i now
+  dir=$(make_case digest-hidden-next)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  for i in 1 2 3 4 5 6 7; do
+    printf 'needs-decision [key=k%s] [at=%s]: question number %s\n' "$i" "$((now - 1000 + i))" "$i" > "$state/task$i.status"
+  done
+  printf 'needs-decision [key=k8]: question number 8\n' > "$state/task8.status"
+
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_DRAIN_OPEN_DECISIONS_DIGEST=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "digest drain failed"
+  [ "$(grep -c 'question number' "$out")" -eq 5 ] || fail "digest did not print exactly five entries: $(cat "$out")"
+  for i in 1 2 8; do
+    if grep -F "question number $i" "$out" >/dev/null; then fail "digest printed a hidden entry ($i): $(cat "$out")"; fi
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "next drain failed"
+  for i in 1 2 8; do
+    grep -F "question number $i" "$out" >/dev/null || fail "next drain did not print hidden entry $i in full: $(cat "$out")"
+  done
+  for i in 3 4 5 6 7; do
+    if grep -F "question number $i" "$out" >/dev/null; then fail "next drain re-printed digest entry $i: $(cat "$out")"; fi
+  done
+  grep -F 'OPEN DECISIONS: 5 unchanged' "$out" >/dev/null || fail "next drain miscounted the shown entries: $(cat "$out")"
+  pass "decisions the digest hides print in full on the next drain, undated ones included"
 }
 
 test_digest_view_with_few_decisions_has_no_more_line() {
@@ -467,4 +496,5 @@ test_status_symlink_is_not_followed
 
 test_tabbed_receipts_preserve_age_and_cooldown
 test_digest_view_shows_count_and_newest_five
+test_digest_hidden_decisions_print_in_full_on_the_next_drain
 test_digest_view_with_few_decisions_has_no_more_line

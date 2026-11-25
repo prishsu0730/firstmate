@@ -566,12 +566,9 @@ print_open_decisions_section() {
       fi
     fi
     if [ "$OPEN_DECISIONS_DIGEST" = true ] && [ "$shown" -ge "$FM_OPEN_DECISIONS_DIGEST_LIMIT" ]; then
-      # Past the digest limit: counted in the header, still open in its durable
-      # status log, recorded as presented so the next drain does not re-print it.
+      # Past the digest limit: counted in the header and left out of the
+      # presented record, so the next drain prints it as new.
       hidden=$((hidden + 1))
-      [ "$last" -ge 0 ] || last=0
-      recorded="$recorded$last$tab$raw
-"
       continue
     fi
     line="$task"
