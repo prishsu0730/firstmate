@@ -18,7 +18,9 @@
 # and left byte-identical when it already names that id. A same-session
 # confirmation never rewrites line 1 while the recorded pid is alive, because
 # bin/fm-startup-network.sh compares that pid across its deferred sweeps; a dead
-# recorded pid is reclaimed and rewritten to this session's anchor.
+# recorded pid is reclaimed and rewritten to this session's anchor, and a
+# `lock reclaimed: the previous holder (pid N) was no longer running` line
+# precedes `lock acquired` so the takeover is never silent.
 #
 # A live harness holder that is not the process Firstmate launched for a
 # secondmate home is a FOREIGN holder - for example the Codex desktop app's
@@ -135,6 +137,7 @@ LOCK_SESSION_PHASE=0
 LOCK_SESSION_KIND=0
 LOCK_SESSION_PREV="$STATE/.lock-session.prev"
 LOCK_LINE_PRE=
+RECLAIMED_FROM=
 release_claim_lock() {
   if [ "$CLAIM_LOCK_HELD" -eq 1 ]; then
     fm_lock_release "$CLAIM_LOCK"
@@ -308,6 +311,12 @@ if [ -e "$LOCK" ] || [ -L "$LOCK" ]; then
       refuse_live_owner "$old"
     fi
   fi
+  # Whatever pid line 1 still names here is not a live holder: this run takes
+  # the lock over from it, and the closing line says so.
+  case "$old" in
+    ''|*[!0-9]*|"$me") ;;
+    *) RECLAIMED_FROM=$old ;;
+  esac
 fi
 # The sidecar goes first: a fresh pid beside a previous session's id would let
 # that session's resume own this lock. If the sidecar changes before line 1 is
@@ -354,4 +363,7 @@ if [ ! -f "$LOCK" ] || [ -L "$LOCK" ] || [ "$written" != "$me" ]; then
 fi
 commit_lock_session
 release_claim_lock
+if [ -n "$RECLAIMED_FROM" ]; then
+  echo "lock reclaimed: the previous holder (pid $RECLAIMED_FROM) was no longer running"
+fi
 echo "lock acquired: harness pid $me"

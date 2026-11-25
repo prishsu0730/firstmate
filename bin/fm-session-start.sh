@@ -202,6 +202,9 @@
 #   reporting command, not a gate. A lock refusal is reported as a loud
 #   banner inline, never a silent failure or a non-zero exit that would make
 #   an agent skip the rest of the digest.
+#   If a refused live holder has since died, the banner identifies the stale
+#   refusal and prints a session start rerun command preserving FM_HOME and any
+#   FM_STATE_OVERRIDE; this run never reclaims the lock itself.
 #
 #   --reemit  This process ALREADY took the helm at its own startup and has
 #             only lost its context (a /clear or a compaction). Skip the
@@ -796,11 +799,25 @@ printf '%s\n' "$LOCK_OUT"
 READ_ONLY=0
 if [ "$LOCK_RC" -ne 0 ]; then
   READ_ONLY=1
+  # A refusal that names a live holder may be stale by the time it is read: the
+  # holder can exit between fm-lock.sh's check and this digest. Say so plainly
+  # with the exact reclaim command; reclaiming stays the operator's call.
+  STALE_HOLDER=$(printf '%s\n' "$LOCK_OUT" | sed -n 's/.*another live firstmate session holds the lock (pid \([0-9][0-9]*\)[,)].*/\1/p' | head -1)
+  if [ -n "$STALE_HOLDER" ] && fm_harness_pid_alive "$STALE_HOLDER"; then
+    STALE_HOLDER=
+  fi
   BAR='●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
   {
     printf '%s\n' "$BAR"
     printf '●  READ-ONLY SESSION - FLEET LOCK OWNERSHIP WAS NOT VERIFIED\n'
     printf '●  %s\n' "$LOCK_OUT"
+    if [ -n "$STALE_HOLDER" ]; then
+      printf '●  STALE LOCK: the recorded holder (pid %s) is no longer running, so this refusal is out of date.\n' "$STALE_HOLDER"
+      STALE_ENV=$(printf 'FM_HOME=%q' "$FM_HOME")
+      [ -z "${FM_STATE_OVERRIDE:-}" ] || STALE_ENV="$STALE_ENV $(printf 'FM_STATE_OVERRIDE=%q' "$FM_STATE_OVERRIDE")"
+      printf '●  To take the lock over, rerun session start: %s %q\n' "$STALE_ENV" "$SCRIPT_DIR/fm-session-start.sh"
+      printf '●  This read-only run did not reclaim it, and it never will.\n'
+    fi
     printf '●  Skipping every mutating step: stale Herdr child cleanup,\n'
     printf '●  secondmate convergence, secondmate liveness, pending remote handoff retry,\n'
     printf '●  X-mode artifacts, fleet sync, and wake-queue drain. Detect-only bootstrap\n'

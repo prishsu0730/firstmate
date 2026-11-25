@@ -60,7 +60,7 @@ fill_brief_subsections() {  # <file> <intent> <spec>
   content=${content//'{BLAST_RADIUS}'/'LOCAL; only the named task files; targeted screen check.'}
   content=${content//'{RISK_TIERS}'/'Code review Low and execution Low; isolated, reversible, and evidenced.'}
   content=${content//'{TYPE}'/feature}
-  content=${content//'{REVIEW_TIER}'/'No Greptile; no-mistakes only.'}
+  content=${content//'{REVIEW_TIER}'/'LOW'}
   printf '%s\n' "$content" > "$file"
 }
 
@@ -101,6 +101,124 @@ unknown yolo|--mode no-mistakes --yolo maybe|--yolo must be on or off
 conditional policy as a task mode|--mode no-mistakes-prod-only --yolo off|classify this task's surface
 ROWS
   pass "fm-spawn: a ship spawn requires a valid explicit mode and yolo before anything is created"
+}
+
+# A brief's Review tier and Type must be values bin/fm-pr-merge.sh accepts, so a
+# bad label stops the spawn when the brief is handed over and not at merge time.
+test_spawn_refuses_review_tier_and_type_the_merge_would_refuse() {
+  local rec home proj fakebin out status id
+  rec=$(make_home labels)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  new_labelled_brief() {  # <id> <tier-line-value> <type-line-value>
+    FM_HOME="$home" "$BRIEF" "$1" proj --mode direct-PR >/dev/null 2>&1 \
+      || fail "labelled brief should scaffold"
+    fill_brief_subsections "$home/data/$1/brief.md" \
+      "Exercise the label check." "Only the Review tier and Type values differ."
+    sed -e "s|^Review tier: .*|Review tier: $2|" -e "s|^Type: .*|Type: $3|" \
+      "$home/data/$1/brief.md" > "$home/data/$1/brief.labelled"
+    mv "$home/data/$1/brief.labelled" "$home/data/$1/brief.md"
+  }
+
+  id=labels-bad-tier
+  new_labelled_brief "$id" "Light" "feature"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a Review tier the merge refuses was accepted by the spawn"
+  assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse at merge (read 'light')" \
+    "the bad Review tier was not named"
+  assert_contains "$out" "LOW (No Greptile), MEDIUM (Base), HIGH (Plus), CRITICAL (Apex)" \
+    "the refusal did not list the accepted Review tier values"
+  assert_absent "$home/state/$id.meta" "a spawn refused for its Review tier wrote task metadata"
+
+  id=labels-bad-type
+  new_labelled_brief "$id" "LOW" "content"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a Type the merge refuses was accepted by the spawn"
+  assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse at merge (read 'content')" \
+    "the bad Type was not named"
+  assert_contains "$out" "'bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor" \
+    "the refusal did not list the accepted Type values"
+  assert_absent "$home/state/$id.meta" "a spawn refused for its Type wrote task metadata"
+
+  id=labels-blank-tier
+  new_labelled_brief "$id" "" "feature"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a blank Review tier was accepted by the spawn"
+  assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+    "the blank Review tier was not named"
+  assert_absent "$home/state/$id.meta" "a spawn refused for a blank Review tier wrote task metadata"
+
+  id=labels-blank-type
+  new_labelled_brief "$id" "LOW" ""
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a blank Type was accepted by the spawn"
+  assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" \
+    "the blank Type was not named"
+  assert_absent "$home/state/$id.meta" "a spawn refused for a blank Type wrote task metadata"
+
+  id=labels-both-bad
+  new_labelled_brief "$id" "Light" "content"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  assert_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" "a brief with two bad labels hid its Review tier"
+  assert_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" "a brief with two bad labels hid its Type"
+
+  # The merge refuses a repeated line even when each copy is valid.
+  id=labels-repeated-tier
+  new_labelled_brief "$id" "LOW" "feature"
+  awk '{ print } /^Review tier: /{ print "Review tier: HIGH (Plus)" }' "$home/data/$id/brief.md" > "$home/data/$id/brief.dup"
+  mv "$home/data/$id/brief.dup" "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief with two Review tier lines was accepted by the spawn"
+  assert_contains "$out" "more than one Review tier line" "the repeated Review tier line was not named"
+
+  id=labels-repeated-type
+  new_labelled_brief "$id" "LOW" "feature"
+  awk '{ print } /^Type: /{ print "Type: docs" }' "$home/data/$id/brief.md" > "$home/data/$id/brief.dup"
+  mv "$home/data/$id/brief.dup" "$home/data/$id/brief.md"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a brief with two Type lines was accepted by the spawn"
+  assert_contains "$out" "more than one Type line" "the repeated Type line was not named"
+
+  id=labels-legacy-no-greptile
+  new_labelled_brief "$id" "No Greptile; no-mistakes only." "feature"
+  out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+  assert_not_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+    "the spawn refused the legacy No Greptile review tier accepted by the merge gate"
+
+  # Every spelling below is one tests/fm-pr-merge.test.sh shows the merge gate
+  # accepts. The lists are written out by hand there and here, so neither side
+  # reads its values from the shared label file.
+  local value n=0
+  for value in 'LOW' 'low' 'LOW (No Greptile)' 'low (no greptile)' 'No Greptile' \
+    'No Greptile; no-mistakes only.' 'MEDIUM (Base)' 'medium' 'HIGH (Plus)' 'high' \
+    'CRITICAL (Apex)' 'critical'; do
+    n=$((n + 1))
+    id="labels-ok-tier-$n"
+    new_labelled_brief "$id" "$value" "feature"
+    out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+    assert_not_contains "$out" "Review tier that bin/fm-pr-merge.sh would refuse" \
+      "the spawn refused the Review tier '$value' that the merge gate accepts"
+  done
+  [ "$n" -ge 12 ] || fail "only $n Review tier spellings were tried at spawn"
+  n=0
+  for value in 'bug fix' 'Bug Fix' 'feature' 'docs' 'chore' 'refactor'; do
+    n=$((n + 1))
+    id="labels-ok-type-$n"
+    new_labelled_brief "$id" "LOW" "$value"
+    out=$(run_spawn "$home" "$fakebin" "$id" "$proj" claude --mode direct-PR --yolo off)
+    assert_not_contains "$out" "Type that bin/fm-pr-merge.sh would refuse" \
+      "the spawn refused the Type '$value' that the merge gate accepts"
+  done
+  [ "$n" -ge 6 ] || fail "only $n Type spellings were tried at spawn"
+
+  pass "fm-spawn: invalid, blank, and repeated merge labels stop dispatch"
 }
 
 # A scout has no merge to govern and a secondmate's posture is fixed, so the flags
@@ -1659,6 +1777,7 @@ EOF
 }
 
 test_ship_spawn_requires_a_valid_delivery_contract
+test_spawn_refuses_review_tier_and_type_the_merge_would_refuse
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch
 test_spawn_notices_a_rigor_downgrade_against_the_registry

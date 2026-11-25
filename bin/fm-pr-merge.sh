@@ -184,9 +184,8 @@
 # missing, repeated, or unrecognised tier line all refuse; an unreadable review
 # record also refuses when the tier requires reviews. The refusal names the
 # record or line to fix. No flag skips this gate.
-# Tier values are case-insensitive exact names or risk labels listed above,
-# including MEDIUM (Base), HIGH (Plus), and CRITICAL (Apex); the scaffold's
-# trailing ` (No Greptile / Base / Plus / Apex)` is also accepted.
+# bin/fm-brief-labels-lib.sh owns the accepted values for this line and for
+# `Type:`, and bin/fm-spawn.sh refuses a brief carrying one it rejects.
 # Any tier needing reviews requires a synchronous merge on both forges, even
 # with --attended-override: auto-merge requests are refused, GitHub must prove
 # the base has no merge queue, and GitLab gets a final --auto-merge=false.
@@ -195,10 +194,9 @@
 # A bug fix is also refused until its live description names the cause and a
 # saved log proves one test failed on the old code and passed on the fix.
 # The brief classifies the pull request: a
-# `Type: bug fix` line in its `## Risk and review` section (also bug-fix,
-# bugfix, or fix, case-insensitive) makes it a bug fix; one of
-# feat, feature, docs, chore, refactor, test, ci, build, perf, style, or revert,
-# leaves the merge untouched by this gate. A brief with no Type line at all
+# `Type:` line in its `## Risk and review` section either makes it a bug fix or
+# leaves the merge untouched by this gate; bin/fm-brief-labels-lib.sh owns which
+# values mean which. A brief with no Type line at all
 # predates the classification and merges as not a bug fix with a warning; a
 # repeated or unrecognised Type line, including an unfilled `{TYPE}`
 # placeholder, refuses rather than falling to "not a bug fix". The cause is one line of the
@@ -265,6 +263,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-afk-contract.sh"
 # shellcheck source=bin/fm-brief-heading-lib.sh
 . "$SCRIPT_DIR/fm-brief-heading-lib.sh"
+# shellcheck source=bin/fm-brief-labels-lib.sh
+. "$SCRIPT_DIR/fm-brief-labels-lib.sh"
 
 if [ "$#" -lt 2 ]; then
   echo "error: invalid PR merge request" >&2
@@ -1342,17 +1342,9 @@ read_review_tier() {
     echo "error: refusing to merge $URL: the brief of task $ID has more than one Review tier line, so its review tier is ambiguous; keep exactly one in $brief" >&2
     return 1
   fi
-  value=$(printf '%s' "${lines#Review tier:}" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//')
-  value=${value%' (no greptile / base / plus / apex)'}
-  case "$value" in
-    low|'no greptile') needed=0 ;;
-    base|medium|'medium (base)') needed=1 ;;
-    plus|high|'high (plus)') needed=2 ;;
-    apex|critical|'critical (apex)') needed=4 ;;
-    *) needed= ;;
-  esac
-  if [ -z "$needed" ]; then
-    echo "error: refusing to merge $URL: the review tier of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set the brief's 'Review tier:' line to one of LOW, MEDIUM (Base), HIGH (Plus), CRITICAL (Apex) in $brief" >&2
+  value=$(fm_brief_review_tier_normalize "${lines#Review tier:}")
+  if ! needed=$(fm_brief_review_tier_needed "${lines#Review tier:}"); then
+    echo "error: refusing to merge $URL: the review tier of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set the brief's 'Review tier:' line to one of $FM_BRIEF_REVIEW_TIER_ACCEPTED in $brief" >&2
     return 1
   fi
   REVIEW_TIER_NAME=$(printf '%s' "$value" | tr -d '[:cntrl:]' | sed 's/^ *//; s/ *$//')
@@ -1446,11 +1438,11 @@ read_bug_fix_type() {
     return 1
   fi
   value=$(printf '%s' "${lines#Type:}" | tr '[:upper:]' '[:lower:]' | sed 's/^ *//; s/ *$//')
-  case "$value" in
-    'bug fix'|bug-fix|bugfix|fix) RED_GREEN_BUG_FIX=true ;;
-    feat|feature|docs|chore|refactor|test|ci|build|perf|style|revert) ;;
+  case "$(fm_brief_type_class "$value")" in
+    bug-fix) RED_GREEN_BUG_FIX=true ;;
+    other) ;;
     *)
-      echo "error: refusing to merge $URL: the Type line of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set it to 'Type: bug fix' or a non-bug-fix type such as feature, docs, chore, or refactor in $brief" >&2
+      echo "error: refusing to merge $URL: the Type line of task $ID is not recognised (read '$(printf '%s' "$value" | tr -d '[:cntrl:]')'); set it to $FM_BRIEF_TYPE_ACCEPTED in $brief" >&2
       return 1
       ;;
   esac

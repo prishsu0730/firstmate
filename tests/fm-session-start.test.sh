@@ -974,6 +974,8 @@ EOF
   assert_contains "$out" "READ-ONLY SESSION" "read-only banner missing on lock refusal"
   assert_contains "$out" "another live firstmate session holds the lock" "read-only banner did not surface fm-lock.sh's own error text"
   assert_contains "$out" "Skipping every mutating step" "read-only banner did not explain what was skipped"
+  assert_not_contains "$out" "STALE LOCK" "a refusal naming a still-live holder was reported as a stale lock"
+  assert_not_contains "$out" "To take the lock over" "a refusal naming a still-live holder printed a rerun command"
   assert_contains "$out" "skipped (read-only session)" "wake-queue section did not report itself skipped"
   assert_contains "$out" "WATCHER DOWN - SUPERVISION IS OFF" "read-only guard did not surface watcher-liveness alarm"
   assert_contains "$out" "queued wakes pending - left untouched because this session lacks verified fleet-lock ownership" "read-only guard did not leave queued wakes untouched without verified lock ownership"
@@ -1001,6 +1003,70 @@ EOF
   assert_contains "$out" "NEXT STEP" "closing reminder missing on the read-only path"
 
   pass "a lock refusal prints a loud read-only banner, skips every mutating step, and still completes the digest"
+}
+
+# The lock step refuses because the recorded holder looked alive, but the holder
+# is gone by the time the digest reports the refusal: the banner must say the
+# lock is stale and print the exact reclaim command, and must not reclaim it.
+# <variant> is plain, or override to start the session with FM_STATE_OVERRIDE set.
+check_lock_refusal_dead_holder() {
+  local variant=$1 rec root home fakebin holder_pid out status want
+  rec=$(new_world "lock-refusal-dead-holder-$variant")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  mv "$fakebin/ps" "$fakebin/ps.base"
+  # The holder is a real process outside this shell's children, so it is reaped
+  # as soon as it dies. The stub answers "claude" for it, then kills it on the
+  # last ps call of fm-lock.sh's liveness check.
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+holder=${FM_TEST_HOLDER_PID:-}
+case "$*" in
+  *"args= -p $holder"*)
+    kill -9 "$holder" 2>/dev/null
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      kill -0 "$holder" 2>/dev/null || break
+      sleep 0.1
+    done
+    printf 'claude\n'
+    exit 0
+    ;;
+  *"-p $holder"*) printf 'claude\n'; exit 0 ;;
+esac
+exec "$(dirname "$0")/ps.base" "$@"
+SH
+  chmod +x "$fakebin/ps"
+  holder_pid=$(sleep 300 >/dev/null 2>&1 & echo $!)
+  printf '%s\n' "$holder_pid" > "$home/state/.lock"
+
+  status=0
+  want="FM_HOME=$home"
+  if [ "$variant" = override ]; then
+    want="FM_HOME=$home FM_STATE_OVERRIDE=$home/state"
+    out=$(FM_STATE_OVERRIDE="$home/state" FM_TEST_HOLDER_PID="$holder_pid" run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
+  else
+    out=$(FM_TEST_HOLDER_PID="$holder_pid" run_session_start "$home" "$root" "$fakebin:$BASE_PATH") || status=$?
+  fi
+  kill -9 "$holder_pid" 2>/dev/null || true
+
+  expect_code 0 "$status" "fm-session-start.sh must exit 0 even on a lock refusal"
+  assert_contains "$out" "READ-ONLY SESSION" "the dead-holder fixture did not actually refuse the lock"
+  assert_contains "$out" "another live firstmate session holds the lock (pid $holder_pid" "the refusal did not name the recorded holder"
+  assert_contains "$out" "STALE LOCK: the recorded holder (pid $holder_pid) is no longer running" "a dead holder was not reported plainly"
+  assert_contains "$out" "To take the lock over, rerun session start: $want $ROOT/bin/fm-session-start.sh" "the exact session start rerun command was not printed"
+  assert_not_contains "$out" "run: $want $ROOT/bin/fm-lock.sh" "the banner sent the reader to run the lock step alone"
+  assert_contains "$out" "This read-only run did not reclaim it" "the banner did not say the reclaim stays manual"
+  [ "$(sed -n 1p "$home/state/.lock")" = "$holder_pid" ] || fail "session start reclaimed the lock on its own"
+
+  pass "a lock refusal whose holder is already dead says so and prints the exact reclaim command without reclaiming ($variant)"
+}
+
+test_lock_refusal_dead_holder_prints_reclaim_command() {
+  check_lock_refusal_dead_holder plain
+  check_lock_refusal_dead_holder override
 }
 
 test_lock_write_failure_read_only_path() {
@@ -3278,6 +3344,7 @@ test_context_digest_points_at_populated_files
 test_agents_md_stays_under_its_byte_cap
 test_session_start_digest_stays_under_its_byte_cap
 test_lock_refusal_read_only_path
+test_lock_refusal_dead_holder_prints_reclaim_command
 test_lock_write_failure_read_only_path
 test_trace_context_effective_state_is_frozen_after_lock
 test_session_lock_concurrent_single_winner

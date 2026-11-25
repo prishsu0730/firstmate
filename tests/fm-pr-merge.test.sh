@@ -4822,6 +4822,43 @@ test_review_tier_unknown_or_missing_refuses_with_the_fix() {
   pass "fm-pr-merge refuses an unknown or missing review tier and names the brief line to fix"
 }
 
+# bin/fm-spawn.sh refuses a brief whose Review tier or Type this merge gate would
+# refuse. The values below are written out by hand, not read from the shared
+# label file, so a spelling spawn accepts but merge refuses fails here. The same
+# lists sit in tests/fm-task-delivery.test.sh for the spawn side.
+test_merge_accepts_every_label_value_the_spawn_accepts() {
+  local tier type n=0
+  for tier in 'LOW' 'low' 'LOW (No Greptile)' 'low (no greptile)' 'No Greptile' \
+    'No Greptile; no-mistakes only.' 'MEDIUM (Base)' 'medium' 'HIGH (Plus)' 'high' \
+    'CRITICAL (Apex)' 'critical'; do
+    n=$((n + 1))
+    make_review_case "label-tier-$n" LOW
+    sed -e "s|^Review tier: .*|Review tier: $tier|" "$CASE/home/data/task-x1/brief.md" > "$CASE/brief.next"
+    mv "$CASE/brief.next" "$CASE/home/data/task-x1/brief.md"
+    merge_review_case
+    assert_no_grep 'is not recognised' "$CASE/stderr" "label-tier '$tier': the merge refused a Review tier the spawn accepts (stderr: $(cat "$CASE/stderr"))"
+  done
+  [ "$n" -ge 12 ] || fail "label-tier: only $n Review tier spellings were tried"
+
+  n=0
+  for type in 'bug fix' 'Bug Fix' 'feature' 'docs' 'chore' 'refactor'; do
+    n=$((n + 1))
+    make_review_case "label-type-$n" LOW
+    sed -e "s|^Type: .*|Type: $type|" "$CASE/home/data/task-x1/brief.md" > "$CASE/brief.next"
+    mv "$CASE/brief.next" "$CASE/home/data/task-x1/brief.md"
+    merge_review_case
+    assert_no_grep 'is not recognised' "$CASE/stderr" "label-type '$type': the merge refused a Type the spawn accepts (stderr: $(cat "$CASE/stderr"))"
+  done
+  [ "$n" -ge 6 ] || fail "label-type: only $n Type spellings were tried"
+
+  make_review_case label-tier-light LOW
+  sed -e "s|^Review tier: .*|Review tier: Light|" "$CASE/home/data/task-x1/brief.md" > "$CASE/brief.next"
+  mv "$CASE/brief.next" "$CASE/home/data/task-x1/brief.md"
+  merge_review_case
+  assert_grep 'is not recognised' "$CASE/stderr" "label-tier-light: the merge accepted a Review tier the spawn refuses"
+  pass "fm-pr-merge accepts every Review tier and Type spelling that fm-spawn accepts"
+}
+
 test_review_record_that_cannot_be_read_refuses() {
   make_review_case review-record-unreadable 'MEDIUM (Base)'
   mkdir "$CASE/home/data/task-x1/reviews"
@@ -4981,6 +5018,7 @@ test_review_tier_plus_needs_two_independent_reviews
 test_review_tier_apex_needs_four_reviews
 test_review_new_head_voids_older_reviews
 test_review_tier_unknown_or_missing_refuses_with_the_fix
+test_merge_accepts_every_label_value_the_spawn_accepts
 test_review_record_that_cannot_be_read_refuses
 test_review_gate_does_not_bypass_other_guards
 test_review_tier_gitlab_needs_reviews_at_the_head

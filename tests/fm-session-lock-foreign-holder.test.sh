@@ -197,6 +197,9 @@ test_dead_holder_is_stale_and_reclaimed() {
   "$NAMED_CODEX" -c 'exit 0' &
   dead=$!
   wait "$dead" || true
+  run_lock "$home" "$pane"
+  expect_code 0 "$RUN_RC" "a first start with no lock file was refused: $RUN_OUT"
+  assert_not_contains "$RUN_OUT" "lock reclaimed" "a first start with no previous holder was reported as a takeover"
   printf '%s\n' "$dead" > "$home/state/.lock"
 
   run_lock "$home" "$pane" status
@@ -204,9 +207,10 @@ test_dead_holder_is_stale_and_reclaimed() {
   run_lock "$home" "$pane"
   expect_code 0 "$RUN_RC" "a dead holder's lock was not reclaimed: $RUN_OUT"
   assert_contains "$RUN_OUT" "lock acquired: harness pid" "the stale lock was not reclaimed"
+  assert_contains "$RUN_OUT" "lock reclaimed: the previous holder (pid $dead) was no longer running" "the takeover from a dead holder was not said"
   assert_not_contains "$RUN_OUT" "foreign" "a dead holder was called foreign"
   [ "$(parent_status_lines "$dir")" = 0 ] || fail "a dead holder raised a parent alarm"
-  pass "foreign-holder: a dead holder stays stale and is reclaimed"
+  pass "foreign-holder: a dead holder stays stale and is reclaimed, and the takeover is said"
 }
 
 # No launch evidence is no verdict: a primary home, an endpoint tmux cannot
