@@ -1,0 +1,56 @@
+ ▝▝   ▝▝   ~/.no-mistakes/worktrees/6548ae86a5f1/01M89FGCTQ0HPJDK5X8Z7WV6AW
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+  Skills
+  100 skills
+  ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  │ ⌕ Search skills…                                                                                                                                                                                 │
+  ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ ✔ anthropic-skills:computer-use                        claude.ai sync · ~320 tokens
+    ✔ built-in-browser                                     claude.ai sync · ~280 tokens
+    ✔ chrome-browser                                       claude.ai sync · ~260 tokens
+    ✔ deep-research                                        claude.ai sync · ~200 tokens
+    ✔ docs                                                 claude.ai sync · ~340 tokens
+    ◯ docx                                                 claude.ai sync · ~320 tokens
+    ✔ google-workspace                                     claude.ai sync · ~330 tokens
+    ✔ import-memory                                        claude.ai sync · ~60 tokens
+    ✔ morning                                              claude.ai sync · ~120 tokens
+    ✔ pdf                                                  claude.ai sync · ~150 tokens
+    ◯ pptx                                                 claude.ai sync · ~330 tokens
+    ✔ skill-creator                                        claude.ai sync · ~120 tokens
+    ◯ xlsx                                                 claude.ai sync · ~320 tokens
+    ✔ afk                                                  project · ~120 tokens
+    ✔ agent-skill-trigger-index                            project · ~40 tokens
+    ✔ ahoy                                                 project · ~70 tokens
+    ✔ ask-user-authority                                   project · ~30 tokens
+    ✔ away-quiet-supervision                               project · ~50 tokens
+    ✔ bearings                                             project · ~150 tokens
+    ✔ bootstrap-diagnostics                                project · ~220 tokens
+    ✔ captain-hold-lifecycle                               project · ~100 tokens
+    ✔ diagnostic-reasoning                                 project · ~30 tokens
+    ✔ firstmate-coding-guidelines                          project · ~70 tokens
+    ✔ fmx-respond                                          project · ~110 tokens
+    ✔ harness-adapters                                     project · ~140 tokens
+    ✔ operational-home-layout                              project · ~50 tokens
+    ✔ process-event-sources                                project · ~110 tokens
+    ✔ project-management                                   project · ~50 tokens
+    ✔ quiet                                                project · ~90 tokens
+    ✔ quota-array-dispatch                                 project · ~40 tokens
+    ✔ scout-completion                                     project · ~50 tokens
+    ✔ secondmate-provisioning                              project · ~70 tokens
+    ✔ session-start-recovery                               project · ~50 tokens
+    ✔ ship-landing                                         project · ~40 tokens
+    ✔ stow                                                 project · ~100 tokens
+    ✔ stuck-crewmate-recovery                              project · ~120 tokens
+    ✔ updatefirstmate                                      project · ~70 tokens
+    ✔ validation-supervision                               project · ~70 tokens
+    ✔ ai-operator                                          user · ~80 tokens
+    ✔ app-shaper                                           locked by author · user-only · user · ~70 tokens
+    ✔ arena                                                locked by author · user-only · user · ~80 tokens
+    ✔ backlog-priority                                     user · ~80 tokens
+    ✔ bottleneck-plan                                      locked by author · user-only · user · ~120 tokens
+    ✔ code-review                                          user · ~140 tokens
+    ✔ codebase-design                                      user · ~90 tokens
+    ✔ diagnosing-bugs                                      user · ~60 tokens
+    ↓ 54 more
+  Your claude.ai skill can't use /computer-use in this session.
+  ↑/↓ to navigate · Space to change · / to search · t to sort · Esc to close

@@ -1,0 +1,45 @@
+Fixture: a quoted(3) b single-quoted(2) c folded(4)+body decoy d literal(3)+metadata e no-frontmatter f body-only. Expected skills words = 12
+--- a
+---
+name: a
+description: "alpha beta gamma"
+---
+body words here
+--- b
+---
+name: b
+description: 'delta epsilon'
+---
+--- c
+---
+name: c
+description: >-
+  zeta eta
+  theta iota
+user-invocable: false
+---
+description: SHOULD NOT COUNT
+--- d
+---
+name: d
+description: |
+  kappa
+  lambda mu
+metadata:
+  internal: true
+---
+--- e
+no frontmatter
+description: should not count either
+--- f
+---
+name: f
+---
+description: body only not counted
+--- ruby oracle
+oracle (Ruby YAML parser): 5 skills, 12 description words
+--- product
+digest: 13157 bytes, 1634 words
+AGENTS.md: 8 bytes, 2 words
+skills: 67 bytes, 12 words
+total: 13232 bytes, 1648 words

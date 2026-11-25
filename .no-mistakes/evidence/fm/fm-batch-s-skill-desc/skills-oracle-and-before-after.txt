@@ -1,0 +1,23 @@
+== target cf5a243d ==
+Traceback (most recent call last):
+  File "/tmp/fmss-oracle.py", line 1, in <module>
+    import sys,glob,yaml
+ModuleNotFoundError: No module named 'yaml'
+skills: 5654 bytes, 814 words
+== base 312508bd skills measured by the new counter (FM_ROOT_OVERRIDE=base tree) ==
+Traceback (most recent call last):
+  File "/tmp/fmss-oracle.py", line 1, in <module>
+    import sys,glob,yaml
+ModuleNotFoundError: No module named 'yaml'
+digest: 13157 bytes, 1634 words
+AGENTS.md: 21759 bytes, 3073 words
+skills: 10156 bytes, 1438 words
+total: 45072 bytes, 6145 words
+== base script itself (no skills line) ==
+digest: 13157 bytes, 1634 words
+AGENTS.md: 21759 bytes, 3073 words
+total: 34916 bytes, 4707 words
+== target ==
+oracle (Ruby YAML parser): 25 skills, 814 description words
+== base ==
+oracle (Ruby YAML parser): 25 skills, 1438 description words

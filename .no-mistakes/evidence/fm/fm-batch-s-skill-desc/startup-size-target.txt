@@ -1,0 +1,15 @@
+$ FM_HOME=$LAB bin/fm-startup-size.sh
+digest: 13157 bytes, 1634 words
+AGENTS.md: 21759 bytes, 3073 words
+skills: 5654 bytes, 814 words
+total: 40570 bytes, 5521 words
+rc=0
+$ ... --full-open-decisions
+digest: 13157 bytes, 1634 words
+AGENTS.md: 21759 bytes, 3073 words
+skills: 5654 bytes, 814 words
+total: 40570 bytes, 5521 words
+rc=0
+$ ... --bogus
+usage: fm-startup-size.sh [--full-open-decisions]
+rc=2

@@ -1,0 +1,31 @@
+== 7df545bf
+commit
+7df545bf fix: require explicit authority for Firstmate upstream contributions (#7172)
+ancestor of target? no
+mentions in 312508bd..cf5a243d: 0
+== a65dceee
+commit
+a65dceee fix: honor gh-resolved publication targets (#7540)
+ancestor of target? no
+mentions in 312508bd..cf5a243d: 0
+== 9d76aa8e
+commit
+9d76aa8e fix(skills): keep recovery-skill triggers inside Claude Code's listing budget (#7545) (#7558)
+ancestor of target? no
+mentions in 312508bd..cf5a243d: 1
+== commit bodies
+--- cf5a243d fix(skills): keep recovery-skill triggers inside Claude Code's listing budget
+Port of upstream 9d76aa8e. Tightens skill descriptions to their load triggers.
+The three skills our side removed stay deleted.
+Local bearings and harness-adapters triggers are kept.
+
+--- bb36c2aa feat(bin): count skill descriptions in the start-up size
+
+== files changed by this branch that the forbidden commits also touch
+-- 7df545bf:
+.agents/skills/bearings/SKILL.md
+.agents/skills/firstmate-coding-guidelines/SKILL.md
+.agents/skills/secondmate-provisioning/SKILL.md
+.agents/skills/stow/SKILL.md
+.agents/skills/updatefirstmate/SKILL.md
+-- a65dceee:
