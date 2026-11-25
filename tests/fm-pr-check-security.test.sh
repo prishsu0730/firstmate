@@ -1011,7 +1011,7 @@ test_static_poll_contract() {
   FM_TEST_GH_STATE=MERGED run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err"
   rc=$?
   set -e
-  [ "$rc" -eq 0 ] || fail "watcher did not surface merged poll"
+  [ "$rc" -eq 0 ] || fail "watcher did not surface merged poll (rc=$rc): $(tail -n 20 "$dir/watch.err" 2>/dev/null) out: $(cat "$dir/watch.out" 2>/dev/null) state: $(find "$dir/home/state" -mindepth 1 -maxdepth 1 -exec basename {} \; 2>/dev/null | tr '\n' ' ')"
   [ "$(grep -c '^check: .*: merged$' "$dir/watch.out")" -eq 1 ] || fail "watcher did not convert merged output into exactly one wake"
   pass "static poll is silent except for one merged line and remains watcher-bounded"
 }

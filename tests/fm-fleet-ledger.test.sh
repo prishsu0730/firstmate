@@ -73,9 +73,15 @@ run_lifecycle() {
     printf 'resolved: [key=pick-one]  chose a\n'
     printf 'partial line without its newline'
   } >> "$HOME_DIR/state/$TASK.status"
-  out=$(in_home env FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
-    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 2 2>&1)
-  case "$out" in *"checkpoint:"*|*"signal:"*) ;; *) fail "watcher checkpoint did not run: $out" ;; esac
+  # The poll ends on its own wake rather than at a time bound, so a loaded
+  # machine can neither end it before its first capture nor kill it mid-capture.
+  # The watcher rejects an unauthenticated state check with a check wake, and
+  # its check sweep runs after the same cycle's ledger capture.
+  printf '#!/usr/bin/env bash\necho polled\n' > "$HOME_DIR/state/ledger-poll.check.sh"
+  chmod +x "$HOME_DIR/state/ledger-poll.check.sh"
+  out=$(in_home env FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=0 \
+    "$ROOT/bin/fm-watch-checkpoint.sh" --seconds 120 2>&1)
+  case "$out" in *"check: rejected unauthenticated state checks: "*) ;; *) fail "watcher poll did not end on its check wake: $out" ;; esac
   LEDGER_AFTER_POLL=$(cat "$HOME_DIR/state/fleet-ledger.jsonl" 2>/dev/null || true)
   printf ' finished\ndone: ready in branch\n' >> "$HOME_DIR/state/$TASK.status"
   printf 'landed\n' > "$WT_DIR/landed.txt"
