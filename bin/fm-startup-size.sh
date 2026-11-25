@@ -2,10 +2,14 @@
 # fm-startup-size.sh - print how big a new chat's start-up is, read-only.
 #
 # Usage: fm-startup-size.sh [--full-open-decisions]
-#   Prints one line each for the session-start digest, AGENTS.md, and the total:
+#   Prints one line each for the session-start digest, AGENTS.md, the skill
+#   descriptions, and the total:
 #     digest: <bytes> bytes, <words> words
 #     AGENTS.md: <bytes> bytes, <words> words
+#     skills: <bytes> bytes, <words> words
 #     total: <bytes> bytes, <words> words
+#   skills: counts the text of every `description:` frontmatter value under
+#   .agents/skills/*/SKILL.md, the skill list Claude Code loads at start.
 #   --full-open-decisions measures the digest with every open decision listed in
 #   full, the shape before the digest kept only a count plus the newest few.
 #
@@ -38,6 +42,33 @@ d_bytes=$(LC_ALL=C wc -c < "$tmp" | tr -d '[:space:]')
 d_words=$(wc -w < "$tmp" | tr -d '[:space:]')
 a_bytes=$(LC_ALL=C wc -c < "$FM_ROOT/AGENTS.md" | tr -d '[:space:]')
 a_words=$(wc -w < "$FM_ROOT/AGENTS.md" | tr -d '[:space:]')
+
+# skill_descriptions: print the description value of each SKILL.md, one per file.
+# A value is either inline or a folded/literal block (">-", ">", "|") whose
+# indented lines follow the key. Only the frontmatter block is read.
+skill_descriptions() {
+  local f
+  for f in "$FM_ROOT"/.agents/skills/*/SKILL.md; do
+    [ -f "$f" ] || continue
+    awk '
+      NR == 1 { if ($0 != "---") exit; next }
+      $0 == "---" { exit }
+      /^description:/ {
+        v = $0; sub(/^description:[ \t]*/, "", v)
+        if (v ~ /^[>|][-+]?$/) { inblock = 1; next }
+        gsub(/^["\047]|["\047]$/, "", v); print v; next
+      }
+      inblock { if ($0 ~ /^[ \t]/) { l = $0; sub(/^[ \t]+/, "", l); print l } else inblock = 0 }
+    ' "$f"
+  done
+}
+skills_tmp=$(mktemp "${TMPDIR:-/tmp}/fm-startup-size-skills.XXXXXX") || exit 1
+trap 'rm -f "$tmp" "$skills_tmp"' EXIT
+skill_descriptions > "$skills_tmp"
+s_bytes=$(LC_ALL=C wc -c < "$skills_tmp" | tr -d '[:space:]')
+s_words=$(wc -w < "$skills_tmp" | tr -d '[:space:]')
+
 printf 'digest: %s bytes, %s words\n' "$d_bytes" "$d_words"
 printf 'AGENTS.md: %s bytes, %s words\n' "$a_bytes" "$a_words"
-printf 'total: %s bytes, %s words\n' "$((d_bytes + a_bytes))" "$((d_words + a_words))"
+printf 'skills: %s bytes, %s words\n' "$s_bytes" "$s_words"
+printf 'total: %s bytes, %s words\n' "$((d_bytes + a_bytes + s_bytes))" "$((d_words + a_words + s_words))"
