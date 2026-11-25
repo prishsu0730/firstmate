@@ -793,11 +793,22 @@ fi
 # --- 1. lock -----------------------------------------------------------
 stage lock
 subsection "LOCK"
-LOCK_OUT=$("$SCRIPT_DIR/fm-lock.sh" 2>&1)
-LOCK_RC=$?
+# FM_SESSION_START_MEASURE=1 is bin/fm-startup-size.sh's seam: it never takes the
+# lock, runs the read-only digest path, and shows the digest's OPEN DECISIONS view
+# from the read-only drain listing, so the size can be measured without mutating.
+# The value `full` lists every open decision instead (the pre-cut shape).
+if [ -n "${FM_SESSION_START_MEASURE:-}" ]; then
+  LOCK_OUT='measure only - lock not taken, nothing mutated'
+  LOCK_RC=1
+else
+  LOCK_OUT=$("$SCRIPT_DIR/fm-lock.sh" 2>&1)
+  LOCK_RC=$?
+fi
 printf '%s\n' "$LOCK_OUT"
 READ_ONLY=0
-if [ "$LOCK_RC" -ne 0 ]; then
+if [ "$LOCK_RC" -ne 0 ] && [ -n "${FM_SESSION_START_MEASURE:-}" ]; then
+  READ_ONLY=1
+elif [ "$LOCK_RC" -ne 0 ]; then
   READ_ONLY=1
   # A refusal that names a live holder may be stale by the time it is read: the
   # holder can exit between fm-lock.sh's check and this digest. Say so plainly
@@ -897,7 +908,12 @@ fi
 # surface without repair commands.
 stage wake-queue
 subsection "WAKE QUEUE"
-if [ "$READ_ONLY" -eq 1 ]; then
+if [ -n "${FM_SESSION_START_MEASURE:-}" ]; then
+  MEASURE_DRAIN_FLAG=--digest-open-decisions
+  [ "$FM_SESSION_START_MEASURE" != full ] || MEASURE_DRAIN_FLAG=--all-open-decisions
+  MEASURE_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" "$MEASURE_DRAIN_FLAG" 2>&1)
+  if [ -n "$MEASURE_OUT" ]; then printf '%s\n' "$MEASURE_OUT"; else printf '(no open decisions)\n'; fi
+elif [ "$READ_ONLY" -eq 1 ]; then
   QLEN=0
   [ -s "$STATE/.wake-queue" ] && QLEN=$(grep -c . "$STATE/.wake-queue" 2>/dev/null || printf '0')
   printf 'skipped (read-only session) - %s record(s) remain queued because this session lacks verified fleet-lock ownership.\n' "$QLEN"
@@ -918,7 +934,7 @@ else
       printf '%s\n' "$BRANCH_REPLAY_OUT"
     fi
   fi
-  DRAIN_OUT=$(FM_DRAIN_FULL_OPEN_DECISIONS=1 "$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
+  DRAIN_OUT=$(FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_DRAIN_OPEN_DECISIONS_DIGEST=1 "$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
   else

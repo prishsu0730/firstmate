@@ -57,6 +57,9 @@ BRANCH_OUTCOMES_RC=0
 OPEN_DECISIONS_FULL=${FM_DRAIN_FULL_OPEN_DECISIONS:+true}
 OPEN_DECISIONS_FULL=${OPEN_DECISIONS_FULL:-false}
 OPEN_DECISIONS_READONLY=false
+# Session-start digest view (bin/fm-session-start.sh): newest few only, plus a count.
+OPEN_DECISIONS_DIGEST=${FM_DRAIN_OPEN_DECISIONS_DIGEST:+true}
+OPEN_DECISIONS_DIGEST=${OPEN_DECISIONS_DIGEST:-false}
 OPEN_DECISIONS_RESURFACE_AFTER=${FM_OPEN_DECISION_RESURFACE_AFTER:-14400}
 case "$OPEN_DECISIONS_RESURFACE_AFTER" in ''|*[!0-9]*|0) OPEN_DECISIONS_RESURFACE_AFTER=14400 ;; esac
 OPEN_DECISIONS_PRESENTED="$STATE/.open-decisions-presented"
@@ -239,10 +242,10 @@ case "${1:-}" in
     case "$ACK_GENERATION" in ''|*[!A-Za-z0-9._-]*) echo "wake drain: invalid recovery generation" >&2; exit 2 ;; esac
     [ "$#" -eq 4 ] || { echo "wake drain: unexpected acknowledgement arguments" >&2; exit 2; }
     ;;
-  --all-open-decisions)
-    [ "$#" -eq 1 ] || { echo "wake drain: --all-open-decisions takes no other arguments" >&2; exit 2; }
+  --all-open-decisions|--digest-open-decisions)
+    [ "$#" -eq 1 ] || { echo "wake drain: ${1} takes no other arguments" >&2; exit 2; }
     ;;
-  *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --all-open-decisions]" >&2; exit 2 ;;
+  *) echo "usage: fm-wake-drain.sh [--ack-through SEQUENCE --recovery-generation GENERATION | --all-open-decisions | --digest-open-decisions]" >&2; exit 2 ;;
 esac
 
 [ "$ACTOR" != branch ] || require_branch_eligible_rows || exit 1
@@ -493,7 +496,7 @@ format_decision_age() {  # <seconds>
 print_open_decisions_section() {
   local snapshot=${1:-} open task key verb note line item_bytes=220 global_bytes=4000
   local output='' used=0 shown=0 omitted=0 unchanged=0 bytes raw tab recorded=''
-  local age_text opened now age last eligible epochs task_keys task_epochs
+  local age_text opened now age last eligible epochs task_keys task_epochs hidden=0
   now=$(date +%s)
   tab=$(printf '\t')
 
@@ -522,9 +525,9 @@ print_open_decisions_section() {
   fi
 
   epochs=''
-  if [ "$OPEN_DECISIONS_FULL" != true ]; then
-    eligible=$(printf '%s\n' "$open" | awk -F '\t' -v now="$now" -v limit="$OPEN_DECISIONS_RESURFACE_AFTER" '
-      $1 >= 0 && ($1 == 0 || now - $1 >= limit) { print $2 "\t" $3 }
+  if [ "$OPEN_DECISIONS_FULL" != true ] || [ "$OPEN_DECISIONS_DIGEST" = true ]; then
+    eligible=$(printf '%s\n' "$open" | awk -F '\t' -v now="$now" -v limit="$OPEN_DECISIONS_RESURFACE_AFTER" -v all="$OPEN_DECISIONS_DIGEST" '
+      all == "true" || ($1 >= 0 && ($1 == 0 || now - $1 >= limit)) { print $2 "\t" $3 }
     ')
     while IFS= read -r task; do
       [ -n "$task" ] || continue
@@ -541,6 +544,10 @@ print_open_decisions_section() {
     FILENAME != "-" { epoch[$1 SUBSEP $2] = $3; next }
     { print (($2 SUBSEP $3 in epoch) ? epoch[$2 SUBSEP $3] : -1), $0 }
   ' <(printf '%s' "$epochs") - <<< "$open")
+  # The digest view ranks newest-opened first so the few it keeps are the recent ones.
+  if [ "$OPEN_DECISIONS_DIGEST" = true ]; then
+    open=$(printf '%s\n' "$open" | sort -t "$tab" -k1,1nr -s)
+  fi
 
   while IFS=$tab read -r opened last task key verb note; do
     [ -n "$task" ] || continue
@@ -557,6 +564,12 @@ print_open_decisions_section() {
 "
         continue
       fi
+    fi
+    if [ "$OPEN_DECISIONS_DIGEST" = true ] && [ "$shown" -ge "$FM_OPEN_DECISIONS_DIGEST_LIMIT" ]; then
+      # Past the digest limit: counted in the header and left out of the
+      # presented record, so the next drain prints it as new.
+      hidden=$((hidden + 1))
+      continue
     fi
     line="$task"
     [ "$key" = default ] || line="$line [key=$key]"
@@ -604,8 +617,15 @@ EOF
 
   [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ] || [ "$unchanged" -gt 0 ] || return 0
   if [ "$shown" -gt 0 ] || [ "$omitted" -gt 0 ]; then
-    printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
+    if [ "$OPEN_DECISIONS_DIGEST" = true ]; then
+      printf 'OPEN DECISIONS: %d open, newest %d shown (folded from the durable status logs):\n' $((shown + hidden)) "$shown" || return 1
+    else
+      printf 'OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):\n' || return 1
+    fi
     printf '%s' "$output" || return 1
+    if [ "$hidden" -gt 0 ]; then
+      printf 'OPEN DECISIONS: %d more not shown; list all: bin/fm-wake-drain.sh --all-open-decisions\n' "$hidden" || return 1
+    fi
     if [ "$omitted" -gt 0 ]; then
       printf 'OPEN DECISIONS: %d more omitted (byte cap)\n' "$omitted" || return 1
     fi
@@ -633,9 +653,13 @@ commit_open_decisions_presented() {
 
 # Read-only listing of every open decision in full: it touches no wake row and
 # leaves the presented record alone, so it is safe to run any time.
-if [ "${1:-}" = --all-open-decisions ]; then
+# --digest-open-decisions is the same read-only listing in the session-start
+# digest's shape (count plus newest few); the full listing never shrinks.
+if [ "${1:-}" = --all-open-decisions ] || [ "${1:-}" = --digest-open-decisions ]; then
   OPEN_DECISIONS_FULL=true
   OPEN_DECISIONS_READONLY=true
+  OPEN_DECISIONS_DIGEST=false
+  [ "$1" != --digest-open-decisions ] || OPEN_DECISIONS_DIGEST=true
   print_open_decisions_section
   exit $?
 fi

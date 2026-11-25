@@ -405,6 +405,79 @@ test_tabbed_receipts_preserve_age_and_cooldown() {
   pass "legacy and timestamped tabbed receipts retain notes, age, and cooldown"
 }
 
+test_digest_view_shows_count_and_newest_five() {
+  local dir state out i now
+  dir=$(make_case digest-view)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  for i in 1 2 3 4 5 6 7 8; do
+    printf 'needs-decision [key=k%s] [at=%s]: question number %s\n' "$i" "$((now - 1000 + i))" "$i" > "$state/task$i.status"
+  done
+
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_DRAIN_OPEN_DECISIONS_DIGEST=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "digest drain failed"
+  grep -F 'OPEN DECISIONS: 8 open, newest 5 shown' "$out" >/dev/null || fail "digest is missing the count line: $(cat "$out")"
+  [ "$(grep -c 'question number' "$out")" -eq 5 ] || fail "digest did not print exactly five entries: $(cat "$out")"
+  for i in 8 7 6 5 4; do
+    grep -F "question number $i" "$out" >/dev/null || fail "digest dropped a newest entry ($i): $(cat "$out")"
+  done
+  if grep -F 'question number 1' "$out" >/dev/null; then fail "digest kept an old entry over a newer one"; fi
+  grep -F 'OPEN DECISIONS: 3 more not shown; list all: bin/fm-wake-drain.sh --all-open-decisions' "$out" >/dev/null \
+    || fail "digest is missing the list-all line: $(cat "$out")"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing failed"
+  [ "$(grep -c 'question number' "$out")" -eq 8 ] || fail "--all-open-decisions no longer lists every decision: $(cat "$out")"
+  FM_DRAIN_OPEN_DECISIONS_DIGEST=1 FM_STATE_OVERRIDE="$state" "$DRAIN" --all-open-decisions > "$out" || fail "full listing with digest env failed"
+  [ "$(grep -c 'question number' "$out")" -eq 8 ] || fail "digest env shrank --all-open-decisions"
+
+  cp "$state/.open-decisions-presented" "$dir/presented.before"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" --digest-open-decisions > "$out" || fail "read-only digest listing failed"
+  [ "$(grep -c 'question number' "$out")" -eq 5 ] || fail "--digest-open-decisions did not keep five entries"
+  cmp -s "$dir/presented.before" "$state/.open-decisions-presented" \
+    || fail "the read-only digest listing changed the presented record"
+  pass "the digest view prints a count and the newest five; the full listing stays whole"
+}
+
+test_digest_hidden_decisions_print_in_full_on_the_next_drain() {
+  local dir state out i now
+  dir=$(make_case digest-hidden-next)
+  state="$dir/state"
+  out="$dir/drain.out"
+  now=$(date +%s)
+  for i in 1 2 3 4 5 6 7; do
+    printf 'needs-decision [key=k%s] [at=%s]: question number %s\n' "$i" "$((now - 1000 + i))" "$i" > "$state/task$i.status"
+  done
+  printf 'needs-decision [key=k8]: question number 8\n' > "$state/task8.status"
+
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_DRAIN_OPEN_DECISIONS_DIGEST=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "digest drain failed"
+  [ "$(grep -c 'question number' "$out")" -eq 5 ] || fail "digest did not print exactly five entries: $(cat "$out")"
+  for i in 1 2 8; do
+    if grep -F "question number $i" "$out" >/dev/null; then fail "digest printed a hidden entry ($i): $(cat "$out")"; fi
+  done
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "next drain failed"
+  for i in 1 2 8; do
+    grep -F "question number $i" "$out" >/dev/null || fail "next drain did not print hidden entry $i in full: $(cat "$out")"
+  done
+  for i in 3 4 5 6 7; do
+    if grep -F "question number $i" "$out" >/dev/null; then fail "next drain re-printed digest entry $i: $(cat "$out")"; fi
+  done
+  grep -F 'OPEN DECISIONS: 5 unchanged' "$out" >/dev/null || fail "next drain miscounted the shown entries: $(cat "$out")"
+  pass "decisions the digest hides print in full on the next drain, undated ones included"
+}
+
+test_digest_view_with_few_decisions_has_no_more_line() {
+  local dir state out
+  dir=$(make_case digest-few)
+  state="$dir/state"
+  out="$dir/drain.out"
+  printf 'needs-decision [key=only]: just one\n' > "$state/task1.status"
+  FM_DRAIN_FULL_OPEN_DECISIONS=1 FM_DRAIN_OPEN_DECISIONS_DIGEST=1 FM_STATE_OVERRIDE="$state" "$DRAIN" > "$out" || fail "digest drain failed"
+  grep -F 'OPEN DECISIONS: 1 open, newest 1 shown' "$out" >/dev/null || fail "count line wrong: $(cat "$out")"
+  if grep -F 'more not shown' "$out" >/dev/null; then fail "printed a more-line with nothing hidden"; fi
+  pass "a digest with five or fewer decisions prints no hidden-count line"
+}
+
 test_buried_decision_still_surfaces
 test_unchanged_decision_is_summarized_after_first_presentation
 test_aged_open_decision_returns_on_every_drain
@@ -422,3 +495,6 @@ test_buried_decision_surfaces_on_the_empty_queue_fast_path
 test_status_symlink_is_not_followed
 
 test_tabbed_receipts_preserve_age_and_cooldown
+test_digest_view_shows_count_and_newest_five
+test_digest_hidden_decisions_print_in_full_on_the_next_drain
+test_digest_view_with_few_decisions_has_no_more_line
