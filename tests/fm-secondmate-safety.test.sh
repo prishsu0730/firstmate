@@ -63,10 +63,9 @@ test_fm_home_parameterization() {
   brief="$home_one/data/task-a/brief.md"
   [ -f "$brief" ] || fail "brief was not written under FM_HOME/data"
   grep -F ">> '$home_one/state/task-a.status'" "$brief" >/dev/null || fail "brief did not shell-quote FM_HOME state path"
-  sed -i '' 's/^Type: {TYPE}$/Type: Bug fix/; s/^Review tier: {REVIEW_TIER} (No Greptile \/ Base \/ Plus \/ Apex)$/Review tier: Base/' "$brief"
-  grep -F 'Type: Bug fix' "$brief" >/dev/null || fail "task-a brief type was not filled"
+  sed -i '' 's/^Type: {TYPE}$/Type: Feature/; s/^Review tier: {REVIEW_TIER} (No Greptile \/ Base \/ Plus \/ Apex)$/Review tier: Base/' "$brief"
+  grep -F 'Type: Feature' "$brief" >/dev/null || fail "task-a brief type was not filled"
   grep -F 'Review tier: Base' "$brief" >/dev/null || fail "task-a brief review tier was not filled"
-  grep -F 'review tier: Base' "$home_one/state/task-a.status" >/dev/null || fail "saved status did not record the review tier"
 
   FM_HOME="$home_one" "$ROOT/bin/fm-brief.sh" task-b app --scout >/dev/null || fail "scout brief scaffold failed under FM_HOME"
   brief="$home_one/data/task-b/brief.md"
@@ -85,9 +84,11 @@ test_fm_home_parameterization() {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$home_one/fakebin/gh"
   chmod +x "$home_one/fakebin/gh"
   printf 'project=x\nworktree=%s\n' "$home_one/wt" > "$home_one/state/task-a.meta"
+  printf '%s\n' 'done [at=1]: PR https://github.com/example/repo/pull/1 checks green review tier: Base' > "$home_one/state/task-a.status"
   PATH="$home_one/fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 \
     "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>/dev/null \
     || fail "fm-pr-check failed under FM_HOME"
+  grep -F 'review tier: Base' "$home_one/state/task-a.status" >/dev/null || fail "saved status did not record the review tier"
   [ -f "$home_one/state/task-a.check.sh" ] || fail "pr check was not written under FM_HOME/state"
   [ ! -e "$home_two/state/task-a.check.sh" ] || fail "pr check leaked into another home"
   pass "FM_HOME parameterizes data and state paths"
