@@ -24,6 +24,10 @@
 
 FM_LINE_CAP_DEFAULT=220
 FM_LINE_CAP_SUFFIX=' [truncated]'
+# How many OPEN DECISIONS entries the session-start digest prints (newest first).
+# The drain applies it when fm-session-start.sh sets FM_DRAIN_OPEN_DECISIONS_DIGEST;
+# the rest are counted and listed by bin/fm-wake-drain.sh --all-open-decisions.
+FM_OPEN_DECISIONS_DIGEST_LIMIT=5
 
 # fm_cap_line_var <line> [<max>]: put <line> in FM_LINE_CAP_LINE, cut to <max>
 # characters with FM_LINE_CAP_SUFFIX in place of the tail when it is longer. A
