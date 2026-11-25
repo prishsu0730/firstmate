@@ -1,0 +1,9 @@
+# lab home with 37 open decisions (baseline count from the intent)
+$ bin/fm-startup-size.sh --full-open-decisions
+digest: 31961 bytes, 4158 words
+AGENTS.md: 21759 bytes, 3073 words
+total: 53720 bytes, 7231 words
+$ bin/fm-startup-size.sh
+digest: 27058 bytes, 3397 words
+AGENTS.md: 21759 bytes, 3073 words
+total: 48817 bytes, 6470 words

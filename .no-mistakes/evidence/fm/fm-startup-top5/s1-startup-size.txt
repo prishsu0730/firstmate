@@ -1,0 +1,15 @@
+# lab home with 11 open decisions (10 dated, 1 undated)
+$ bin/fm-startup-size.sh --full-open-decisions   # pre-cut shape
+digest: 11146 bytes, 1298 words
+AGENTS.md: 21759 bytes, 3073 words
+total: 32905 bytes, 4371 words
+exit=0
+$ bin/fm-startup-size.sh                          # new digest
+digest: 10616 bytes, 1201 words
+AGENTS.md: 21759 bytes, 3073 words
+total: 32375 bytes, 4274 words
+exit=0
+$ bin/fm-startup-size.sh --nope
+usage: fm-startup-size.sh [--full-open-decisions]
+exit=2
+lab home files byte-for-byte unchanged; no .lock created: yes

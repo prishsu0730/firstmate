@@ -1,0 +1,23 @@
+# presented record after the session-start digest:
+0	task10	k10	needs-decision	lab question number 10 - pick a path for item 10 before the next release
+0	task9	k9	needs-decision	lab question number 9 - pick a path for item 9 before the next release
+0	task8	k8	needs-decision	lab question number 8 - pick a path for item 8 before the next release
+0	task7	k7	needs-decision	lab question number 7 - pick a path for item 7 before the next release
+0	task6	k6	needs-decision	lab question number 6 - pick a path for item 6 before the next release
+
+$ bin/fm-wake-drain.sh    # next ordinary drain
+OPEN DECISIONS (still open, folded from the durable status logs - not just the latest line):
+task1 [key=k1] needs-decision: lab question number 1 - pick a path for item 1 before the next release
+task11 [key=k11] needs-decision: lab question number 11 - undated decision with no at stamp
+task2 [key=k2] needs-decision: lab question number 2 - pick a path for item 2 before the next release
+task3 [key=k3] needs-decision: lab question number 3 - pick a path for item 3 before the next release
+task4 [key=k4] needs-decision: lab question number 4 - pick a path for item 4 before the next release
+task5 [key=k5] needs-decision: lab question number 5 - pick a path for item 5 before the next release
+OPEN DECISIONS: 5 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
+
+$ bin/fm-wake-drain.sh    # drain again
+OPEN DECISIONS: 11 unchanged, already shown in an earlier drain; list them all: bin/fm-wake-drain.sh --all-open-decisions
+OPEN DECISIONS: close one by answering it: bin/fm-send.sh <task> --resolve-key <key> '<answer>'
+exit=0
