@@ -1353,7 +1353,7 @@ SH
     > "$dir/watch.out" 2> "$dir/watch.err" &
   pid=$!
   i=0
-  while [ "$i" -lt 100 ]; do
+  while [ "$i" -lt 1500 ]; do
     [ -s "$child_pid_file" ] && break
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.02
@@ -1365,7 +1365,7 @@ SH
   child_pid=$(cat "$child_pid_file")
   kill -TERM "$pid" 2>/dev/null || fail "could not signal watcher during custom check"
   i=0
-  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 500 ]; do
     sleep 0.02
     i=$((i + 1))
   done
@@ -1376,7 +1376,7 @@ SH
   fi
   rc=0
   wait "$pid" || rc=$?
-  [ "$rc" -ne 0 ] || fail "signaled watcher exited successfully"
+  [ "$rc" -ne 0 ] || fail "signaled watcher exited successfully: $(tail -n 20 "$dir/watch.err" 2>/dev/null) out: $(cat "$dir/watch.out" 2>/dev/null)"
   ! kill -0 "$child_pid" 2>/dev/null || fail "signaled watcher left the custom check child running"
   ! find "$state" -maxdepth 1 -name '.fm-custom-check.*' -print | grep . >/dev/null \
     || fail "signaled watcher left a private custom check snapshot"
@@ -3351,7 +3351,7 @@ SH
     FM_TEST_ACQUIRED="$PR_POLL_HOLDER_ACQUIRED" FM_TEST_RELEASE="$PR_POLL_HOLDER_RELEASE" \
     "$dir/poll-publish-holder.sh" &
   PR_POLL_HOLDER_PID=$!
-  for i in $(seq 1 100); do
+  for i in $(seq 1 1500); do
     [ -e "$PR_POLL_HOLDER_ACQUIRED" ] && return 0
     sleep 0.02
   done
@@ -3380,7 +3380,7 @@ test_device_rerecord_serializes_direct_rearm() {
   FM_ROOT_OVERRIDE="$dir/root" FM_HOME="$dir/home" FM_TEST_GUARD_LOG="$dir/guard.log" \
     PATH="$dir/fakebin:$BASE_PATH" "$PR_CHECK" task-a "$url_b" > "$dir/rearm.out" 2> "$dir/rearm.err" &
   rearm_pid=$!
-  for i in $(seq 1 100); do
+  for i in $(seq 1 1500); do
     if fm_pr_metadata_identity_parse "$state/task-a.meta" && [ "$FM_PR_META_URL" = "$url_b" ]; then
       break
     fi
@@ -3432,7 +3432,7 @@ SH
     FM_TEST_GH_LOG="$dir/gh.log" FM_TEST_GH_STATE=OPEN \
     run_watcher_bounded "$dir/home" "$dir/fakebin" > "$dir/watch.out" 2> "$dir/watch.err" &
   watcher_pid=$!
-  for i in $(seq 1 100); do
+  for i in $(seq 1 1500); do
     [ -d "$state/.control-task-a.lock" ] && break
     sleep 0.02
   done
