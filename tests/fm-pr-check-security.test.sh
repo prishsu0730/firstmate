@@ -641,8 +641,8 @@ test_invalid_entrypoints_have_zero_side_effects() {
 
 # A draft cannot be merged, so arming a merge poll on one would wait for an event
 # that cannot occur. Only a positive draft reading refuses, and it refuses before
-# anything is armed; it still records which PR the task owns (pr= with a
-# pr_draft marker and no pr_head) so teardown can refuse while that PR is open. A ready or unreadable
+# anything is armed; it still records which PR the task owns (pr= with no
+# pr_head) so teardown can refuse while that PR is open. A ready or unreadable
 # one arms as before.
 test_draft_pull_request_is_not_armed() {
   local dir rc
@@ -656,11 +656,9 @@ test_draft_pull_request_is_not_armed() {
   [ "$rc" -ne 0 ] || fail "arming accepted a draft pull request"
   grep -qi 'draft' "$dir/stderr" || fail "the refusal did not name the draft state"
   grep -qF 'https://github.com/o/r/pull/9' "$dir/stderr" || fail "the refusal did not name the pull request"
-  { cat "$dir/meta.before"
-    printf '%s\n' 'pr_draft=https://github.com/o/r/pull/9' 'pr=https://github.com/o/r/pull/9'
-  } > "$dir/meta.expected"
+  { cat "$dir/meta.before"; printf '%s\n' 'pr=https://github.com/o/r/pull/9'; } > "$dir/meta.expected"
   cmp -s "$dir/meta.expected" "$dir/home/state/task-a.meta" \
-    || fail "a refused draft did not record exactly its pr_draft and pr= lines (and no pr_head)"
+    || fail "a refused draft did not record exactly its pr= line (and no pr_head)"
   [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "a refused draft armed a poll"
   [ ! -e "$dir/home/state/task-a.pr-poll" ] || fail "a refused draft wrote a poll sidecar"
   [ ! -s "$dir/guard.log" ] || fail "a refused draft reached the guard"
@@ -671,8 +669,6 @@ test_draft_pull_request_is_not_armed() {
     || fail "arming a ready draft left more than one pr= line"
   grep -qxF 'pr_head=0123456789abcdef0123456789abcdef01234567' "$dir/home/state/task-a.meta" \
     || fail "arming a ready draft did not record its pr_head"
-  ! grep -q '^pr_draft=' "$dir/home/state/task-a.meta" \
-    || fail "arming a ready draft kept its draft marker"
   [ -f "$dir/home/state/task-a.check.sh" ] || fail "a recorded draft was not armed once ready"
 
   dir=$(make_case draft-already-recorded)
@@ -703,8 +699,6 @@ test_draft_pull_request_is_not_armed() {
     || fail "a refused draft left more than one pr= line"
   ! grep -q '^pr_head=' "$dir/home/state/task-a.meta" \
     || fail "a refused draft kept the other pull request's head"
-  grep -qxF 'pr_draft=https://github.com/o/r/pull/9' "$dir/home/state/task-a.meta" \
-    || fail "a refused draft that replaced another pull request was not marked as a draft"
 
   dir=$(make_case draft-cleared)
   write_task_meta "$dir"

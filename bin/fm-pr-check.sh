@@ -12,9 +12,9 @@
 # A GitHub pull request the forge reports as a draft is refused, naming the draft
 # state and arming nothing: a draft cannot be merged, so a poll armed on it
 # would wait for an event that cannot occur while nobody is asked to act.
-# The refusal still records pr=<url> with a pr_draft=<url> marker and no
-# pr_head, so the task keeps the PR it owns and bin/fm-teardown.sh refuses to
-# close it while that PR is open or its state cannot be read.
+# The refusal still records pr=<url> with no pr_head, so the task keeps the PR
+# it owns and bin/fm-teardown.sh refuses to close it while that PR is open or
+# its state cannot be read.
 # Mark the pull request ready for review, then arm again; a lane that keeps a
 # draft on purpose declares a wait instead of reporting done. An unreadable
 # draft state does not refuse, matching how the head read below is optional.
@@ -140,8 +140,6 @@ if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v g
     # Record which PR the task owns, with no head and no merge watch, so the
     # task is never mistaken for one with no PR: teardown refuses to close a
     # ship whose recorded PR is still open, and a later arm replaces this line.
-    # The pr_draft marker tells teardown to refuse when the forge cannot show
-    # this PR's state, since a draft is open by definition.
     # A task that already records this same PR keeps that record and its head;
     # a record of any other PR is replaced, so a stale PR never hides this one.
     META_LOCK=$(fm_meta_lock_path "$META") || exit 1
@@ -149,7 +147,6 @@ if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v g
     META_LOCK_HELD=1
     if ! grep -qxF "pr=$URL" "$META"; then
       PR_HEAD=
-      PR_DRAFT=1
       fm_project_capacity_publish handoff "$STATE" "$ID" || exit 1
     fi
     fm_lock_release "$META_LOCK"
@@ -205,7 +202,6 @@ fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$N
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"
 META_LOCK_HELD=1
-PR_DRAFT=
 fm_project_capacity_publish handoff "$STATE" "$ID" || exit 1
 fm_lock_release "$META_LOCK"
 META_LOCK_HELD=0
