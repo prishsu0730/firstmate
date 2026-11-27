@@ -269,6 +269,9 @@ add_gh_pr_merged_for_head() {
 #!/usr/bin/env bash
 case "${1:-} ${2:-}" in
   "pr list")
+    case " $* " in
+      *" --state open "*) printf '%s\n' "count: 0" "pull_requests: []" ; exit 0 ;;
+    esac
     printf '%s\n' "count: 1 (showing first 1)" "pull_requests[1]{number,state}:" "  7,merged" ; exit 0 ;;
   "pr view")
     printf '%s\n' "pull_request:" "  number: 7" "  state: merged" '  merged: "2026-06-26T00:00:00Z"' ; exit 0 ;;
@@ -894,6 +897,101 @@ SH
   [ "$(backlog_row_state "$case_dir")" = "done" ] \
     || fail "recorded-merged-pr: cleanup did not close the backlog item"
   pass "the same published ship closes after its recorded PR merges"
+}
+
+# Write a gh-axi stub whose open-PR lookup for the branch answers in the real
+# gh-axi list format. Args: case_dir open|none|error
+add_gh_open_pr_lookup() {
+  local case_dir=$1 outcome=$2 stub=$1/fakebin/gh-axi
+  cat > "$stub" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${0%/*}/gh-axi.calls"
+SH
+  case "$outcome" in
+    open) cat >> "$stub" <<'SH'
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' 'count: 1 of 1 total' \
+    'pull_requests[1]{number,title,state,author,draft,review}:' \
+    '  543,"rewrite",open,someone,yes,none'; exit 0 ;;
+  "pr view") printf '%s\n' 'pull_request:' '  state: open'; exit 0 ;;
+esac
+SH
+      ;;
+    none) cat >> "$stub" <<'SH'
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' 'count: 0' 'pull_requests: []'; exit 0 ;;
+  "pr view") echo "error: pull request not found" >&2; exit 1 ;;
+esac
+SH
+      ;;
+    error) cat >> "$stub" <<'SH'
+echo "error: gh-axi unavailable" >&2
+exit 1
+SH
+      ;;
+  esac
+  printf '%s\n' 'exit 0' >> "$stub"
+  chmod +x "$stub"
+}
+
+# A PR-mode ship whose done report never recorded pr= (a deliberately kept
+# draft PR is refused registration) must not be closed while the forge shows
+# its branch still has an open PR, nor when the forge cannot be read; only a
+# forge answer of zero open PRs lets the published branch close as before.
+test_unrecorded_open_pr_preserves_task() {
+  local case_dir rc=0
+  case_dir=$(make_case unrecorded-open-pr)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'branch=fm/task-x1' >> "$case_dir/state/task-x1.meta"
+  wt_commit_file "$case_dir" feature.txt 'draft PR still open'
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  seed_backlog_in_flight "$case_dir"
+  add_gh_open_pr_lookup "$case_dir" open
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "unrecorded-open-pr: cleanup must refuse while the branch has an open PR"
+  assert_grep 'REFUSED' "$case_dir/stderr" "unrecorded-open-pr: refusal must be printed"
+  assert_grep '543' "$case_dir/stderr" "unrecorded-open-pr: refusal must name the open PR"
+  assert_grep '--head fm/task-x1' "$case_dir/fakebin/gh-axi.calls" \
+    "unrecorded-open-pr: lookup must ask about the task branch"
+  assert_present "$case_dir/state/task-x1.meta" "unrecorded-open-pr: task metadata was lost"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "unrecorded-open-pr: cleanup closed the backlog item"
+  pass "a ship with no recorded PR keeps its record while its branch has an open PR"
+
+  add_gh_open_pr_lookup "$case_dir" error
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "unrecorded-pr-unreadable: cleanup must refuse when the forge cannot be read"
+  assert_present "$case_dir/state/task-x1.meta" "unrecorded-pr-unreadable: metadata lost"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "unrecorded-pr-unreadable: cleanup closed the backlog item"
+  pass "a ship with no recorded PR keeps its record when the forge cannot be read"
+
+  add_gh_open_pr_lookup "$case_dir" none
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "unrecorded-no-open-pr: cleanup must succeed once the forge shows no open PR"
+  assert_absent "$case_dir/state/task-x1.meta" "unrecorded-no-open-pr: metadata remains"
+  pass "a ship with no recorded PR closes once the forge proves no open PR"
+}
+
+# Only a true legacy record (no branch= and no spawn_gen) is exempt from the
+# open-PR lookup. A record without spawn_gen that does name its branch is still
+# gated, even with its worktree gone.
+test_unrecorded_open_pr_with_branch_and_no_spawn_gen_refuses() {
+  local case_dir rc=0
+  case_dir=$(make_case unrecorded-open-pr-legacy-branch)
+  write_windowless_legacy_meta "$case_dir" no-mistakes ship "$case_dir/missing-wt"
+  printf '%s\n' 'branch=fm/task-x1' >> "$case_dir/state/task-x1.meta"
+  seed_backlog_in_flight "$case_dir"
+  add_gh_open_pr_lookup "$case_dir" open
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "unrecorded-open-pr-legacy-branch: cleanup must refuse while the branch has an open PR"
+  assert_grep 'open PR #543' "$case_dir/stderr" "unrecorded-open-pr-legacy-branch: refusal must name the open PR"
+  assert_present "$case_dir/state/task-x1.meta" "unrecorded-open-pr-legacy-branch: task metadata was lost"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "unrecorded-open-pr-legacy-branch: cleanup closed the backlog item"
+  pass "a record naming its branch but no spawn_gen still refuses while that branch has an open PR"
 }
 
 test_recorded_open_pr_without_worktree_and_with_force() {
@@ -4930,6 +5028,8 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
 }
 
 test_recorded_open_pr_preserves_task
+test_unrecorded_open_pr_preserves_task
+test_unrecorded_open_pr_with_branch_and_no_spawn_gen_refuses
 test_recorded_open_pr_without_worktree_and_with_force
 test_missing_startup_source_refuses_before_cleanup
 test_unreadable_startup_source_refuses_before_cleanup

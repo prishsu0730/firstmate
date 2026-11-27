@@ -6647,6 +6647,55 @@ test_heartbeat_auto_closes_a_local_main_ship() {
   pass "a heartbeat tears down a ship already merged into local main"
 }
 
+# A published PR-mode ship that finished with no recorded pr= (registration
+# refuses a deliberately kept draft) must not be closed by the heartbeat while
+# the forge still lists an open PR for its branch.
+test_heartbeat_keeps_a_ship_whose_unrecorded_pr_is_open() {
+  local dir state fakebin out pid sig project worktree windows
+  dir=$(make_case heartbeat-keeps-unrecorded-open-pr); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  IFS=$'\t' read -r project worktree < <(make_finished_ship_project "$dir")
+  printf 'feature\n' > "$worktree/feature.txt"
+  git -C "$worktree" add feature.txt
+  git -C "$worktree" -c user.email=fmtest@example.invalid -c user.name=fmtest \
+    commit -q -m feature
+  git -C "$worktree" push -q origin fm/ship
+  cat > "$fakebin/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' "count: 1 of 1 total" "pull_requests[1]{number,title,state,author,draft,review}:" '  543,"rewrite",open,someone,yes,none' ;;
+esac
+exit 0
+SH
+  chmod +x "$fakebin/gh-axi"
+  printf 'done: draft PR kept open for review\n' > "$state/ship.status"
+  fm_write_meta "$state/ship.meta" \
+    'kind=ship' \
+    'backend=tmux' \
+    'window=firstmate:fm-ship' \
+    "project=$project" \
+    "worktree=$worktree" \
+    'branch=fm/ship' \
+    'mode=no-mistakes' \
+    'spawn_gen=heartbeat-test-ship'
+  sig=$(seen_sig "$state/ship.status"); printf '%s' "$sig" > "$state/.seen-ship_status"
+  mark_heartbeat_surfaced "$state" "$state/ship.status"
+  windows="$dir/windows"; printf 'firstmate:fm-ship\n' > "$windows"
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOWS_FILE="$windows" \
+    FM_HOME="$dir" FM_DATA_OVERRIDE="$dir/data" FM_CONFIG_OVERRIDE="$dir/config" \
+    FM_STATE_OVERRIDE="$state" FM_POLL=1 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 \
+    FM_HEARTBEAT=1 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 100 \
+    || { reap "$pid"; fail "heartbeat did not refuse to close a ship whose branch has an open PR"; }
+  [ -e "$state/ship.meta" ] || fail "heartbeat removed the record of a ship whose branch has an open PR"
+  grep -Fx 'check: automatic finished-task teardown refused: id=ship' "$out" >/dev/null \
+    || fail "the refusal did not surface its check wake"
+  grep -F 'open PR #543' "$state/.auto-close-refusal-ship" >/dev/null \
+    || fail "the refusal record did not name the open PR"
+  pass "a heartbeat keeps a finished ship whose unrecorded PR is still open"
+}
+
 test_heartbeat_surfaces_one_auto_close_refusal() {
   local dir state fakebin out pid sig drain_out drain_err marker
   dir=$(make_case heartbeat-auto-close-refusal); state="$dir/state"; fakebin="$dir/fakebin"
@@ -7274,6 +7323,7 @@ test_heartbeat_auto_closes_a_finished_scout
 test_heartbeat_leaves_an_unlanded_done_ship_alone
 test_heartbeat_auto_closes_a_squash_merged_ship
 test_heartbeat_auto_closes_a_local_main_ship
+test_heartbeat_keeps_a_ship_whose_unrecorded_pr_is_open
 test_heartbeat_surfaces_one_auto_close_refusal
 test_beacon_stays_fresh_while_absorbing
 test_afk_signal_records_heartbeat_endpoint
