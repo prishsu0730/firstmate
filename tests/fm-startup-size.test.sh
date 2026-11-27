@@ -3,8 +3,9 @@
 # read-only command that prints the start-up size of a new chat.
 #
 # Coverage:
-#   - the three lines (digest, AGENTS.md, total) and their exact AGENTS.md counts
-#   - the total is the sum of the two parts
+#   - the four lines (digest, AGENTS.md, skills, total) and their exact AGENTS.md
+#     and skills counts, for inline, quoted, and folded-block descriptions
+#   - the total is the sum of the three parts
 #   - it never takes the session lock and leaves state/ byte-for-byte unchanged
 #   - the count-plus-newest-five OPEN DECISIONS view measures smaller than the
 #     full listing once more than five decisions are open
@@ -22,13 +23,22 @@ FM_TEST_CLEANUP_DIRS+=("$TMP_ROOT")
 trap fm_test_cleanup EXIT
 fm_git_identity fmtest fmtest@example.invalid
 
-# new_world <name>: throwaway root with a known AGENTS.md plus an empty home.
+# new_world <name> [noskills]: throwaway root with a known AGENTS.md, three
+# known skills (unless "noskills"), and an empty home.
 new_world() {
   local name=$1 w="$TMP_ROOT/$1"
   mkdir -p "$w/home/state" "$w/home/data" "$w/home/config" "$w/fakebin"
   git init -q -b main "$w/root"
   git -C "$w/root" commit -q --allow-empty -m init
   printf 'one two three\nfour five\n' > "$w/root/AGENTS.md"
+  if [ "${2:-}" != noskills ]; then
+    mkdir -p "$w/root/.agents/skills/alpha" "$w/root/.agents/skills/beta" "$w/root/.agents/skills/gamma"
+    printf -- '---\nname: alpha\ndescription: inline words here\nmetadata:\n  internal: true\n---\n\n# body ignored words\n' \
+      > "$w/root/.agents/skills/alpha/SKILL.md"
+    printf -- '---\nname: beta\ndescription: >-\n  folded block\n  over two lines\nuser-invocable: false\n---\n\n# body ignored\n' \
+      > "$w/root/.agents/skills/beta/SKILL.md"
+    printf -- '---\nname: gamma\ndescription: "quoted one"\n---\n' > "$w/root/.agents/skills/gamma/SKILL.md"
+  fi
   printf '%s\n' "$w"
 }
 
@@ -44,19 +54,30 @@ num() {  # <line> <field>: the number before "<field>" on a size line
   printf '%s\n' "$1" | sed -n "s/.*[: ]\([0-9][0-9]*\) $2.*/\1/p" | head -1
 }
 
-test_prints_three_lines_and_sums() {
-  local w out d_line a_line t_line
-  w=$(new_world three-lines)
+test_prints_four_lines_and_sums() {
+  local w out d_line a_line s_line t_line
+  w=$(new_world four-lines)
   out=$(run_size "$w") || fail "size command failed"
-  [ "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 3 ] || fail "expected exactly three lines: $out"
+  [ "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 4 ] || fail "expected exactly four lines: $out"
   d_line=$(printf '%s\n' "$out" | sed -n '1p')
   a_line=$(printf '%s\n' "$out" | sed -n '2p')
-  t_line=$(printf '%s\n' "$out" | sed -n '3p')
+  s_line=$(printf '%s\n' "$out" | sed -n '3p')
+  t_line=$(printf '%s\n' "$out" | sed -n '4p')
   case "$d_line" in 'digest: '*' bytes, '*' words') ;; *) fail "bad digest line: $d_line" ;; esac
   [ "$a_line" = "AGENTS.md: 24 bytes, 5 words" ] || fail "bad AGENTS.md line: $a_line"
-  [ "$(num "$t_line" bytes,)" -eq $(( $(num "$d_line" bytes,) + 24 )) ] || fail "total bytes is not the sum: $out"
-  [ "$(num "$t_line" words)" -eq $(( $(num "$d_line" words) + 5 )) ] || fail "total words is not the sum: $out"
-  pass "prints digest, AGENTS.md, and total lines that add up"
+  # inline (3 words) + folded block (5 words) + quoted (2 words); body text is not counted
+  case "$s_line" in 'skills: '*' bytes, 10 words') ;; *) fail "bad skills line: $s_line" ;; esac
+  [ "$(num "$t_line" bytes,)" -eq $(( $(num "$d_line" bytes,) + 24 + $(num "$s_line" bytes,) )) ] || fail "total bytes is not the sum: $out"
+  [ "$(num "$t_line" words)" -eq $(( $(num "$d_line" words) + 5 + 10 )) ] || fail "total words is not the sum: $out"
+  pass "prints digest, AGENTS.md, skills, and total lines that add up"
+}
+
+test_skills_line_is_zero_without_skills() {
+  local w out
+  w=$(new_world no-skills noskills)
+  out=$(run_size "$w") || fail "size command failed"
+  [ "$(printf '%s\n' "$out" | sed -n '3p')" = "skills: 0 bytes, 0 words" ] || fail "expected an empty skills line: $out"
+  pass "counts zero skills when none exist"
 }
 
 test_read_only_no_lock_no_state_change() {
@@ -96,7 +117,8 @@ test_rejects_unknown_argument() {
   pass "rejects an unknown argument"
 }
 
-test_prints_three_lines_and_sums
+test_prints_four_lines_and_sums
+test_skills_line_is_zero_without_skills
 test_read_only_no_lock_no_state_change
 test_digest_view_is_smaller_than_full_listing
 test_rejects_unknown_argument
