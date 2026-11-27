@@ -1,0 +1,5 @@
+== over (over 150k)
+{"decision":"block","reason":"This chat holds about 151001 tokens of context, past the 150000 limit. Please start a fresh chat for new work. Work already under way keeps running."}
+exit=0 (empty output = allowed)
+== under (under 150k)
+exit=0 (empty output = allowed)

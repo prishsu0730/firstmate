@@ -1,0 +1,14 @@
+ ▐▛███▛█   Claude Code v2.1.332
+▝▜██████▀  Opus 5.5 with medium effort · Claude Ultra
+ ▝▝   ▝▝   /private/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T/fm-clone.ycVN0e/fm
+❯ Reply with only the word PING. Do not use tools.
+⏺ PING
+✻ Brewed for 3s · done 12:05 AM
+⏺ UserPromptSubmit operation blocked by hook:
+  This chat holds about 36769 tokens of context, past the 5000 limit. Please start a fresh chat for new work. Work already under way keeps running.
+  Original prompt: New job: reply with only the word PONG.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ New job: reply with only the word PONG.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 · chat 36k · Claude 91% · Codex 81% · Gemini 90% left
+  ⏵⏵ auto mode on (shift+tab to cycle)
