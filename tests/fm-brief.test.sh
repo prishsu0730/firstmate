@@ -1572,7 +1572,7 @@ test_ship_scaffold_carries_the_merge_proof_section_where_a_pr_merges() {
       || fail "fm-brief.sh --mode $mode exited non-zero"
     brief="$home/data/$id/brief.md"
     assert_grep "# Merge proof" "$brief" "$mode ship brief has no Merge proof section"
-    assert_grep "review tier: <value of the brief's Review tier line" "$brief" \
+    assert_grep "review tier: <the brief's Review tier value" "$brief" \
       "$mode ship brief does not tell the worker to state the review tier"
     assert_grep "Never write a review line" "$brief" "$mode ship brief does not keep review lines off the worker"
     assert_grep "Save the red run while you build" "$brief" "$mode ship brief does not ask for the red run while building"
