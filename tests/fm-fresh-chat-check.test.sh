@@ -18,7 +18,7 @@ make_primary() {
   : > "$dir/AGENTS.md"
   mkdir -p "$dir/bin" "$dir/state" "$dir/config"
   cp "$ROOT/bin/fm-fresh-chat-check.sh" "$ROOT/bin/fm-primary-scope-lib.sh" \
-    "$ROOT/bin/fm-hook-host-lib.sh" "$dir/bin/"
+    "$ROOT/bin/fm-hook-host-lib.sh" "$ROOT/bin/fm-operational-input.sh" "$dir/bin/"
   chmod +x "$dir/bin/fm-fresh-chat-check.sh"
 }
 
@@ -86,7 +86,7 @@ test_uses_newest_main_thread_entry_only() {
   [ -z "$OUT" ] || fail "newest entry without usage must not reuse stale usage: $OUT"
 
   write_transcript "$TMP_ROOT/older.jsonl" 160000
-  for i in $(seq 1 450); do printf '{"type":"user","message":{"content":"padding"}}\n' >> "$TMP_ROOT/older.jsonl"; done
+  for _ in $(seq 1 450); do printf '{"type":"user","message":{"content":"padding"}}\n' >> "$TMP_ROOT/older.jsonl"; done
   printf '{"type":"assistant","isSidechain":false,"message":{"usage":{"input_tokens":160000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' >> "$TMP_ROOT/older.jsonl"
   run_check "$PRIMARY" "$(payload "$TMP_ROOT/older.jsonl" 'go')"
   [ "$(decision)" = "block" ] || fail "newest entry beyond former tail window must be measured: $OUT"
@@ -97,6 +97,22 @@ test_slash_commands_pass() {
   run_check "$PRIMARY" "$(payload "$TMP_ROOT/big.jsonl" '/compact')"
   [ -z "$OUT" ] || fail "slash commands must pass: $OUT"
   pass "slash commands pass so the chat can still be compacted or cleared"
+}
+
+test_operational_input_passes() {
+  local doorbell envelope foreign
+  doorbell=$(printf 'watcher wake' | FM_STATE_OVERRIDE="$PRIMARY/state" "$ROOT/bin/fm-operational-input.sh" record watcher)
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/big.jsonl" "$doorbell")"
+  { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; } || fail "a live operational doorbell past the limit must allow: rc=$RC out=$OUT"
+  envelope=$(printf 'watcher wake' | "$ROOT/bin/fm-operational-input.sh" encode watcher)
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/big.jsonl" "$envelope")"
+  [ -z "$OUT" ] || fail "a typed operational envelope past the limit must allow: $OUT"
+  foreign="$TMP_ROOT/foreign-home/state"
+  mkdir -p "$foreign"
+  doorbell=$(printf 'watcher wake' | FM_STATE_OVERRIDE="$foreign" "$ROOT/bin/fm-operational-input.sh" record watcher)
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/big.jsonl" "$doorbell")"
+  [ "$(decision)" = "block" ] || fail "a doorbell for another home's record must still be refused: $OUT"
+  pass "Firstmate operational input keeps reaching a chat past the limit"
 }
 
 test_limit_from_config_and_env() {
@@ -195,6 +211,7 @@ test_sums_cache_and_input_tokens
 test_ignores_sidechain_usage
 test_uses_newest_main_thread_entry_only
 test_slash_commands_pass
+test_operational_input_passes
 test_compacted_chat_allows_new_work
 test_new_chat_allows_silently
 test_limit_from_config_and_env

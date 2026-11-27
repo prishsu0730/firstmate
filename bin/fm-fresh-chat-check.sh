@@ -27,6 +27,9 @@
 #           on stdout. Claude Code erases the prompt and shows the reason.
 #   Prompts that start with "/" (for example /compact, /clear) always pass, so
 #   the operator can still shrink or leave the chat.
+#   Firstmate operational input (a typed envelope, or a doorbell whose record
+#   sits in this home's operational inbox) always passes, so watcher and
+#   supervisor wakes keep reaching the chat.
 #   A chat with nothing to measure yet (no transcript file, no main-thread
 #   assistant entry, a newest entry without usage) or one compacted since its
 #   newest assistant entry allows silently.
@@ -89,6 +92,10 @@ prompt=$(printf '%s' "$PAYLOAD" | jq -r '.prompt // empty' 2>/dev/null) || promp
 case "$prompt" in
   /*) exit 0 ;;
 esac
+# shellcheck source=bin/fm-operational-input.sh
+. "$SCRIPT_DIR/fm-operational-input.sh"
+fm_operational_input_classify "$prompt" op_kind && exit 0
+fm_operational_doorbell_kind "$prompt" "$STATE" op_kind && exit 0
 
 transcript=$(printf '%s' "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/null) || transcript=
 [ -n "$transcript" ] || step_aside "the chat log was not named, so its size cannot be measured"
