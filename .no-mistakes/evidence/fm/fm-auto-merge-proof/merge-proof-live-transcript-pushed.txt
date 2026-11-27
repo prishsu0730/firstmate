@@ -1,0 +1,52 @@
+pushed-branch ref set: refs/remotes/origin/fm/bug-task -> 46997980
+== S1 brief scaffold ==
+  no-mistakes brief exit 0
+    > # Merge proof
+    > Your `done:` that names a PR is refused until the merge proof exists, because firstmate stops at merge time without it.
+    > 1. A bug fix (the `Type:` line under `## Risk and review`) needs `/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.gDroww/data/s1r2/red-green.log` to hold both runs before you report done.
+    >    Save the red run while you build: write the test first and run it on the merge base before your fix; a test file that does not exist there exits 127 and does not count, so run the new test file against the old code.
+    >    Save the green run of the same command at the final PR head after the pipeline reports CI green; done needs the green run, and the merge needs it at the final PR head. The `{run-worktree}/bin/fm-pr-merge.sh` header owns the line format.
+    > 2. Your ready report states the brief's review tier: `done [at=<epoch>]: PR {url} checks green review tier: <the brief's Review tier value, such as MEDIUM (Base)>`; any name of that same tier counts.
+    >    A direct-PR report drops `checks green`.
+    > 3. Never write a review line. A reviewer other than you appends it; firstmate orders that review when it reads your tier.
+  local-only brief exit 0
+  local-only Merge proof headings: 0
+== S2 bug fix, no proof saved ==
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green
+  fm-pr-check.sh exit 1; check.sh written: no
+    | error: merge proof missing, so done is refused: this bug fix has no readable /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.gDroww/data/s2r2/red-green.log;  run the new test on the merge base and on the final head and append each run to it; the ready report does not state the brief's review tier;  add 'review tier: medium (base)' after the PR URL, copied from the brief's Review tier line, so firstmate orders the review at once
+== S3 bug fix, red only ==
+  recorded red run at b7c83eea: exit 1: FAIL add 2 3 gave -1, want 5
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green review tier: MEDIUM (Base)
+  fm-pr-check.sh exit 1; check.sh written: no
+    | error: merge proof missing, so done is refused: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.gDroww/data/s3r2/red-green.log holds no test that failed at an ancestor of head 46997980ad9e15cef8480395a2e88f6944281672 and then passed in a later run of the same test command;  append <pr-url>|<sha>|<test-id>|red|<nonzero exit>|<test-command> and <pr-url>|<pr-head-sha>|<test-id>|green|0|<test-command>, each followed by its captured output;  the merge needs the green run at the final pull request head
+== S4 bug fix, real red + green + tier ==
+  recorded red run at b7c83eea: exit 1: FAIL add 2 3 gave -1, want 5
+  recorded green run at 46997980: exit 0: ok add 2 3 = 5
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green review tier: MEDIUM (Base)
+  fm-pr-check.sh exit 0; check.sh written: yes
+    | armed: state/s4r2.check.sh
+== S5 tier wording: synonym accepted, wrong tier refused ==
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green review tier: medium
+  fm-pr-check.sh exit 0; check.sh written: yes
+    | armed: state/s5ar2.check.sh
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green review tier: HIGH (Plus)
+  fm-pr-check.sh exit 1; check.sh written: no
+    | error: merge proof missing, so done is refused: the ready report does not state the brief's review tier;  add 'review tier: medium (base)' after the PR URL, copied from the brief's Review tier line, so firstmate orders the review at once
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green
+  fm-pr-check.sh exit 1; check.sh written: no
+    | error: merge proof missing, so done is refused: the ready report does not state the brief's review tier;  add 'review tier: medium (base)' after the PR URL, copied from the brief's Review tier line, so firstmate orders the review at once
+== S6 fake red: test passes at red sha (exit 0) ==
+  appended red at base with exit 127 (test file missing)
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green review tier: base
+  fm-pr-check.sh exit 1; check.sh written: no
+    | error: merge proof missing, so done is refused: /var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-lab.gDroww/data/s6r2/red-green.log holds no test that failed at an ancestor of head 46997980ad9e15cef8480395a2e88f6944281672 and then passed in a later run of the same test command;  append <pr-url>|<sha>|<test-id>|red|<nonzero exit>|<test-command> and <pr-url>|<pr-head-sha>|<test-id>|green|0|<test-command>, each followed by its captured output;  the merge needs the green run at the final pull request head
+== S7 feature: tier only, no log needed ==
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green review tier: low
+  fm-pr-check.sh exit 0; check.sh written: yes
+    | armed: state/s7r2.check.sh
+== S8 legacy brief without Merge proof section ==
+  Merge proof headings: 0
+  ready report: done [at=1]: PR https://github.com/example/demo/pull/7 checks green
+  fm-pr-check.sh exit 0; check.sh written: yes
+    | armed: state/s8r2.check.sh
