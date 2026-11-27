@@ -27,8 +27,11 @@
 #           on stdout. Claude Code erases the prompt and shows the reason.
 #   Prompts that start with "/" (for example /compact, /clear) always pass, so
 #   the operator can still shrink or leave the chat.
-#   Unmeasurable context (no transcript, no usage entry, no jq) steps aside: the
-#   prompt is allowed, and a systemMessage says so once per session.
+#   A chat with nothing to measure yet (no transcript file, no main-thread
+#   assistant entry, a newest entry without usage) or one compacted since its
+#   newest assistant entry allows silently.
+#   Unreadable context (no transcript path, an unreadable log, no reader) steps
+#   aside: the prompt is allowed, and a systemMessage says so once per session.
 #   Foreign hosts (Cursor payloads) and malformed payloads allow silently.
 set -u
 
@@ -88,7 +91,9 @@ case "$prompt" in
 esac
 
 transcript=$(printf '%s' "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/null) || transcript=
-[ -n "$transcript" ] && [ -f "$transcript" ] || step_aside "the chat log was not found, so its size cannot be measured"
+[ -n "$transcript" ] || step_aside "the chat log was not named, so its size cannot be measured"
+[ -e "$transcript" ] || exit 0
+[ -f "$transcript" ] && [ -r "$transcript" ] || step_aside "the chat log cannot be read, so its size cannot be measured"
 
 command -v perl >/dev/null 2>&1 || step_aside "the chat log reader is unavailable, so its size cannot be measured"
 used=$(perl -e '
@@ -110,15 +115,16 @@ used=$(perl -e '
   print "$partial\n" if length $partial;
 ' "$transcript" | jq -R -r '
   fromjson? |
-  if .type == "assistant" and (.isSidechain | not) then
+  if .type == "system" and .subtype == "compact_boundary" then "no-usage", halt
+  elif .type == "assistant" and (.isSidechain | not) then
     (if (.message.usage? | type) == "object" then
       ((.message.usage.input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0))
     else "no-usage" end),
     halt
   else empty end' 2>/dev/null)
-if [ "$used" = no-usage ]; then exit 0; fi
 case "$used" in
-  ''|*[!0-9]*) step_aside "the chat log has no token count yet, so its size cannot be measured" ;;
+  ''|no-usage) exit 0 ;;
+  *[!0-9]*) step_aside "the chat log has an unreadable token count, so its size cannot be measured" ;;
 esac
 
 [ "$used" -gt "$limit" ] || exit 0

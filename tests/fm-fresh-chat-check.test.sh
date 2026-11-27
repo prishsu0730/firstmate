@@ -112,9 +112,37 @@ test_limit_from_config_and_env() {
   pass "the limit is one configurable value: env, then config file, then 150000"
 }
 
+test_compacted_chat_allows_new_work() {
+  write_transcript "$TMP_ROOT/compacted.jsonl" 170000
+  {
+    printf '{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","compactMetadata":{"trigger":"manual","preTokens":170000}}\n'
+    printf '{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"summary"}}\n'
+  } >> "$TMP_ROOT/compacted.jsonl"
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/compacted.jsonl" 'continue')"
+  { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; } || fail "a chat compacted after its last reply must allow silently: rc=$RC out=$OUT"
+  printf '{"type":"assistant","isSidechain":false,"message":{"usage":{"input_tokens":160000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' >> "$TMP_ROOT/compacted.jsonl"
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/compacted.jsonl" 'go')"
+  [ "$(decision)" = "block" ] || fail "a reply after compaction must be measured again: $OUT"
+  pass "a compacted chat takes new work until a later reply passes the limit"
+}
+
+test_new_chat_allows_silently() {
+  local f="$TMP_ROOT/new-chat.jsonl"
+  printf '{"type":"user","message":{"role":"user","content":"hi"}}\n' > "$f"
+  run_check "$PRIMARY" "$(payload "$f" 'go' sessNew)"
+  { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; } || fail "a chat with no reply yet must allow silently: rc=$RC out=$OUT"
+  run_check "$PRIMARY" "$(payload "$TMP_ROOT/not-yet-written.jsonl" 'go' sessNew)"
+  { [ "$RC" -eq 0 ] && [ -z "$OUT" ]; } || fail "a chat log not written yet must allow silently: rc=$RC out=$OUT"
+  [ ! -e "$PRIMARY/state/.fresh-chat-unmeasured-sessNew" ] || fail "a new chat must not use up the once-per-session notice"
+  write_transcript "$f" 160000
+  run_check "$PRIMARY" "$(payload "$f" 'go' sessNew)"
+  [ "$(decision)" = "block" ] || fail "the same chat must be measured once it has a reply: $OUT"
+  pass "a new chat with no reply yet is allowed silently and measured later"
+}
+
 test_unmeasurable_steps_aside_once() {
   local p
-  p=$(payload "$TMP_ROOT/missing.jsonl" 'go' sessX)
+  p=$(payload "" 'go' sessX)
   run_check "$PRIMARY" "$p"
   [ "$RC" -eq 0 ] || fail "unmeasurable must exit 0"
   [ "$(decision)" != "block" ] || fail "unmeasurable must not block: $OUT"
@@ -167,6 +195,8 @@ test_sums_cache_and_input_tokens
 test_ignores_sidechain_usage
 test_uses_newest_main_thread_entry_only
 test_slash_commands_pass
+test_compacted_chat_allows_new_work
+test_new_chat_allows_silently
 test_limit_from_config_and_env
 test_unmeasurable_steps_aside_once
 test_inert_in_task_worktree

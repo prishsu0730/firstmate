@@ -588,7 +588,8 @@ The check is `bin/fm-fresh-chat-check.sh`, registered as a `UserPromptSubmit` ho
 It reads the size from the usage fields of the newest main-thread assistant entry in the session transcript: input, cache-read, and cache-creation tokens.
 The limit is one value: `FM_FRESH_CHAT_LIMIT`, else the first line of local, gitignored `config/fresh-chat-limit`, else `150000`; `0` or `off` disables the alarm.
 Slash commands such as `/compact` and `/clear` always pass, and a crewmate or scout task worktree is never refused, so steering messages still arrive.
-When the size cannot be measured the prompt is allowed and the chat is told once.
+A chat with nothing to measure yet, or one compacted since its newest assistant entry, is allowed silently.
+When the transcript cannot be read the prompt is allowed and the chat is told once.
 Other harnesses are not covered.
 
 ## No-mistakes pipeline spend (config/pipeline-spend)
