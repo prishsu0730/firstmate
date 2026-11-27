@@ -172,7 +172,7 @@ PROJECT=$(grep '^project=' "$META" | tail -1 | cut -d= -f2- || true)
 # wording and is refused by the merge-proof gate when the brief opts in.
 DONE_LINE=$(status_current_line "$STATE/$ID.status" "${KIND:-ship}")
 DONE_URL=$(fm_dod_pr_url_from_done_note "$(status_line_note "$DONE_LINE")") || DONE_URL=
-if [ "$(status_line_verb "$DONE_LINE")" != done ] || [ "$DONE_URL" != "$URL" ]; then
+if [ "$(status_line_verb "$DONE_LINE")" != "done" ] || [ "$DONE_URL" != "$URL" ]; then
   # on a Gerrit change both publishing modes report the same published line.
   case "$PROVIDER:$MODE" in
     gerrit:*) DONE_LINE="done: PR $URL published for review" ;;
