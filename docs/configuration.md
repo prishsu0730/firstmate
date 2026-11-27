@@ -581,6 +581,17 @@ With it present, ship and scout briefs gain the `# Waiting` section and the fore
 With the file absent, generated briefs omit the waiting section and the no-poll inbox line, the drive text backgrounds the call, recovery sends during an open decision, and a fire-and-forget steer is not owed a retry ring.
 The flag is a home-local preference and is not inherited by secondmate homes.
 
+## Fresh-chat alarm (config/fresh-chat-limit)
+
+A Claude Code primary chat that holds more than 150000 tokens of context refuses its next new prompt and says to start a fresh chat.
+The check is `bin/fm-fresh-chat-check.sh`, registered as a `UserPromptSubmit` hook in `.claude/settings.json`, so it runs only where new work starts and never interrupts a turn already under way.
+It reads the size from the usage fields of the newest main-thread assistant entry in the session transcript: input, cache-read, and cache-creation tokens.
+The limit is one value: `FM_FRESH_CHAT_LIMIT`, else the first line of local, gitignored `config/fresh-chat-limit`, else `150000`; `0` or `off` disables the alarm.
+Slash commands such as `/compact` and `/clear` always pass, and so does Firstmate operational input (a typed envelope, or a doorbell whose record sits in this home's operational inbox), so watcher and supervisor wakes keep arriving; a crewmate or scout task worktree is never refused, so steering messages still arrive.
+A chat with nothing to measure yet, or one compacted since its newest assistant entry, is allowed silently.
+When the transcript cannot be read the prompt is allowed and the chat is told once.
+Other harnesses are not covered.
+
 ## No-mistakes pipeline spend (config/pipeline-spend)
 
 The optional local, gitignored `config/pipeline-spend` presence flag opts this home into recording per-task no-mistakes pipeline spend in `data/pipeline-spend.jsonl` during teardown.
