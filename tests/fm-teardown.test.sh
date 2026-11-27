@@ -731,6 +731,7 @@ test_teardown_closes_the_backlog_item_itself() {
   case_dir=$(make_case tasks-axi-close)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
   seed_backlog_in_flight "$case_dir"
 
   out=$(run_teardown "$case_dir") || fail "teardown failed with a real backlog"
@@ -754,6 +755,7 @@ test_teardown_cleans_the_file_boundary_marker() {
   case_dir=$(make_case file-boundary-marker)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
   seed_backlog_in_flight "$case_dir"
   printf 'bin/*.sh\n' > "$case_dir/state/task-x1.file-boundary"
 
@@ -799,6 +801,7 @@ SH
   case_dir=$(make_case tasks-axi-close-github-under-refusal)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
   seed_backlog_in_flight "$case_dir"
   cp "$TMP_ROOT/tasks-axi-close-gerrit/fakebin/tasks-axi" "$case_dir/fakebin/tasks-axi"
   out=$(run_teardown "$case_dir" 2>&1) || fail "teardown of a landed GitHub task failed: $out"
@@ -813,6 +816,7 @@ test_teardown_manual_backend_leaves_the_backlog_to_the_operator() {
   case_dir=$(make_case tasks-axi-manual-optout)
   write_meta "$case_dir" no-mistakes ship
   printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
   printf '%s\n' manual > "$case_dir/config/backlog-backend"
   seed_backlog_in_flight "$case_dir"
 
@@ -994,9 +998,8 @@ test_unrecorded_open_pr_with_branch_and_no_spawn_gen_refuses() {
   pass "a record naming its branch but no spawn_gen still refuses while that branch has an open PR"
 }
 
-# A refused draft records pr_draft= next to its pr=. A draft is open, so an
-# unreadable forge must refuse it; once a later arm drops the marker, the
-# existing landed-work checks apply again when the forge cannot be read.
+# A recorded GitHub PR, draft or armed, may still be open, so an unreadable
+# forge must refuse it. Only a readable merged state lets teardown close it.
 test_recorded_draft_pr_unreadable_forge_refuses() {
   local case_dir rc=0
   case_dir=$(make_case recorded-draft-unreadable)
@@ -1019,9 +1022,18 @@ test_recorded_draft_pr_unreadable_forge_refuses() {
   cat "$case_dir/meta.armed" > "$case_dir/state/task-x1.meta"
   rc=0
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  expect_code 0 "$rc" "recorded-armed-pr-unreadable: an armed record keeps the landed-work checks"
-  assert_absent "$case_dir/state/task-x1.meta" "recorded-armed-pr-unreadable: metadata remains"
-  pass "a recorded draft refuses while the forge cannot be read"
+  expect_code 1 "$rc" "recorded-armed-pr-unreadable: cleanup must refuse when the forge cannot be read"
+  assert_grep 'pull/543' "$case_dir/stderr" "recorded-armed-pr-unreadable: refusal must name the PR"
+  assert_present "$case_dir/state/task-x1.meta" "recorded-armed-pr-unreadable: task metadata was lost"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "recorded-armed-pr-unreadable: cleanup closed the backlog item"
+
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "recorded-armed-pr-merged: a readable merged state closes the task"
+  assert_absent "$case_dir/state/task-x1.meta" "recorded-armed-pr-merged: metadata remains"
+  pass "a recorded draft or armed PR refuses while the forge cannot be read"
 }
 
 test_recorded_open_pr_without_worktree_and_with_force() {
@@ -1307,6 +1319,7 @@ test_squash_merged_stale_local_refuses_when_forge_unreachable() {
     'pr=https://github.com/example/repo/pull/7' \
     "pr_head=$pr_head" >> "$case_dir/state/task-x1.meta"
   add_gh_axi_error "$case_dir"
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
@@ -1902,6 +1915,7 @@ test_gh_error_and_content_absent_refuses() {
   # content. The fail-safe must refuse rather than allow on a transient gh failure.
   wt_commit_file "$case_dir" feature.txt hello "add feature"
   add_gh_axi_error "$case_dir"
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
 
   set +e
   run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
