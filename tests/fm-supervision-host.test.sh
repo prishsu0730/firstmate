@@ -815,10 +815,10 @@ test_attended_close_that_turns_main_only_before_its_turn_passes_to_main() {
   pi_offer=$(node --input-type=module -e '
     const dispatch = await import(process.argv[1]);
     console.log(dispatch.branchOfferForWake(process.argv[2], process.argv[3], false).eligible);
-  ' "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$home/state" "signal: $home/state/demo.status")
+  ' "$ROOT/.pi/extensions/lib/fm-branch-dispatch.ts" "$home/at-turn" "signal: $home/state/demo.status")
   [ "$pi_offer" = true ] || fail "the host-only transition veto changed Pi's existing offer rule"
   assert_re '	pass-through	attended	main-only	signal:' "$home/state/.supervision-host.log" "the ledger must record why the close went to main"
-  watcher_live "$home" || fail "the pass-through left no successor watcher"
+  wait_until 50 successor_left_for_main "$home" || fail "the pass-through left no successor watcher"
   pass "host: an attended close whose task turns main-only before its turn still reaches main unchanged"
 }
 
@@ -1020,7 +1020,7 @@ test_claude_stop_hook_delivers_a_close_that_turns_main_only_at_its_turn() {
   [ "$(cat "$home/offer-count" 2>/dev/null)" -ge 2 ] || fail "fixture: the close was not accepted before it turned main-only"
   [ "$(engine_calls "$home")" -eq 0 ] || fail "hook turns-main-only: the engine ran on a stale offer"
   assert_rewoke_main "$home" "hook turns-main-only"
-  watcher_live "$home" || fail "hook turns-main-only: the pass-through left no successor watcher"
+  wait_until 50 successor_left_for_main "$home" || fail "hook turns-main-only: the pass-through left no successor watcher"
   pass "host+hook: a close that turns main-only at its turn rewakes main and keeps its successor watcher"
 }
 
@@ -1100,7 +1100,7 @@ test_successor_close_during_main_turn_is_delivered_at_the_next_turn_end() {
   assert_rewoke_main "$home" "successor close (next turn end)"
   drained=$(main_drain "$home")
   assert_contains "$drained" 'which region?' "the successor's close must reach main's drain"
-  watcher_live "$home" || fail "successor close: the next turn end left no watcher"
+  wait_until 50 watcher_live "$home" || fail "successor close: the next turn end left no watcher: $(tail -n 5 "$home/state/.supervision-host.log" 2>/dev/null)"
   pass "host+hook: a successor close that lands during main's turn is delivered at the next turn end"
 }
 
@@ -1362,9 +1362,12 @@ SH
   chmod +x "$home/fakebin/node"
   printf '{"hook_event_name":"UserPromptSubmit","prompt_id":"p1","prompt":"first ask"}' > "$home/mirror-seed.1"
   echo 0 > "$home/park-clock"
+  # A handled stub turn runs the real drain, lease, and report scripts, which
+  # took 19s under ordinary load, so the turn bound leaves room for that.
+  # It still stays under the park bound, so no turn crosses a boundary early.
   # The park bound sits past every wall-clock check below, so a host that
   # ignored the test clock could never reach a boundary inside this case.
-  FM_TEST_SUPERVISION_HOST_CLOCK="$home/park-clock" FM_SUPERVISION_HOST_PARK_SECONDS=120 FM_SUPERVISION_HOST_TURN_TIMEOUT=20 FM_SUPERVISION_ENGINE_GRACE=1 start_session "$home"
+  FM_TEST_SUPERVISION_HOST_CLOCK="$home/park-clock" FM_SUPERVISION_HOST_PARK_SECONDS=120 FM_SUPERVISION_HOST_TURN_TIMEOUT=60 FM_SUPERVISION_ENGINE_GRACE=1 start_session "$home"
   park_again "$home"
   append_status "$home" 'first'
   wait_until 250 handled_at_least "$home" 1 || fail "mirror boundary: the first wake was not handled: $(cat "$home/state/.supervision-host.log")"

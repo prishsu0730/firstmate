@@ -286,6 +286,18 @@ watcher_live() {  # <home>
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 host_exited() { [ -s "$1/host.rc" ]; }
+# A close that turns main-only at its turn leaves a successor watcher for main,
+# recorded in state/.supervision-host-left. That successor may legitimately
+# close a moment later on the decision the turn recorded, so it counts as left
+# while it watches or once it has queued that decision for main.
+successor_left_for_main() {  # <home>
+  local pid
+  IFS=$'\t' read -r pid _ < "$1/state/.supervision-host-left" 2>/dev/null || return 1
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  watcher_live "$1" && return 0
+  awk -F '\t' '$4 == "demo.status" && index($5, "needs-decision: ") == 1 { found = 1 } END { exit !found }' \
+    "$1/state/.wake-queue" 2>/dev/null
+}
 # The recovery marker's episode kind (downtime or handling), read through its
 # owner's parser; the Claude re-arm owner delivers a close only on downtime.
 marker_kind() {  # <home>
@@ -339,7 +351,10 @@ present_unacknowledged_outcome_twice() {  # <name>
 turn_main_only_at_second_offer() {  # <home> [quiet]
   local real_node turn
   real_node=$(command -v node)
-  turn='printf '"'"'needs-decision [at=%s]: which export format?\n'"'"' "$(date +%s)" >> "$FM_HOME/state/demo.status"'
+  # The turn also keeps the state the turn-boundary offer read, in at-turn/:
+  # the successor watcher may surface the new decision a moment later, and a
+  # check against the live state would then race that legitimate close.
+  turn='cp -R "$FM_HOME/state" "$FM_HOME/at-turn" 2>/dev/null; printf '"'"'needs-decision [at=%s]: which export format?\n'"'"' "$(date +%s)" >> "$FM_HOME/state/demo.status"; cp "$FM_HOME/state/demo.status" "$FM_HOME/at-turn/demo.status"'
   # Quiet: the offer alone turns main-only, with no status line for the
   # successor watcher to close on.
   [ "${2:-}" != quiet ] || turn='echo eligible=0; exit 0'
