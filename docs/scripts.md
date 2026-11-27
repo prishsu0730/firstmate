@@ -146,7 +146,7 @@ The shared no-mistakes gate lifecycle boundary is summarized in [architecture.md
 | `fm-pr-lib.sh`           | Own canonical task and PR validation plus private atomic PR-poll publication, merge-notification identity, and retirement |
 | `fm-pr-poll.sh`          | Provide the byte-static watcher program for validated pull-request, merge-request, and Gerrit-change poll sidecars |
 | `fm-contributions.sh`    | Observe owned publications, retain exact-head judgments, measure required actors, and wake on maintainer signals |
-| `fm-pr-check.sh`         | Record validated task `pr=` and `pr_head=` values, then atomically arm a static merge poll; refuses to arm a GitHub draft (recording only its `pr=`) and refuses persistent secondmate records (see [architecture.md](architecture.md)) |
+| `fm-pr-check.sh`         | Record validated task `pr=` and `pr_head=` values, then atomically arm a static merge poll; refuses to arm a GitHub draft (recording only its `pr=` and a `pr_draft=` marker) and refuses persistent secondmate records (see [architecture.md](architecture.md)) |
 | `fm-pr-merge.sh`         | Record PR metadata, merge a task's canonical full GitHub or GitLab URL under the review-tier and bug-fix red/green evidence gates documented in its header, refuse a Gerrit change because firstmate never submits one, then refuse an outcome it cannot prove landed or queued |
 | `fm-pr-land.sh`          | Resolve a recorded PR URL to its owning local task and enter the guarded merge; [script header](../bin/fm-pr-land.sh) owns home selection and refusal rules |
 | `fm-file-boundary.sh`    | Compare a task's local branch or live PR changed files with its recorded allowed-file list, naming each file outside it |

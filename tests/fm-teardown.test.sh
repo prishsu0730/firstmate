@@ -994,6 +994,36 @@ test_unrecorded_open_pr_with_branch_and_no_spawn_gen_refuses() {
   pass "a record naming its branch but no spawn_gen still refuses while that branch has an open PR"
 }
 
+# A refused draft records pr_draft= next to its pr=. A draft is open, so an
+# unreadable forge must refuse it; once a later arm drops the marker, the
+# existing landed-work checks apply again when the forge cannot be read.
+test_recorded_draft_pr_unreadable_forge_refuses() {
+  local case_dir rc=0
+  case_dir=$(make_case recorded-draft-unreadable)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'branch=fm/task-x1' 'pr_draft=https://github.com/example/repo/pull/543' \
+    'pr=https://github.com/example/repo/pull/543' >> "$case_dir/state/task-x1.meta"
+  wt_commit_file "$case_dir" feature.txt 'draft PR still open'
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  seed_backlog_in_flight "$case_dir"
+  add_gh_open_pr_lookup "$case_dir" error
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" "recorded-draft-unreadable: cleanup must refuse when the forge cannot be read"
+  assert_grep 'pull/543' "$case_dir/stderr" "recorded-draft-unreadable: refusal must name the PR"
+  assert_present "$case_dir/state/task-x1.meta" "recorded-draft-unreadable: task metadata was lost"
+  [ "$(backlog_row_state "$case_dir")" = in_flight ] \
+    || fail "recorded-draft-unreadable: cleanup closed the backlog item"
+
+  grep -v '^pr_draft=' "$case_dir/state/task-x1.meta" > "$case_dir/meta.armed"
+  printf '%s\n' 'pr_head=0123456789abcdef0123456789abcdef01234567' >> "$case_dir/meta.armed"
+  cat "$case_dir/meta.armed" > "$case_dir/state/task-x1.meta"
+  rc=0
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 0 "$rc" "recorded-armed-pr-unreadable: an armed record keeps the landed-work checks"
+  assert_absent "$case_dir/state/task-x1.meta" "recorded-armed-pr-unreadable: metadata remains"
+  pass "a recorded draft refuses while the forge cannot be read"
+}
+
 test_recorded_open_pr_without_worktree_and_with_force() {
   local case_dir rc=0
   case_dir=$(make_case recorded-open-pr-gone)
@@ -5030,6 +5060,7 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
 test_recorded_open_pr_preserves_task
 test_unrecorded_open_pr_preserves_task
 test_unrecorded_open_pr_with_branch_and_no_spawn_gen_refuses
+test_recorded_draft_pr_unreadable_forge_refuses
 test_recorded_open_pr_without_worktree_and_with_force
 test_missing_startup_source_refuses_before_cleanup
 test_unreadable_startup_source_refuses_before_cleanup

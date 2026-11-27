@@ -3535,21 +3535,29 @@ fi
 # record needed by fm-pr-merge.sh while its recorded PR is still open. This
 # guard is independent of worktree ownership/presence and shares --force's
 # existing explicit-discard authorization. Other outcomes and lookup failures
-# keep the existing landed-work checks below.
+# keep the existing landed-work checks below, except for a PR that
+# bin/fm-pr-check.sh recorded as a draft (pr_draft= matching pr=): a draft is
+# open by definition, so an unreadable forge refuses it rather than closing it.
 if [ "$KIND" = ship ] && [ "$FORCE" != "--force" ] \
     && [[ "$PR_URL" =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
   RECORDED_PR_REPO=${BASH_REMATCH[1]}
   RECORDED_PR_NUMBER=${BASH_REMATCH[2]}
+  RECORDED_PR_STATE=
   if RECORDED_PR_VIEW=$(gh-axi pr view "$RECORDED_PR_NUMBER" --repo "$RECORDED_PR_REPO" 2>/dev/null); then
     RECORDED_PR_STATE=$(printf '%s\n' "$RECORDED_PR_VIEW" | awk '
       $1 == "state:" { count++; value=$2 }
       END { if (count == 1) print value }
     ')
-    if [ "$RECORDED_PR_STATE" = open ]; then
-      echo "REFUSED: ship task $ID still has open, unmerged PR $PR_URL." >&2
-      echo "Merge or close the PR first, or get explicit approval to discard, then --force." >&2
-      exit 1
-    fi
+  fi
+  if [ "$RECORDED_PR_STATE" = open ]; then
+    echo "REFUSED: ship task $ID still has open, unmerged PR $PR_URL." >&2
+    echo "Merge or close the PR first, or get explicit approval to discard, then --force." >&2
+    exit 1
+  fi
+  if [ -z "$RECORDED_PR_STATE" ] && [ "$(fm_meta_get "$META" pr_draft)" = "$PR_URL" ]; then
+    echo "REFUSED: ship task $ID recorded PR $PR_URL as a draft, and the forge could not show that PR's state." >&2
+    echo "Retry when GitHub is reachable, or get explicit approval to discard, then --force." >&2
+    exit 1
   fi
 fi
 

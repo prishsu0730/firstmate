@@ -128,10 +128,14 @@ fm_project_capacity_publish() {
       META_TMP=$(mktemp "$STATE/.fm-pr-meta.XXXXXX") || exit 1
       while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
-          pr=*|pr_head=*) ;;
+          pr=*|pr_head=*|pr_draft=*) ;;
           *) printf '%s\n' "$line" >> "$META_TMP" || exit 1 ;;
         esac
       done < "$META"
+      # PR_DRAFT=1 marks a PR recorded while it was still a draft. The marker
+      # sits before pr= because fm_pr_metadata_identity_parse rejects any other
+      # key after it, and every later handoff drops it.
+      [ "${PR_DRAFT:-}" != 1 ] || printf 'pr_draft=%s\n' "$URL" >> "$META_TMP" || exit 1
       printf 'pr=%s\n' "$URL" >> "$META_TMP" || exit 1
       [ -z "$PR_HEAD" ] || printf 'pr_head=%s\n' "$PR_HEAD" >> "$META_TMP" || exit 1
       chmod 0600 "$META_TMP" || exit 1
