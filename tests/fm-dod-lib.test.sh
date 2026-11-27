@@ -741,20 +741,21 @@ test_bug_fix_with_red_only_refuses_done() {
   reason=$(merge_proof_accept "$MP_DONE_BASE review tier: base")
   rc=$?
   [ "$rc" -eq 1 ] || fail "a bug fix with only a red run was accepted (exit $rc)"
-  assert_contains "$reason" "failed at an ancestor of head $MP_HEAD" "refusal did not name the missing green run at the head"
+  assert_contains "$reason" "failed at an ancestor of head $MP_HEAD and then passed" "refusal did not name the missing green run"
   pass "a bug fix with only a red run refuses done:"
 }
 
-test_bug_fix_with_green_at_a_stale_head_refuses_done() {
-  local reason rc
+test_bug_fix_with_green_newer_than_a_stale_pr_head_accepts_done() {
+  local newer
   merge_proof_fixture mp-stale 'bug fix' Base
+  printf 'more\n' >> "$MP_WT/fix.txt"
+  git -C "$MP_WT" commit -q -am 'fix round'
+  newer=$(git -C "$MP_WT" rev-parse HEAD)
   merge_proof_run "$MP_BASE" red 1
-  merge_proof_run "$MP_BASE" green 0
-  reason=$(merge_proof_accept "$MP_DONE_BASE review tier: base")
-  rc=$?
-  [ "$rc" -eq 1 ] || fail "a green run at an older commit was accepted (exit $rc)"
-  assert_contains "$reason" "$MP_HEAD" "refusal did not name the head the green run must match"
-  pass "a green run at a different head refuses done:"
+  merge_proof_run "$newer" green 0
+  merge_proof_accept "$MP_DONE_BASE review tier: base" >/dev/null \
+    || fail "a green run newer than the recorded pr_head refused done: $(merge_proof_accept "$MP_DONE_BASE review tier: base")"
+  pass "a green run at a head newer than a stale pr_head accepts done:"
 }
 
 test_bug_fix_with_full_proof_and_tier_accepts_done() {
@@ -778,6 +779,8 @@ test_ready_report_without_review_tier_refuses_done() {
   reason=$(merge_proof_accept "$MP_DONE_BASE review tier: plus")
   rc=$?
   [ "$rc" -eq 1 ] || fail "a ready report naming a different tier was accepted (exit $rc)"
+  merge_proof_accept "$MP_DONE_BASE review tier: MEDIUM (Base)" >/dev/null \
+    || fail "a ready report naming the brief's tier as MEDIUM (Base) was refused"
   pass "a ready report that does not state the brief's review tier refuses done:"
 }
 
@@ -827,7 +830,7 @@ test_merge_proof_gates_only_ship_done_lines_naming_a_pr() {
 test_bug_fix_with_full_proof_and_tier_accepts_done
 test_bug_fix_without_red_green_log_refuses_done
 test_bug_fix_with_red_only_refuses_done
-test_bug_fix_with_green_at_a_stale_head_refuses_done
+test_bug_fix_with_green_newer_than_a_stale_pr_head_accepts_done
 test_ready_report_without_review_tier_refuses_done
 test_feature_needs_the_tier_but_not_the_log
 test_unreadable_type_or_tier_refuses_done

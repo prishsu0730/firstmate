@@ -730,11 +730,13 @@ fm_dod_data_dir() {  # <state>
 
 # 0 unless a ship done: naming a pull request leaves the merge proof its brief
 # promised missing: a bug fix's red-green.log without a red run at an ancestor
-# and a green run at the pull request head, or a ready report that does not
-# state the brief's review tier. Only a brief carrying the "# Merge proof"
-# section is checked, and only when the caller names the task; stdout then holds
-# a one-line reason. The head is the recorded pr_head= when meta holds one, else
-# the worker copy's HEAD. Local facts only, so no forge read happens here, and a
+# of the head and a later green run of the same test, or a ready report that
+# does not state the brief's review tier. Only a brief carrying the "# Merge
+# proof" section is checked, and only when the caller names the task; stdout
+# then holds a one-line reason. The head is the recorded pr_head= when meta holds
+# one, else the worker copy's HEAD; the green run is not bound to it, because
+# bin/fm-pr-merge.sh binds it to the live head. Local facts only, so no forge
+# read happens here, and a
 # Gerrit change or a done naming no PR is left to the other gates.
 fm_dod_accept_merge_proof() {  # <kind> <worktree> <line> <state> <id> <meta>
   local kind=$1 wt=$2 line=$3 state=$4 id=$5 meta=$6 data brief url note head problems
