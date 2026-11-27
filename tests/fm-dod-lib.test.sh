@@ -681,4 +681,160 @@ test_scope_map_only_gates_ship_done_lines
 test_scope_map_cli_lists_and_checks
 test_scope_map_cli_refuses_without_git_worktree
 
+# --- merge proof: a PR-naming done: is refused until the merge gate's proof exists
+
+MP_URL='https://github.com/o/r/pull/1'
+
+# Build a worktree whose branch holds one commit past main, a brief that opts in
+# to the merge proof with the given Type and Review tier lines, and the meta that
+# records the branch head as the PR head. Sets MP_* variables.
+merge_proof_fixture() {  # <name> <type> <tier line value> [with-heading]
+  local name=$1 type=$2 tier=$3 heading=${4:-yes}
+  MP_REPO="$TMP_ROOT/$name-repo"
+  MP_WT="$TMP_ROOT/$name-wt"
+  MP_STATE="$TMP_ROOT/$name-home/state"
+  MP_DATA="$TMP_ROOT/$name-home/data"
+  MP_ID=$name
+  mkdir -p "$MP_STATE" "$MP_DATA/$MP_ID"
+  fm_git_worktree "$MP_REPO" "$MP_WT" "fm/$name"
+  MP_BASE=$(git -C "$MP_WT" rev-parse HEAD)
+  printf 'fix\n' > "$MP_WT/fix.txt"
+  git -C "$MP_WT" add fix.txt
+  git -C "$MP_WT" commit -q -m 'fix the bug'
+  MP_HEAD=$(git -C "$MP_WT" rev-parse HEAD)
+  {
+    printf '# Task\n## Captain'"'"'s intent\nPlain words.\n'
+    printf '## Risk and review\nBlast radius: LOCAL\nType: %s\nReview tier: %s (No Greptile / Base / Plus / Apex)\n' "$type" "$tier"
+    [ "$heading" = yes ] && printf '# Merge proof\nWrite the proof.\n'
+  } > "$MP_DATA/$MP_ID/brief.md"
+  fm_write_meta "$MP_STATE/$MP_ID.meta" "pr=$MP_URL" "pr_head=$MP_HEAD"
+}
+
+# Append one marker line and its captured output to the task's red-green.log.
+merge_proof_run() {  # <sha> <red|green> <exit>
+  printf '%s|%s|t1|%s|%s|node --test t1\n' "$MP_URL" "$1" "$2" "$3" >> "$MP_DATA/$MP_ID/red-green.log"
+  printf 'captured output of the %s run\n' "$2" >> "$MP_DATA/$MP_ID/red-green.log"
+}
+
+merge_proof_accept() {  # <done line>
+  FM_DATA_OVERRIDE=$MP_DATA accept_done ship no-mistakes "$MP_WT" "$MP_REPO" \
+    "$1" "$MP_STATE" "$MP_ID" "$MP_STATE/$MP_ID.meta"
+}
+
+MP_DONE_BASE="done [at=1]: PR $MP_URL checks green"
+
+test_bug_fix_without_red_green_log_refuses_done() {
+  local reason rc
+  merge_proof_fixture mp-nolog 'bug fix' Base
+  reason=$(merge_proof_accept "$MP_DONE_BASE review tier: base")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "a bug fix with no red-green.log was accepted (exit $rc)"
+  assert_contains "$reason" "merge proof missing, so done is refused" "refusal did not say the merge proof is missing"
+  assert_contains "$reason" "$MP_DATA/$MP_ID/red-green.log" "refusal did not name the log to write"
+  pass "a bug fix with no red-green.log refuses done:"
+}
+
+test_bug_fix_with_red_only_refuses_done() {
+  local reason rc
+  merge_proof_fixture mp-redonly 'bug fix' Base
+  merge_proof_run "$MP_BASE" red 1
+  reason=$(merge_proof_accept "$MP_DONE_BASE review tier: base")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "a bug fix with only a red run was accepted (exit $rc)"
+  assert_contains "$reason" "failed at an ancestor of head $MP_HEAD and then passed" "refusal did not name the missing green run"
+  pass "a bug fix with only a red run refuses done:"
+}
+
+test_bug_fix_with_green_newer_than_a_stale_pr_head_accepts_done() {
+  local newer
+  merge_proof_fixture mp-stale 'bug fix' Base
+  printf 'more\n' >> "$MP_WT/fix.txt"
+  git -C "$MP_WT" commit -q -am 'fix round'
+  newer=$(git -C "$MP_WT" rev-parse HEAD)
+  merge_proof_run "$MP_BASE" red 1
+  merge_proof_run "$newer" green 0
+  merge_proof_accept "$MP_DONE_BASE review tier: base" >/dev/null \
+    || fail "a green run newer than the recorded pr_head refused done: $(merge_proof_accept "$MP_DONE_BASE review tier: base")"
+  pass "a green run at a head newer than a stale pr_head accepts done:"
+}
+
+test_bug_fix_with_full_proof_and_tier_accepts_done() {
+  merge_proof_fixture mp-full 'bug fix' Base
+  merge_proof_run "$MP_BASE" red 1
+  merge_proof_run "$MP_HEAD" green 0
+  merge_proof_accept "$MP_DONE_BASE review tier: base" >/dev/null \
+    || fail "complete merge proof refused done: $(merge_proof_accept "$MP_DONE_BASE review tier: base")"
+  pass "a bug fix with both runs and a stated tier accepts done:"
+}
+
+test_ready_report_without_review_tier_refuses_done() {
+  local reason rc
+  merge_proof_fixture mp-notier 'bug fix' Base
+  merge_proof_run "$MP_BASE" red 1
+  merge_proof_run "$MP_HEAD" green 0
+  reason=$(merge_proof_accept "$MP_DONE_BASE")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "a ready report with no review tier was accepted (exit $rc)"
+  assert_contains "$reason" "review tier: base" "refusal did not show the tier line to add"
+  reason=$(merge_proof_accept "$MP_DONE_BASE review tier: plus")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "a ready report naming a different tier was accepted (exit $rc)"
+  merge_proof_accept "$MP_DONE_BASE review tier: MEDIUM (Base)" >/dev/null \
+    || fail "a ready report naming the brief's tier as MEDIUM (Base) was refused"
+  pass "a ready report that does not state the brief's review tier refuses done:"
+}
+
+test_feature_needs_the_tier_but_not_the_log() {
+  local reason rc
+  merge_proof_fixture mp-feature feature 'No Greptile'
+  reason=$(merge_proof_accept "$MP_DONE_BASE")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "a feature ready report with no tier was accepted (exit $rc)"
+  assert_not_contains "$reason" "red-green.log" "a non-bug-fix was asked for a red-green log"
+  merge_proof_accept "$MP_DONE_BASE review tier: no greptile" >/dev/null \
+    || fail "a feature with its tier stated was refused: $(merge_proof_accept "$MP_DONE_BASE review tier: no greptile")"
+  pass "a non-bug-fix needs the stated tier and no red-green.log"
+}
+
+test_unreadable_type_or_tier_refuses_done() {
+  local reason rc
+  merge_proof_fixture mp-badtype 'wish' Base
+  reason=$(merge_proof_accept "$MP_DONE_BASE review tier: base")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "an unrecognised Type was accepted (exit $rc)"
+  assert_contains "$reason" "Type line is not recognised" "refusal did not name the Type line"
+  merge_proof_fixture mp-badtier feature 'Whatever'
+  reason=$(merge_proof_accept "$MP_DONE_BASE review tier: whatever")
+  rc=$?
+  [ "$rc" -eq 1 ] || fail "an unrecognised Review tier was accepted (exit $rc)"
+  assert_contains "$reason" "Review tier line is not recognised" "refusal did not name the Review tier line"
+  pass "an unrecognised Type or Review tier refuses done:"
+}
+
+test_brief_without_merge_proof_heading_is_not_gated() {
+  merge_proof_fixture mp-legacy 'bug fix' Base no
+  merge_proof_accept "$MP_DONE_BASE" >/dev/null \
+    || fail "a brief with no Merge proof section was gated"
+  pass "a brief without the Merge proof section is not gated"
+}
+
+test_merge_proof_gates_only_ship_done_lines_naming_a_pr() {
+  merge_proof_fixture mp-verbs 'bug fix' Base
+  merge_proof_accept 'working [at=1]: still going' >/dev/null || fail "a working: line was gated"
+  FM_DATA_OVERRIDE=$MP_DATA accept_done scout no-mistakes "$MP_WT" "$MP_REPO" \
+    "$MP_DONE_BASE" "$MP_STATE" "$MP_ID" "$MP_STATE/$MP_ID.meta" >/dev/null \
+    || fail "a scout done: was gated"
+  pass "the merge proof gates only ship done: lines that name a PR"
+}
+
+test_bug_fix_with_full_proof_and_tier_accepts_done
+test_bug_fix_without_red_green_log_refuses_done
+test_bug_fix_with_red_only_refuses_done
+test_bug_fix_with_green_newer_than_a_stale_pr_head_accepts_done
+test_ready_report_without_review_tier_refuses_done
+test_feature_needs_the_tier_but_not_the_log
+test_unreadable_type_or_tier_refuses_done
+test_brief_without_merge_proof_heading_is_not_gated
+test_merge_proof_gates_only_ship_done_lines_naming_a_pr
+
 echo "all fm-dod-lib tests passed"

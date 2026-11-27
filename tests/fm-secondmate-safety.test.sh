@@ -63,6 +63,10 @@ test_fm_home_parameterization() {
   brief="$home_one/data/task-a/brief.md"
   [ -f "$brief" ] || fail "brief was not written under FM_HOME/data"
   grep -F ">> '$home_one/state/task-a.status'" "$brief" >/dev/null || fail "brief did not shell-quote FM_HOME state path"
+  sed 's/^Type: {TYPE}$/Type: Feature/; s/^Review tier: {REVIEW_TIER} (No Greptile \/ Base \/ Plus \/ Apex)$/Review tier: Base/' "$brief" > "$brief.tmp" \
+    && mv "$brief.tmp" "$brief"
+  grep -F 'Type: Feature' "$brief" >/dev/null || fail "task-a brief type was not filled"
+  grep -F 'Review tier: Base' "$brief" >/dev/null || fail "task-a brief review tier was not filled"
 
   FM_HOME="$home_one" "$ROOT/bin/fm-brief.sh" task-b app --scout >/dev/null || fail "scout brief scaffold failed under FM_HOME"
   brief="$home_one/data/task-b/brief.md"
@@ -81,9 +85,21 @@ test_fm_home_parameterization() {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$home_one/fakebin/gh"
   chmod +x "$home_one/fakebin/gh"
   printf 'project=x\nworktree=%s\n' "$home_one/wt" > "$home_one/state/task-a.meta"
+  printf '%s\n' 'done [at=1]: PR https://github.com/example/repo/pull/1 checks green' > "$home_one/state/task-a.status"
+  if PATH="$home_one/fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 \
+    "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>&1; then
+    fail "fm-pr-check accepted a saved ready line without the review tier"
+  fi
+  printf '%s\n' 'done [at=2]: PR https://github.com/example/repo/pull/2 checks green review tier: Base' >> "$home_one/state/task-a.status"
+  if PATH="$home_one/fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 \
+    "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>&1; then
+    fail "fm-pr-check accepted a saved ready line naming another PR"
+  fi
+  [ ! -e "$home_one/state/task-a.check.sh" ] || fail "a refused registration wrote a pr check"
+  printf '%s\n' 'done [at=3]: PR https://github.com/example/repo/pull/1 checks green review tier: Base' >> "$home_one/state/task-a.status"
   PATH="$home_one/fakebin:$PATH" FM_HOME="$home_one" FM_GUARD_GRACE=999999 \
     "$ROOT/bin/fm-pr-check.sh" task-a https://github.com/example/repo/pull/1 >/dev/null 2>/dev/null \
-    || fail "fm-pr-check failed under FM_HOME"
+    || fail "fm-pr-check refused the saved ready line with the review tier under FM_HOME"
   [ -f "$home_one/state/task-a.check.sh" ] || fail "pr check was not written under FM_HOME/state"
   [ ! -e "$home_two/state/task-a.check.sh" ] || fail "pr check leaked into another home"
   pass "FM_HOME parameterizes data and state paths"

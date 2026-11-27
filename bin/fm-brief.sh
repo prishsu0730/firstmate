@@ -140,6 +140,11 @@
 # Ship scaffolds also carry a "# Scope map" section: the worker maps each
 # numbered or bulleted brief item to a commit or file, and a ship `done:` is
 # refused until it does (contract owned by bin/fm-scope-map-lib.sh).
+# Ship scaffolds that publish a PR to a GitHub or GitLab forge also carry a
+# "# Merge proof" section: a bug fix's red-green.log and the review tier in the
+# ready report are checked when the worker reports done, so a missing proof stops
+# the ready report instead of the merge (contract owned by
+# bin/fm-merge-proof-lib.sh).
 # Scaffolds carry no role scope: fm-spawn.sh supplies fm_brief_worker_role from
 # fm-dod-lib.sh to every ship/scout launch brief, so this file never becomes a
 # second owner of a contract that must stay current across relaunches.
@@ -179,6 +184,8 @@ esac
 . "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-scope-map-lib.sh
 . "$SCRIPT_DIR/fm-scope-map-lib.sh"
+# shellcheck source=bin/fm-merge-proof-lib.sh
+. "$SCRIPT_DIR/fm-merge-proof-lib.sh"
 PAUSED_VERB=${FM_CLASSIFY_PAUSED_VERB:-$FM_CLASSIFY_PAUSED_VERB_DEFAULT}
 IFS= read -r -d '' CREWMATE_PAUSE_INSTRUCTIONS <<EOF || true
    Use \`$PAUSED_VERB: {why}\` - distinct from \`blocked:\` - when deliberately waiting for work or an external condition expected to clear on its own, including your own validation round.
@@ -795,6 +802,14 @@ if [ "$MODE" != local-only ]; then
   # shellcheck disable=SC2016
   PR_CLOSE_INSTRUCTION='   When this task fixes a known issue, write `Closes #N` for it in the PR body, so the merge closes that issue on its own.'
 fi
+# Empty where no merge follows a PR: local-only has none, and a Gerrit forge
+# merges on the server. Otherwise the block carries its own trailing blank line.
+MERGE_PROOF=
+if [ "$MODE" != local-only ] && [ "$FORGE" = none ]; then
+  MERGE_PROOF="$(fm_merge_proof_block "$FM_ROOT" "$DATA" "$ID")
+
+"
+fi
 
 # The task's file boundary: the validated list is recorded beside the brief for
 # bin/fm-file-boundary.sh, and the worker is told to run that checker. Empty
@@ -898,7 +913,7 @@ The merge guard refuses the same words, so a bad message found only at merge nee
 
 $SCOPE_MAP
 
-$DOD
+$MERGE_PROOF$DOD
 EOF
 append_brief_include
 if [ "$FORGE" = none ]; then

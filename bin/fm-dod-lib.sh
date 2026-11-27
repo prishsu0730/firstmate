@@ -20,6 +20,9 @@
 # Every ship `done:`, including the no-mistakes pre-validation handoff, is also
 # refused while its brief's scope map leaves an item uncovered
 # (fm_dod_accept_scope_map; bin/fm-scope-map-lib.sh owns the contract).
+# A done: that names a pull request is likewise refused while its brief's merge
+# proof is missing (fm_dod_accept_merge_proof; bin/fm-merge-proof-lib.sh owns the
+# contract).
 # Callers of the gate are bin/fm-crew-state.sh (current-state done),
 # bin/fm-pr-check.sh (PR registration), and bin/fm-inactive-reconcile.sh
 # (secondmate ledger-first publish of a child done). A ship `done:` is not
@@ -122,6 +125,8 @@
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-brief-heading-lib.sh"
 # shellcheck source=bin/fm-scope-map-lib.sh
 . "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-scope-map-lib.sh"
+# shellcheck source=bin/fm-merge-proof-lib.sh
+. "$(d=${BASH_SOURCE[0]%/*}; [ "$d" != "${BASH_SOURCE[0]}" ] || d=.; cd "${d:-/}" && pwd)/fm-merge-proof-lib.sh"
 
 fm_brief_worker_role() {  # <state-dir> <task-id> <code-root>
   local state=$1 task_id=$2 root=$3
@@ -703,18 +708,54 @@ fm_dod_accept_scope_map() {  # <kind> <worktree> <line> <state> <id> <meta>
   local kind=$1 wt=$2 line=$3 state=$4 id=$5 meta=$6 data brief problems
   [ "$kind" = ship ] && [ "$(status_line_verb "$line")" = "done" ] || return 0
   [ -n "$state" ] && [ -n "$id" ] || return 0
-  if [ -n "${FM_DATA_OVERRIDE:-}" ]; then
-    data=$FM_DATA_OVERRIDE
-  elif [ -n "${FM_HOME:-}" ]; then
-    data=$FM_HOME/data
-  else
-    data=$(dirname "$state")/data
-  fi
+  data=$(fm_dod_data_dir "$state")
   brief=$data/$id/brief.md
   fm_scope_map_enforced "$brief" || return 0
   problems=$(fm_scope_map_problems "$brief" "$(fm_scope_map_path "$data" "$id")" "$wt" \
     "$(fm_dod_meta_value "$meta" base_branch)") && return 0
   printf '%s\n' "scope map incomplete, so done is refused: $(printf '%s' "$problems" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
+  return 1
+}
+
+# The data directory the done gates read the brief and task records from.
+fm_dod_data_dir() {  # <state>
+  if [ -n "${FM_DATA_OVERRIDE:-}" ]; then
+    printf '%s\n' "$FM_DATA_OVERRIDE"
+  elif [ -n "${FM_HOME:-}" ]; then
+    printf '%s\n' "$FM_HOME/data"
+  else
+    printf '%s\n' "$(dirname "$1")/data"
+  fi
+}
+
+# 0 unless a ship done: naming a pull request leaves the merge proof its brief
+# promised missing: a bug fix's red-green.log without a red run at an ancestor
+# of the head and a later green run of the same test, or a ready report that
+# does not state the brief's review tier. Only a brief carrying the "# Merge
+# proof" section is checked, and only when the caller names the task; stdout
+# then holds a one-line reason. The head is the recorded pr_head= when meta holds
+# one, else the worker copy's HEAD; the green run is not bound to it, because
+# bin/fm-pr-merge.sh binds it to the live head. Local facts only, so no forge
+# read happens here, and a
+# Gerrit change or a done naming no PR is left to the other gates.
+fm_dod_accept_merge_proof() {  # <kind> <worktree> <line> <state> <id> <meta>
+  local kind=$1 wt=$2 line=$3 state=$4 id=$5 meta=$6 data brief url note head problems
+  [ "$kind" = ship ] && [ "$(status_line_verb "$line")" = "done" ] || return 0
+  [ -n "$state" ] && [ -n "$id" ] || return 0
+  data=$(fm_dod_data_dir "$state")
+  brief=$data/$id/brief.md
+  fm_merge_proof_enforced "$brief" || return 0
+  note=$(status_line_note "$line")
+  url=$(fm_dod_pr_url_from_done_note "$note") || return 0
+  fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" != gerrit ] || return 0
+  head=$(fm_dod_meta_value "$meta" pr_head | tr '[:upper:]' '[:lower:]')
+  if ! fm_pr_head_valid "$head"; then
+    head=$(git -C "$wt" rev-parse --verify HEAD 2>/dev/null | tr '[:upper:]' '[:lower:]') || head=
+  fi
+  fm_pr_head_valid "$head" || head=unresolved
+  problems=$(fm_merge_proof_problems "$brief" "$data/$id/red-green.log" "$wt" "$url" "$head" "$note")
+  [ -n "$problems" ] || return 0
+  printf '%s\n' "merge proof missing, so done is refused: $(printf '%s' "$problems" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
   return 1
 }
 
@@ -733,6 +774,7 @@ fm_dod_accept_scope_map() {  # <kind> <worktree> <line> <state> <id> <meta>
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
   local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit
   fm_dod_accept_scope_map "$kind" "$wt" "$line" "$state" "$id" "$meta" || return 1
+  fm_dod_accept_merge_proof "$kind" "$wt" "$line" "$state" "$id" "$meta" || return 1
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   url=
   if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \

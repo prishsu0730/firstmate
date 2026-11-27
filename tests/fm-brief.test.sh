@@ -1562,6 +1562,28 @@ test_ship_scaffold_names_the_red_green_proof_paths() {
   pass "ship scaffolds name the expanded red-green proof paths and when to record each run"
 }
 
+test_ship_scaffold_carries_the_merge_proof_section_where_a_pr_merges() {
+  local home id brief mode
+  home="$TMP_ROOT/merge-proof-home"
+  mkdir -p "$home/data"
+  for mode in no-mistakes direct-PR; do
+    id="brief-proof-$mode"
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode "$mode" >/dev/null 2>&1 \
+      || fail "fm-brief.sh --mode $mode exited non-zero"
+    brief="$home/data/$id/brief.md"
+    assert_grep "# Merge proof" "$brief" "$mode ship brief has no Merge proof section"
+    assert_grep "review tier: <the brief's Review tier value" "$brief" \
+      "$mode ship brief does not tell the worker to state the review tier"
+    assert_grep "Never write a review line" "$brief" "$mode ship brief does not keep review lines off the worker"
+    assert_grep "Save the red run while you build" "$brief" "$mode ship brief does not ask for the red run while building"
+  done
+  id="brief-proof-local"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" alpha --mode local-only >/dev/null 2>&1 \
+    || fail "fm-brief.sh --mode local-only exited non-zero"
+  assert_no_grep "# Merge proof" "$home/data/$id/brief.md" "local-only ship brief carries a Merge proof section"
+  pass "ship scaffolds that publish a PR carry the Merge proof section; local-only does not"
+}
+
 test_crewmate_scaffolds_forbid_pool_administration() {
   local home id brief mode ship_rule scout_rule
   home="$TMP_ROOT/pool-admin-home"
@@ -1798,6 +1820,7 @@ test_ship_scaffold_carries_the_scope_map_section
 test_ship_scaffold_carries_the_commit_wording_check
 test_ship_scaffold_tells_the_worker_to_write_closes_in_the_pr_body
 test_ship_scaffold_names_the_red_green_proof_paths
+test_ship_scaffold_carries_the_merge_proof_section_where_a_pr_merges
 test_allowed_files_flag_adds_only_a_section
 test_allowed_files_flag_is_validated
 test_a_leftover_state_marker_refuses_the_brief
