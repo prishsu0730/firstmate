@@ -2927,6 +2927,8 @@ test_dispatch_and_completion_are_structural() {
 
   meta="$home/state/$id.meta"
   printf 'pr=%s\n' "$pr" >> "$meta"
+  # Teardown closes a recorded GitHub PR only once the forge reads it merged.
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
   out=$(run_teardown "$case_dir" "$id") \
     || fail "structural teardown failed: $out"
   [ "$(row_state "$case_dir" "$id")" = "done" ] \

@@ -6573,6 +6573,8 @@ test_heartbeat_auto_closes_a_squash_merged_ship() {
   git -C "$worktree" -c user.email=fmtest@example.invalid -c user.name=fmtest \
     commit -q -m feature
   head=$(git -C "$worktree" rev-parse HEAD)
+  # Teardown closes a recorded GitHub PR only once the forge reads it merged.
+  fm_fake_gh_axi_merged_pr "$fakebin"
   printf 'done: squash merged\n' > "$state/ship.status"
   fm_write_meta "$state/ship.meta" \
     'kind=ship' \
