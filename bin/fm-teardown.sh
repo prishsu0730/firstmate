@@ -66,13 +66,18 @@
 # no pr= was ever recorded (e.g. a yolo-authorized merge on a repo with no PR CI,
 # where the usual "checks green" fm-pr-check.sh trigger never fires) - by looking
 # up a merged PR whose head branch matches the worktree's branch, fetching its head
-# via refs/pull/<n>/head when the branch itself was deleted. So a missing pr= never
-# by itself causes a false refusal of landed work.
+# via refs/pull/<n>/head when the branch itself was deleted. A merged PR is not an
+# open one, so a missing pr= alone never refuses landed work whose forge is readable.
 # A gh lookup error falls back to the content check; if that is also inconclusive,
 # teardown refuses rather than risk discarding unlanded work.
-# A ship with a recorded GitHub PR still open refuses before cleanup even if
-# its commits are published, its worktree is gone, or its slot was reassigned.
-# --force retains its explicit-discard meaning and bypasses this gate.
+# A ship with a recorded GitHub PR still open, or whose state the forge cannot
+# show, refuses before cleanup even if its commits are published, its worktree
+# is gone, or its slot was reassigned.
+# A no-mistakes or direct-PR ship with no recorded pr= refuses unless the forge
+# proves its branch has no open PR (a zero count from an open-PR lookup); an
+# open PR, an unreadable forge, or an unknown branch refuses. Only a true legacy
+# record (no branch= and no spawn-published spawn_gen) skips that lookup.
+# --force retains its explicit-discard meaning and bypasses both gates.
 # Uncommitted changes are never landed; dirty refusals distinguish untracked-only
 # leftovers from tracked edits and list at most ten non-exempt untracked paths.
 # local-only projects additionally accept work merged into the local default
@@ -3530,23 +3535,95 @@ fi
 # Published commits prove recoverability, not PR completion. Keep the task
 # record needed by fm-pr-merge.sh while its recorded PR is still open. This
 # guard is independent of worktree ownership/presence and shares --force's
-# existing explicit-discard authorization. Other outcomes and lookup failures
-# keep the existing landed-work checks below.
+# existing explicit-discard authorization. Only a readable merged or closed
+# state falls through to the landed-work checks below; a lookup failure or an
+# unreadable state refuses, so an unreachable forge never closes an open PR.
 if [ "$KIND" = ship ] && [ "$FORCE" != "--force" ] \
     && [[ "$PR_URL" =~ ^https://github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
   RECORDED_PR_REPO=${BASH_REMATCH[1]}
   RECORDED_PR_NUMBER=${BASH_REMATCH[2]}
+  RECORDED_PR_STATE=
   if RECORDED_PR_VIEW=$(gh-axi pr view "$RECORDED_PR_NUMBER" --repo "$RECORDED_PR_REPO" 2>/dev/null); then
     RECORDED_PR_STATE=$(printf '%s\n' "$RECORDED_PR_VIEW" | awk '
       $1 == "state:" { count++; value=$2 }
       END { if (count == 1) print value }
     ')
-    if [ "$RECORDED_PR_STATE" = open ]; then
-      echo "REFUSED: ship task $ID still has open, unmerged PR $PR_URL." >&2
-      echo "Merge or close the PR first, or get explicit approval to discard, then --force." >&2
-      exit 1
-    fi
   fi
+  if [ "$RECORDED_PR_STATE" = open ]; then
+    echo "REFUSED: ship task $ID still has open, unmerged PR $PR_URL." >&2
+    echo "Merge or close the PR first, or get explicit approval to discard, then --force." >&2
+    exit 1
+  fi
+  if [ -z "$RECORDED_PR_STATE" ]; then
+    echo "REFUSED: ship task $ID recorded PR $PR_URL, and the forge could not show that PR's state." >&2
+    echo "Retry when GitHub is reachable, or get explicit approval to discard, then --force." >&2
+    exit 1
+  fi
+fi
+
+# A ship in a PR mode can finish with no recorded pr= (bin/fm-pr-check.sh
+# refuses to arm a merge watch for a draft, and a registration can time out),
+# yet its branch can still have an open PR on the forge. Without a recorded PR
+# the gate above has nothing to ask about, and a published branch would read as
+# landed work below. So the forge itself must prove the task branch has no open
+# PR: only an exact zero count from an open-PR lookup for that branch counts as
+# proof. Any open PR, a lookup error, unreadable output, or an unknown branch
+# refuses. The repository is the project's own GitHub origin, or, for any other
+# origin, whatever gh-axi resolves from inside the project; a project gh-axi
+# cannot read refuses. --force keeps its explicit-discard meaning.
+unrecorded_pr_github_repo() {  # <remote-url>
+  local url=$1
+  url=${url%.git}
+  case "$url" in
+    https://github.com/*) url=${url#https://github.com/} ;;
+    git@github.com:*) url=${url#git@github.com:} ;;
+    ssh://git@github.com/*) url=${url#ssh://git@github.com/} ;;
+    *) return 1 ;;
+  esac
+  [[ "$url" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s' "$url"
+}
+
+# A true legacy record (no branch= and no spawn-published spawn_gen=, written
+# before spawns recorded the branch; a legacy- stamp left by an earlier
+# teardown attempt does not count) names no branch to ask about and is never
+# selected for automatic close, so it keeps the landed-work checks below.
+UNRECORDED_PR_SPAWN_GEN=$(fm_meta_get "$META" spawn_gen)
+case "$UNRECORDED_PR_SPAWN_GEN" in legacy-*) UNRECORDED_PR_SPAWN_GEN= ;; esac
+if [ "$KIND" = ship ] && [ "$FORCE" != "--force" ] && [ -z "$PR_URL" ] \
+    && { [ -n "$(fm_meta_get "$META" branch)" ] || [ -n "$UNRECORDED_PR_SPAWN_GEN" ]; }; then
+  case "$MODE" in
+    no-mistakes|direct-PR)
+      UNRECORDED_PR_BRANCH=$(fm_meta_get "$META" branch)
+      if [ -z "$UNRECORDED_PR_BRANCH" ] && [ -n "$WT" ] && [ -d "$WT" ]; then
+        UNRECORDED_PR_BRANCH=$(git -C "$WT" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+      fi
+      UNRECORDED_PR_ARGS=()
+      if UNRECORDED_PR_REPO=$(unrecorded_pr_github_repo "$(git -C "$PROJ" remote get-url origin 2>/dev/null)"); then
+        UNRECORDED_PR_ARGS=(--repo "$UNRECORDED_PR_REPO")
+      fi
+      UNRECORDED_PR_FIRST=
+      UNRECORDED_PR_NUMBER=
+      if [ -n "$UNRECORDED_PR_BRANCH" ] && [ -n "$PROJ" ] && [ -d "$PROJ" ] \
+          && UNRECORDED_PR_LIST=$(cd "$PROJ" && gh-axi pr list ${UNRECORDED_PR_ARGS[@]+"${UNRECORDED_PR_ARGS[@]}"} \
+            --state open --head "$UNRECORDED_PR_BRANCH" --limit 1 2>/dev/null); then
+        UNRECORDED_PR_FIRST=$(printf '%s\n' "$UNRECORDED_PR_LIST" | head -1)
+        UNRECORDED_PR_NUMBER=$(printf '%s\n' "$UNRECORDED_PR_LIST" \
+          | sed -n 's/^[[:space:]][[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
+      fi
+      if [[ "$UNRECORDED_PR_FIRST" =~ ^count:\ 0($|[^0-9]) ]]; then
+        :
+      elif [[ "$UNRECORDED_PR_FIRST" =~ ^count:\ [1-9] ]]; then
+        echo "REFUSED: ship task $ID recorded no PR, but its branch $UNRECORDED_PR_BRANCH still has open PR #${UNRECORDED_PR_NUMBER:-?}." >&2
+        echo "Merge or close the PR first, or get explicit approval to discard, then --force." >&2
+        exit 1
+      else
+        echo "REFUSED: ship task $ID recorded no PR, and the forge could not prove that branch ${UNRECORDED_PR_BRANCH:-<unknown>} has no open PR." >&2
+        echo "Retry when GitHub is reachable, or get explicit approval to discard, then --force." >&2
+        exit 1
+      fi
+      ;;
+  esac
 fi
 
 # Non-blocking: a delivered public loop is not a teardown refusal (guard-work

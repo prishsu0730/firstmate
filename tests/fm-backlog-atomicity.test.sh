@@ -101,7 +101,8 @@ case "${1:-}" in display-message) printf 'firstmate\n'; exit 0 ;; esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse gh gh-axi no-mistakes
+  fm_fake_exit0 "$fakebin" treehouse gh no-mistakes
+  fm_fake_gh_axi_no_open_pr "$fakebin"
 
   fm_git_init_commit "$case_dir/project"
   fm_git_add_origin "$case_dir/project" "$case_dir/project.origin.git"
@@ -2926,6 +2927,8 @@ test_dispatch_and_completion_are_structural() {
 
   meta="$home/state/$id.meta"
   printf 'pr=%s\n' "$pr" >> "$meta"
+  # Teardown closes a recorded GitHub PR only once the forge reads it merged.
+  fm_fake_gh_axi_merged_pr "$case_dir/fakebin"
   out=$(run_teardown "$case_dir" "$id") \
     || fail "structural teardown failed: $out"
   [ "$(row_state "$case_dir" "$id")" = "done" ] \

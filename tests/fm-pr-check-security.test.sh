@@ -641,7 +641,9 @@ test_invalid_entrypoints_have_zero_side_effects() {
 
 # A draft cannot be merged, so arming a merge poll on one would wait for an event
 # that cannot occur. Only a positive draft reading refuses, and it refuses before
-# anything is recorded or armed; a ready or unreadable one arms as before.
+# anything is armed; it still records which PR the task owns (pr= with no
+# pr_head) so teardown can refuse while that PR is open. A ready or unreadable
+# one arms as before.
 test_draft_pull_request_is_not_armed() {
   local dir rc
   dir=$(make_case draft-refused)
@@ -654,10 +656,49 @@ test_draft_pull_request_is_not_armed() {
   [ "$rc" -ne 0 ] || fail "arming accepted a draft pull request"
   grep -qi 'draft' "$dir/stderr" || fail "the refusal did not name the draft state"
   grep -qF 'https://github.com/o/r/pull/9' "$dir/stderr" || fail "the refusal did not name the pull request"
-  cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" || fail "a refused draft changed the task metadata"
+  { cat "$dir/meta.before"; printf '%s\n' 'pr=https://github.com/o/r/pull/9'; } > "$dir/meta.expected"
+  cmp -s "$dir/meta.expected" "$dir/home/state/task-a.meta" \
+    || fail "a refused draft did not record exactly its pr= line (and no pr_head)"
   [ ! -e "$dir/home/state/task-a.check.sh" ] || fail "a refused draft armed a poll"
   [ ! -e "$dir/home/state/task-a.pr-poll" ] || fail "a refused draft wrote a poll sidecar"
   [ ! -s "$dir/guard.log" ] || fail "a refused draft reached the guard"
+  # The same pull request marked ready later arms normally over that pr= line.
+  FM_TEST_GH_DRAFT=false run_check_entry "$dir" task-a https://github.com/o/r/pull/9 \
+    > "$dir/stdout" 2> "$dir/stderr" || fail "arming refused a recorded draft once it was ready"
+  [ "$(grep -c '^pr=' "$dir/home/state/task-a.meta")" -eq 1 ] \
+    || fail "arming a ready draft left more than one pr= line"
+  grep -qxF 'pr_head=0123456789abcdef0123456789abcdef01234567' "$dir/home/state/task-a.meta" \
+    || fail "arming a ready draft did not record its pr_head"
+  [ -f "$dir/home/state/task-a.check.sh" ] || fail "a recorded draft was not armed once ready"
+
+  dir=$(make_case draft-already-recorded)
+  write_task_meta "$dir"
+  printf '%s\n' 'pr=https://github.com/o/r/pull/9' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567' >> "$dir/home/state/task-a.meta"
+  cp "$dir/home/state/task-a.meta" "$dir/meta.before"
+  set +e
+  FM_TEST_GH_DRAFT=true run_check_entry "$dir" task-a https://github.com/o/r/pull/9 \
+    > "$dir/stdout" 2> "$dir/stderr"; rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "arming accepted a draft pull request already recorded"
+  cmp -s "$dir/meta.before" "$dir/home/state/task-a.meta" \
+    || fail "a refused draft rewrote an existing pr= record or dropped its pr_head"
+
+  dir=$(make_case draft-replaces-other-pr)
+  write_task_meta "$dir"
+  printf '%s\n' 'pr=https://github.com/o/r/pull/8' \
+    'pr_head=0123456789abcdef0123456789abcdef01234567' >> "$dir/home/state/task-a.meta"
+  set +e
+  FM_TEST_GH_DRAFT=true run_check_entry "$dir" task-a https://github.com/o/r/pull/9 \
+    > "$dir/stdout" 2> "$dir/stderr"; rc=$?
+  set -e
+  [ "$rc" -ne 0 ] || fail "arming accepted a draft that replaces another pull request"
+  grep -qxF 'pr=https://github.com/o/r/pull/9' "$dir/home/state/task-a.meta" \
+    || fail "a refused draft kept a record of a different pull request"
+  [ "$(grep -c '^pr=' "$dir/home/state/task-a.meta")" -eq 1 ] \
+    || fail "a refused draft left more than one pr= line"
+  ! grep -q '^pr_head=' "$dir/home/state/task-a.meta" \
+    || fail "a refused draft kept the other pull request's head"
 
   dir=$(make_case draft-cleared)
   write_task_meta "$dir"
@@ -672,7 +713,7 @@ test_draft_pull_request_is_not_armed() {
   FM_TEST_GH_DRAFT=null run_check_entry "$dir" task-a https://github.com/o/r/pull/9 \
     > "$dir/stdout" 2> "$dir/stderr" || fail "an unreadable draft state blocked arming"
   [ -f "$dir/home/state/task-a.check.sh" ] || fail "an unreadable draft state was not armed"
-  pass "arming refuses a draft pull request, naming it, and arms a ready or unreadable one"
+  pass "arming refuses a draft pull request, naming it, records only its pr=, and arms a ready or unreadable one"
 }
 
 # A secondmate is a persistent worker, not a delivery lane: it never owns a

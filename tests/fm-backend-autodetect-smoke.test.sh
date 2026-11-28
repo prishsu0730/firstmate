@@ -168,8 +168,20 @@ pass "real herdr: the auto-detected spawn's launch command actually ran in the h
 
 # --- teardown completes the trivial spawn/teardown cycle --------------------
 
+# Teardown must prove the task branch has no open PR; this gh-axi reports none.
+# It sits on PATH only for the teardown calls, never for the real spawn.
+TEARDOWN_FAKEBIN="$TMP_ROOT/teardown-fakebin"
+mkdir -p "$TEARDOWN_FAKEBIN"
+cat > "$TEARDOWN_FAKEBIN/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' 'count: 0' 'pull_requests: []' ;;
+esac
+exit 0
+SH
+chmod +x "$TEARDOWN_FAKEBIN/gh-axi"
 TEARDOWN_OUT="$TMP_ROOT/teardown.out"
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
+PATH="$TEARDOWN_FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" \
   FM_CONFIG_OVERRIDE="$CONFIG" \
   "$ROOT/bin/fm-teardown.sh" "$ID" >"$TEARDOWN_OUT" 2>&1
 status=$?

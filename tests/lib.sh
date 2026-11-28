@@ -513,6 +513,36 @@ SH
   done
 }
 
+# fm_fake_gh_axi_no_open_pr <fakebin>
+# A silent gh-axi whose `pr list` reports no pull requests in the real gh-axi
+# shape, so teardown can prove a ship with no recorded pr= has no open PR.
+fm_fake_gh_axi_no_open_pr() {
+  cat > "$1/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' 'count: 0' 'pull_requests: []' ;;
+esac
+exit 0
+SH
+  chmod +x "$1/gh-axi"
+}
+
+# fm_fake_gh_axi_merged_pr <fakebin>
+# A silent gh-axi whose `pr view` reports one merged state and whose `pr list`
+# reports no open pull requests, both in the real gh-axi shape, so teardown can
+# read a recorded GitHub pr= as landed.
+fm_fake_gh_axi_merged_pr() {
+  cat > "$1/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr view") printf '%s\n' 'number: 1' 'state: merged' ;;
+  "pr list") printf '%s\n' 'count: 0' 'pull_requests: []' ;;
+esac
+exit 0
+SH
+  chmod +x "$1/gh-axi"
+}
+
 # fm_fake_crash_injector <fakebin>
 # Drops an `fm-crash-inject <pid>` shim that a PATH fake calls to simulate a
 # hard crash of the process under test. It SIGKILLs <pid> and then returns only

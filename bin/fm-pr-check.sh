@@ -10,8 +10,11 @@
 # are all accepted, including a merge request or change on a self-hosted
 # instance.
 # A GitHub pull request the forge reports as a draft is refused, naming the draft
-# state and recording and arming nothing: a draft cannot be merged, so a poll armed on it
+# state and arming nothing: a draft cannot be merged, so a poll armed on it
 # would wait for an event that cannot occur while nobody is asked to act.
+# The refusal still records pr=<url> with no pr_head, so the task keeps the PR
+# it owns and bin/fm-teardown.sh refuses to close it while that PR is open or
+# its state cannot be read.
 # Mark the pull request ready for review, then arm again; a lane that keeps a
 # draft on purpose declares a wait instead of reporting done. An unreadable
 # draft state does not refuse, matching how the head read below is optional.
@@ -134,6 +137,20 @@ fi
 if [ "$PROVIDER" = github ] && [ "${FM_PR_CHECK_MERGE:-}" != 1 ] && command -v gh >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   DRAFT_JSON=$(gh pr view "$URL" --json isDraft 2>/dev/null || true)
   if [ "$(fm_pr_json_draft_state "$DRAFT_JSON")" = true ]; then
+    # Record which PR the task owns, with no head and no merge watch, so the
+    # task is never mistaken for one with no PR: teardown refuses to close a
+    # ship whose recorded PR is still open, and a later arm replaces this line.
+    # A task that already records this same PR keeps that record and its head;
+    # a record of any other PR is replaced, so a stale PR never hides this one.
+    META_LOCK=$(fm_meta_lock_path "$META") || exit 1
+    fm_lock_acquire_wait "$META_LOCK"
+    META_LOCK_HELD=1
+    if ! grep -qxF "pr=$URL" "$META"; then
+      PR_HEAD=
+      fm_project_capacity_publish handoff "$STATE" "$ID" || exit 1
+    fi
+    fm_lock_release "$META_LOCK"
+    META_LOCK_HELD=0
     echo "error: $URL is a draft pull request; a draft cannot be merged, so merge monitoring would wait for an event that cannot occur - mark it ready for review and arm again, or declare a wait instead of done if the draft is deliberate" >&2
     exit 1
   fi
