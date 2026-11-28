@@ -228,8 +228,20 @@ pass "real herdr E2E: list_live from the secondmate's own context sees only task
 
 # --- 5. teardown closes the RIGHT tab, and no other ------------------------
 
+# Teardown must prove the task branch has no open PR; this gh-axi reports none.
+# It sits on PATH only for the teardown calls, never for the real spawn.
+TEARDOWN_FAKEBIN="$TMP_ROOT/teardown-fakebin"
+mkdir -p "$TEARDOWN_FAKEBIN"
+cat > "$TEARDOWN_FAKEBIN/gh-axi" <<'SH'
+#!/usr/bin/env bash
+case "${1:-} ${2:-}" in
+  "pr list") printf '%s\n' 'count: 0' 'pull_requests: []' ;;
+esac
+exit 0
+SH
+chmod +x "$TEARDOWN_FAKEBIN/gh-axi"
 TD1_OUT="$TMP_ROOT/td1.out"
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
+PATH="$TEARDOWN_FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$PRIMARY_HOME/state" FM_DATA_OVERRIDE="$PRIMARY_HOME/data" \
   FM_CONFIG_OVERRIDE="$PRIMARY_HOME/config" \
   "$ROOT/bin/fm-teardown.sh" cm1 >"$TD1_OUT" 2>&1
 rc=$?
@@ -248,7 +260,7 @@ WT1=
 pass "real herdr E2E: tearing down cm1 closes only its own tab - the secondmate's and cm2's tabs survive untouched"
 
 TD2_OUT="$TMP_ROOT/td2.out"
-FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SM_HOME/state" FM_DATA_OVERRIDE="$SM_HOME/data" \
+PATH="$TEARDOWN_FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_STATE_OVERRIDE="$SM_HOME/state" FM_DATA_OVERRIDE="$SM_HOME/data" \
   FM_CONFIG_OVERRIDE="$SM_HOME/config" \
   "$ROOT/bin/fm-teardown.sh" cm2 >"$TD2_OUT" 2>&1
 rc=$?
