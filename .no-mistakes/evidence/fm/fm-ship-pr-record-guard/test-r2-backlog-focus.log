@@ -1,0 +1,2 @@
+ok - dispatch and completion transition structurally with evidence
+ok - refused teardown leaves the backlog item in flight

@@ -1,0 +1,7 @@
+warning: You appear to have cloned an empty repository.
+ok - a heartbeat tears down a squash-merged ship through the guarded teardown
+warning: You appear to have cloned an empty repository.
+ok - a heartbeat tears down a ship already merged into local main
+warning: You appear to have cloned an empty repository.
+ok - a heartbeat keeps a finished ship whose unrecorded PR is still open
+exit=0

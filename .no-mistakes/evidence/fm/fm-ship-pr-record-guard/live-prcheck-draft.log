@@ -1,0 +1,13 @@
+--- meta before
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-sb.hhsV4K/proj
+pr=https://github.com/example/site/pull/500
+pr_head=0123456789abcdef0123456789abcdef01234567
+$ fm-pr-check.sh d1 https://github.com/example/site/pull/543
+exit=1
+  | error: https://github.com/example/site/pull/543 is a draft pull request; a draft cannot be merged, so merge monitoring would wait for an event that cannot occur - mark it ready for review and arm again, or declare a wait instead of done if the draft is deliberate
+--- meta after
+project=/var/folders/cp/dj_1dxy11bn_km_1vbw0m_p00000gn/T//fm-sb.hhsV4K/proj
+pr=https://github.com/example/site/pull/543
+--- armed checks in lab state:
+lab torn down
+sandbox trashed

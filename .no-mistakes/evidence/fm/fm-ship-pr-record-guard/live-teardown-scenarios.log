@@ -1,0 +1,51 @@
+
+### S1 recorded draft PR 543 (pr=, no pr_head), forge says open
+$ fm-teardown.sh s1 
+exit=1 (expected 1) meta=present backlog=in_flight => PASS
+  | REFUSED: ship task s1 still has open, unmerged PR https://github.com/example/site/pull/543.
+  | Merge or close the PR first, or get explicit approval to discard, then --force.
+
+### S2 recorded draft PR, forge unreachable
+$ fm-teardown.sh s2 
+exit=1 (expected 1) meta=present backlog=in_flight => PASS
+  | REFUSED: ship task s2 recorded PR https://github.com/example/site/pull/543, and the forge could not show that PR's state.
+  | Retry when GitHub is reachable, or get explicit approval to discard, then --force.
+
+### S3 recorded armed PR (pr+pr_head), forge unreachable
+$ fm-teardown.sh s3 
+exit=1 (expected 1) meta=present backlog=in_flight => PASS
+  | REFUSED: ship task s3 recorded PR https://github.com/example/site/pull/543, and the forge could not show that PR's state.
+  | Retry when GitHub is reachable, or get explicit approval to discard, then --force.
+
+### S4 no pr= recorded, branch has open PR #543 (the 543 incident shape)
+$ fm-teardown.sh s4 
+exit=1 (expected 1) meta=present backlog=in_flight => PASS
+  | REFUSED: ship task s4 recorded no PR, but its branch fm/s4 still has open PR #543.
+  | Merge or close the PR first, or get explicit approval to discard, then --force.
+
+### S5 no pr= recorded, forge unreachable
+$ fm-teardown.sh s5 
+exit=1 (expected 1) meta=present backlog=in_flight => PASS
+  | REFUSED: ship task s5 recorded no PR, and the forge could not prove that branch fm/s5 has no open PR.
+  | Retry when GitHub is reachable, or get explicit approval to discard, then --force.
+
+### S6 same recorded PR 543 now merged -> closes
+$ fm-teardown.sh s1 
+exit=0 (expected 0) meta=absent backlog=done => PASS
+
+### S7 no pr= recorded, forge proves zero open PRs -> closes
+$ fm-teardown.sh s4 
+exit=0 (expected 0) meta=absent backlog=done => PASS
+
+### S8 recorded open PR with explicit --force -> discard allowed
+$ fm-teardown.sh s2 --force
+exit=0 (expected 0) meta=absent backlog=done => PASS
+
+--- forge calls (sample)
+pr view 543 --repo example/site
+pr list --state open --head fm/s4 --limit 1
+pr list --state open --head fm/s5 --limit 1
+pr view 543 --repo example/site
+pr list --state open --head fm/s4 --limit 1
+lab torn down
+sandbox trashed

@@ -1,0 +1,7 @@
+ok - dispatch and completion transition structurally with evidence
+ok - refused teardown leaves the backlog item in flight
+ok - environment-selected adapters bypass the legacy markdown file override
+ok - a manual-backlog home dispatches and completes without a hard failure
+ok - a secondmate home keeps its own books paired through dispatch and completion
+ok - dispatching a persistent secondmate needs no backlog item
+exit=0
